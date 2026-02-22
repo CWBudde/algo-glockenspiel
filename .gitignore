@@ -1,0 +1,10 @@
+.tmp
+
+# AI Agents
+.claude
+
+# Legacy code
+/legacy/
+
+# testdata
+/testdata/output/

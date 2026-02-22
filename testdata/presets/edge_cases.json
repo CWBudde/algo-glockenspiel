@@ -1,0 +1,39 @@
+{
+  "version": "1.0",
+  "name": "Edge Cases",
+  "note": 127,
+  "parameters": {
+    "input_mix": 2.0,
+    "filter_frequency": 20000.0,
+    "base_frequency": 20000.0,
+    "modes": [
+      {
+        "amplitude": -2.0,
+        "frequency": 0.01,
+        "decay_ms": 0.1
+      },
+      {
+        "amplitude": 2.0,
+        "frequency": 50000.0,
+        "decay_ms": 500.0
+      },
+      {
+        "amplitude": 0.0,
+        "frequency": 440.0,
+        "decay_ms": 250.0
+      },
+      {
+        "amplitude": 0.0,
+        "frequency": 880.0,
+        "decay_ms": 250.0
+      }
+    ],
+    "chebyshev": {
+      "enabled": true,
+      "harmonic_gains": [
+        0.0,
+        2.0
+      ]
+    }
+  }
+}

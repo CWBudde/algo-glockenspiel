@@ -1,0 +1,41 @@
+{
+  "version": "1.0",
+  "name": "Default Glockenspiel",
+  "note": 69,
+  "parameters": {
+    "input_mix": 0.472433640370972,
+    "filter_frequency": 522.935295651445,
+    "base_frequency": 440.0,
+    "modes": [
+      {
+        "amplitude": 0.885860562324524,
+        "frequency": 1756.64123535156,
+        "decay_ms": 188.223281860352
+      },
+      {
+        "amplitude": 1.99459731578827,
+        "frequency": 4768.10693359375,
+        "decay_ms": 1.60327112674713
+      },
+      {
+        "amplitude": -0.464719623327255,
+        "frequency": 38.241283416748,
+        "decay_ms": 5.55945539474487
+      },
+      {
+        "amplitude": 0.363913357257843,
+        "frequency": 32.6347961425781,
+        "decay_ms": 8.6815824508667
+      }
+    ],
+    "chebyshev": {
+      "enabled": true,
+      "harmonic_gains": [
+        1.0,
+        0.5,
+        0.3,
+        0.2
+      ]
+    }
+  }
+}
