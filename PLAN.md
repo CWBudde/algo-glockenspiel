@@ -90,6 +90,7 @@ type QuadDecayOscillator struct {
 ```
 
 **Key Methods:**
+
 - `ProcessSample32(input float32) float32` - Process single sample
 - `ProcessBlock32(input, output []float32)` - Process block efficiently
 - `Reset()` - Clear oscillator state
@@ -97,6 +98,7 @@ type QuadDecayOscillator struct {
 - `SetDecay(mode int, decayMs float64)` - Update decay time
 
 **Algorithm:**
+
 - Complex oscillator using rotation matrix to advance phase
 - Applies exponential decay factor each sample
 - Excitation signal kicks the oscillators, which then ring down
@@ -123,6 +125,7 @@ type Bar struct {
 ```
 
 **Processing Chain:**
+
 1. Excitation impulse → lowpass filter (pre-emphasis)
 2. Filtered signal → Chebyshev distortion (harmonic excitation)
 3. Distorted signal → quad decay oscillator (modal resonance)
@@ -172,6 +175,7 @@ type Preset struct {
 ```
 
 **Functions:**
+
 - `Load(path string) (*Preset, error)` - Load from JSON file
 - `Save(preset *Preset, path string) error` - Save to JSON file
 - `Validate(preset *Preset) error` - Validate parameters
@@ -233,6 +237,7 @@ type Preset struct {
 ### Block Processing Strategy
 
 For efficiency, process audio in blocks (e.g., 128 samples):
+
 - Amortizes function call overhead
 - Better CPU cache utilization
 - Matches legacy implementation style
@@ -368,12 +373,14 @@ type ParamBounds struct {
 ### Phase 1: Simple Optimizer (Nelder-Mead)
 
 **Why Nelder-Mead:**
+
 - No gradient needed (objective function isn't differentiable)
 - Well-tested, reliable
 - Good for ~10-20 parameters
 - Available in Go: `gonum.org/v1/gonum/optimize`
 
 **Objective Function:**
+
 ```go
 func ObjectiveFunction(params []float64, ref []float32) float64 {
     // 1. Convert params to BarParams
@@ -387,11 +394,13 @@ func ObjectiveFunction(params []float64, ref []float32) float64 {
 **Distance Metrics:**
 
 1. **Time-domain RMS error** (simple, fast)
+
    ```
    cost = sqrt(sum((synth[i] - ref[i])^2) / N)
    ```
 
 2. **Log-scaled error** (like legacy)
+
    ```
    cost = log10(1e-20 + rmsError) - costScale
    ```
@@ -408,12 +417,14 @@ func ObjectiveFunction(params []float64, ref []float32) float64 {
 ### Phase 2: Mayfly Optimizer
 
 **Port from algo-piano (`optimizer/mayfly.go`):**
+
 - More sophisticated than Nelder-Mead
 - Better for noisy/multimodal objectives
 - Proven to work well for audio synthesis fitting
 - Supports multiple variants (DESMA, OLCE, etc.)
 
 **Interface:**
+
 ```go
 type Optimizer interface {
     Optimize(
@@ -454,18 +465,21 @@ Converged after 156 iterations, best cost: 8.234e-4
 ### Unit Tests
 
 **1. Quadrature Decay Oscillator Tests** (`internal/model/decay_osc_test.go`)
+
 - Test basic oscillation (frequency, decay)
 - Test reset clears state
 - Test numerical stability (no divergence, NaN, Inf)
 - Benchmark block processing throughput
 
 **2. Bar Model Tests** (`internal/model/bar_test.go`)
+
 - Test synthesis produces non-zero output
 - Test parameter updates work correctly
 - Test sample rate changes
 - Verify processing chain order
 
 **3. Preset Tests** (`internal/preset/preset_test.go`)
+
 - Test JSON load/save round-trip
 - Test validation catches bad params
 - Test default preset is valid
@@ -473,10 +487,12 @@ Converged after 156 iterations, best cost: 8.234e-4
 ### Integration Tests
 
 **1. Synth Command Test**
+
 - Run: `glockenspiel synth --output test.wav`
 - Verify: WAV file created, correct length, non-silent
 
 **2. Fit Command Test**
+
 - Generate synthetic reference with known params
 - Run optimizer
 - Verify recovered params are close to ground truth
@@ -804,55 +820,55 @@ Recommended order:
 
 #### 2.3 Nelder-Mead Optimizer
 
-- [ ] **Implement Nelder-Mead wrapper** (`internal/optimizer/simple.go`)
-  - [ ] Import `gonum.org/v1/gonum/optimize`
+- [x] **Implement Nelder-Mead wrapper** (`internal/optimizer/simple.go`)
+  - [x] Import `gonum.org/v1/gonum/optimize`
 
-  - [ ] Implement `SimpleOptimizer` struct
-    - [ ] Implement `Optimize()` method
-    - [ ] Configure Nelder-Mead settings
-    - [ ] Set up progress reporting
-    - [ ] Run optimization loop
-    - [ ] Return result
+  - [x] Implement `SimpleOptimizer` struct
+    - [x] Implement `Optimize()` method
+    - [x] Configure Nelder-Mead settings
+    - [x] Set up progress reporting
+    - [x] Run optimization loop
+    - [x] Return result
 
-  - [ ] Add progress callback
-    - [ ] Print iteration, current cost, best cost
-    - [ ] Track elapsed time
-    - [ ] Respect report interval
+  - [x] Add progress callback
+    - [x] Print iteration, current cost, best cost
+    - [x] Track elapsed time
+    - [x] Respect report interval
 
-  - [ ] Add convergence detection
-    - [ ] Check if improvement < tolerance
-    - [ ] Check max iterations
-    - [ ] Check time budget
+  - [x] Add convergence detection
+    - [x] Check if improvement < tolerance
+    - [x] Check max iterations
+    - [x] Check time budget
 
-  - [ ] Write tests
-    - [ ] Test on synthetic problem (known optimum)
-    - [ ] Test progress reporting
-    - [ ] Test early stopping
+  - [x] Write tests
+    - [x] Test on synthetic problem (known optimum)
+    - [x] Test progress reporting
+    - [x] Test early stopping
 
 #### 2.4 Fit Command Implementation
 
-- [ ] **Implement fit command** (`cmd/glockenspiel/cmd_fit.go`)
-  - [ ] Define all CLI flags (reference, preset, output, note, velocity, sample-rate, optimizer, max-iter, time-budget, report-every, work-dir)
+- [x] **Implement fit command** (`internal/cli/fit.go`)
+  - [x] Define all CLI flags (reference, preset, output, note, velocity, sample-rate, optimizer, max-iter, time-budget, report-every, work-dir)
 
-  - [ ] Implement `runFit()` function
-    - [ ] Load reference WAV
-    - [ ] Load initial preset (or create default)
-    - [ ] Encode initial parameters
-    - [ ] Create objective function
-    - [ ] Create optimizer
-    - [ ] Run optimization
-    - [ ] Decode best parameters
-    - [ ] Save fitted preset to JSON
-    - [ ] Print final results (best cost, iterations, time)
+  - [x] Implement `runFit()` function
+    - [x] Load reference WAV
+    - [x] Load initial preset (or create default)
+    - [x] Encode initial parameters
+    - [x] Create objective function
+    - [x] Create optimizer
+    - [x] Run optimization
+    - [x] Decode best parameters
+    - [x] Save fitted preset to JSON
+    - [x] Print final results (best cost, iterations, time)
 
-  - [ ] Add intermediate checkpoints
-    - [ ] Save best preset every N iterations
-    - [ ] Save to `<work-dir>/checkpoint_<iter>.json`
+  - [x] Add intermediate checkpoints
+    - [x] Save best preset every N iterations
+    - [x] Save to `<work-dir>/checkpoint_<iter>.json`
 
-  - [ ] Add final comparison
-    - [ ] Synthesize with best params
-    - [ ] Save as `<work-dir>/fitted_output.wav`
-    - [ ] Print similarity metrics
+  - [x] Add final comparison
+    - [x] Synthesize with best params
+    - [x] Save as `<work-dir>/fitted_output.wav`
+    - [x] Print similarity metrics
 
   - [ ] Manual testing
     - [ ] Create synthetic reference (render with known params)

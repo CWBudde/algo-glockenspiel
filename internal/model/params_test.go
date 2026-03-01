@@ -111,9 +111,11 @@ func validTestParams() BarParams {
 
 func assertFieldError(t *testing.T, err error, field string) {
 	t.Helper()
+
 	if err == nil {
 		t.Fatalf("expected validation error for %s", field)
 	}
+
 	if !strings.Contains(err.Error(), field) {
 		t.Fatalf("expected error to mention %q, got %q", field, err.Error())
 	}

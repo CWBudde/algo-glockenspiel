@@ -47,11 +47,13 @@ func Save(p *Preset, path string) error {
 	if err != nil {
 		return fmt.Errorf("encode preset: %w", err)
 	}
+
 	data = append(data, '\n')
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create preset directory: %w", err)
 	}
+
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write preset %q: %w", path, err)
 	}
@@ -64,17 +66,22 @@ func Validate(p *Preset) error {
 	if p == nil {
 		return errors.New("preset cannot be nil")
 	}
+
 	if p.Version == "" {
 		return errors.New("version cannot be empty")
 	}
+
 	if p.Name == "" {
 		return errors.New("name cannot be empty")
 	}
+
 	if p.Note < 0 || p.Note > 127 {
 		return fmt.Errorf("note out of MIDI range [0,127]: %d", p.Note)
 	}
+
 	if err := p.Parameters.Validate(); err != nil {
 		return fmt.Errorf("parameters: %w", err)
 	}
+
 	return nil
 }

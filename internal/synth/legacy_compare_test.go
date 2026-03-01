@@ -21,6 +21,7 @@ func TestLegacyComparisonA4(t *testing.T) {
 	if _, err := os.Stat(legacyPath); err != nil {
 		t.Skipf("legacy reference missing: %v", err)
 	}
+
 	if _, err := os.Stat(goPath); err != nil {
 		t.Skipf("go reference missing: %v", err)
 	}
@@ -29,10 +30,12 @@ func TestLegacyComparisonA4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load legacy wav: %v", err)
 	}
+
 	goSamples, goRate, err := loadMonoWAV(goPath)
 	if err != nil {
 		t.Fatalf("load go wav: %v", err)
 	}
+
 	if legacyRate != goRate {
 		t.Fatalf("sample-rate mismatch: legacy=%d go=%d", legacyRate, goRate)
 	}
@@ -54,6 +57,7 @@ func loadMonoWAV(path string) ([]float64, int, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("open wav: %w", err)
 	}
+
 	defer func() {
 		_ = file.Close()
 	}()
@@ -67,6 +71,7 @@ func loadMonoWAV(path string) ([]float64, int, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("decode pcm: %w", err)
 	}
+
 	if intBuffer == nil || intBuffer.Format == nil {
 		return nil, 0, fmt.Errorf("invalid decoded buffer: %s", path)
 	}
@@ -75,7 +80,9 @@ func loadMonoWAV(path string) ([]float64, int, error) {
 	if bitDepth <= 0 {
 		bitDepth = 16
 	}
+
 	scale := math.Pow(2, float64(bitDepth-1))
+
 	chans := intBuffer.Format.NumChannels
 	if chans <= 0 {
 		chans = 1
@@ -97,9 +104,12 @@ func correlation(a, b []float64) float64 {
 	meanA := mean(a)
 	meanB := mean(b)
 
-	var num float64
-	var denA float64
-	var denB float64
+	var (
+		num  float64
+		denA float64
+		denB float64
+	)
+
 	for i := range a {
 		da := a[i] - meanA
 		db := b[i] - meanB
@@ -122,10 +132,12 @@ func rmsDifference(a, b []float64) float64 {
 	}
 
 	sum := 0.0
+
 	for i := range a {
 		d := a[i] - b[i]
 		sum += d * d
 	}
+
 	return math.Sqrt(sum / float64(len(a)))
 }
 
@@ -133,10 +145,12 @@ func mean(values []float64) float64 {
 	if len(values) == 0 {
 		return 0
 	}
+
 	sum := 0.0
 	for _, v := range values {
 		sum += v
 	}
+
 	return sum / float64(len(values))
 }
 
@@ -144,5 +158,6 @@ func minInt(a, b int) int {
 	if a < b {
 		return a
 	}
+
 	return b
 }

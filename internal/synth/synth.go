@@ -33,6 +33,7 @@ func NewSynthesizer(p *preset.Preset, sampleRate int) (*Synthesizer, error) {
 	if sampleRate <= 0 {
 		return nil, fmt.Errorf("sample rate must be positive: %d", sampleRate)
 	}
+
 	if err := preset.Validate(p); err != nil {
 		return nil, err
 	}
@@ -70,6 +71,7 @@ func (s *Synthesizer) RenderNoteWithOptions(note, velocity int, duration float64
 	if err := s.bar.UpdateParams(&params); err != nil {
 		return nil
 	}
+
 	s.bar.Reset()
 
 	threshold := math.Pow(10, options.DecayDBFS/20)
@@ -128,10 +130,12 @@ func shouldStop(block []float32, threshold float64) bool {
 	}
 
 	sum := 0.0
+
 	for _, x := range block {
 		v := float64(x)
 		sum += v * v
 	}
+
 	rms := math.Sqrt(sum / float64(len(block)))
 
 	return rms < threshold

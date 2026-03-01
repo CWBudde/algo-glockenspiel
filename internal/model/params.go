@@ -85,9 +85,11 @@ func ValidateBarParams(p *BarParams) error {
 	if err := validateFiniteRange("input_mix", p.InputMix, InputMixMin, InputMixMax); err != nil {
 		return err
 	}
+
 	if err := validateFiniteRange("filter_frequency", p.FilterFrequency, FilterFrequencyMinHz, FilterFrequencyMaxHz); err != nil {
 		return err
 	}
+
 	if err := validateFiniteRange("base_frequency", p.BaseFrequency, FrequencyMinHz, FrequencyMaxHz); err != nil {
 		return err
 	}
@@ -96,9 +98,11 @@ func ValidateBarParams(p *BarParams) error {
 		if err := validateFiniteRange(fmt.Sprintf("modes[%d].amplitude", i), mode.Amplitude, AmplitudeMin, AmplitudeMax); err != nil {
 			return err
 		}
+
 		if err := validateFiniteRange(fmt.Sprintf("modes[%d].frequency", i), mode.Frequency, FrequencyMinHz, FrequencyMaxHz); err != nil {
 			return err
 		}
+
 		if err := validateFiniteRange(fmt.Sprintf("modes[%d].decay_ms", i), mode.DecayMs, DecayMsMin, DecayMsMax); err != nil {
 			return err
 		}
@@ -117,8 +121,10 @@ func validateFiniteRange(field string, value, min, max float64) error {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return fmt.Errorf("%s must be finite", field)
 	}
+
 	if value < min || value > max {
 		return fmt.Errorf("%s out of range [%g, %g]: %g", field, min, max, value)
 	}
+
 	return nil
 }

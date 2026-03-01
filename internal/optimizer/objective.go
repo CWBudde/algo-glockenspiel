@@ -34,29 +34,40 @@ type ObjectiveFunction struct {
 
 // NewObjectiveFunction creates an objective using a preset as synthesis template.
 func NewObjectiveFunction(reference []float32, template *preset.Preset, sampleRate, note, velocity int, metric Metric) (*ObjectiveFunction, error) {
+	return NewObjectiveFunctionWithBounds(reference, template, sampleRate, note, velocity, metric, DefaultParamBounds)
+}
+
+// NewObjectiveFunctionWithBounds creates an objective using explicit model-space bounds.
+func NewObjectiveFunctionWithBounds(reference []float32, template *preset.Preset, sampleRate, note, velocity int, metric Metric, bounds ParamBounds) (*ObjectiveFunction, error) {
 	if template == nil {
 		return nil, fmt.Errorf("template preset cannot be nil")
 	}
+
 	if sampleRate <= 0 {
 		return nil, fmt.Errorf("sample rate must be positive: %d", sampleRate)
 	}
+
 	if note < 0 || note > 127 {
 		return nil, fmt.Errorf("note must be in [0,127], got %d", note)
 	}
+
 	if velocity < 0 || velocity > 127 {
 		return nil, fmt.Errorf("velocity must be in [0,127], got %d", velocity)
 	}
+
 	if len(reference) == 0 {
 		return nil, fmt.Errorf("reference audio cannot be empty")
 	}
+
 	if metric != MetricRMS && metric != MetricLog {
 		return nil, fmt.Errorf("unsupported metric %q", metric)
 	}
+
 	if err := preset.Validate(template); err != nil {
 		return nil, err
 	}
 
-	codec, err := NewParamCodec(&template.Parameters)
+	codec, err := NewParamCodecWithBounds(&template.Parameters, bounds)
 	if err != nil {
 		return nil, err
 	}
@@ -88,10 +99,12 @@ func ComputeRMSError(synth, ref []float32) float64 {
 	}
 
 	sum := 0.0
+
 	for i := 0; i < n; i++ {
 		d := float64(synth[i] - ref[i])
 		sum += d * d
 	}
+
 	return math.Sqrt(sum / float64(n))
 }
 
@@ -100,6 +113,7 @@ func ComputeLogError(synth, ref []float32, floor, offset float64) float64 {
 	if floor <= 0 {
 		floor = defaultLogErrorFloor
 	}
+
 	return math.Log10(floor+ComputeRMSError(synth, ref)) - offset
 }
 
@@ -138,5 +152,6 @@ func minInt(a, b int) int {
 	if a < b {
 		return a
 	}
+
 	return b
 }

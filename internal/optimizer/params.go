@@ -20,9 +20,11 @@ func (r Range) Clamp(v float64) float64 {
 	if v < r.Min {
 		return r.Min
 	}
+
 	if v > r.Max {
 		return r.Max
 	}
+
 	return v
 }
 
@@ -36,9 +38,11 @@ func (r Range) Mirror(v float64) float64 {
 	if math.IsNaN(v) {
 		return r.Min
 	}
+
 	if math.IsInf(v, 0) {
 		return r.Clamp(v)
 	}
+
 	if r.Min == r.Max {
 		return r.Min
 	}
@@ -49,13 +53,16 @@ func (r Range) Mirror(v float64) float64 {
 			v = r.Min + (r.Min - v)
 			continue
 		}
+
 		if v > r.Max {
 			v = r.Max - (v - r.Max)
 		}
+
 		if width == 0 {
 			return r.Min
 		}
 	}
+
 	return v
 }
 
@@ -74,6 +81,7 @@ func (b Bounds) CheckVector(values []float64) error {
 	if len(values) != len(b.Ranges) {
 		return fmt.Errorf("expected vector length %d, got %d", len(b.Ranges), len(values))
 	}
+
 	return nil
 }
 
@@ -82,11 +90,13 @@ func (b Bounds) Contains(values []float64) bool {
 	if err := b.CheckVector(values); err != nil {
 		return false
 	}
+
 	for i, v := range values {
 		if !b.Ranges[i].Contains(v) {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -95,10 +105,12 @@ func (b Bounds) Clamp(values []float64) ([]float64, error) {
 	if err := b.CheckVector(values); err != nil {
 		return nil, err
 	}
+
 	clamped := make([]float64, len(values))
 	for i, v := range values {
 		clamped[i] = b.Ranges[i].Clamp(v)
 	}
+
 	return clamped, nil
 }
 
@@ -107,10 +119,12 @@ func (b Bounds) Mirror(values []float64) ([]float64, error) {
 	if err := b.CheckVector(values); err != nil {
 		return nil, err
 	}
+
 	mirrored := make([]float64, len(values))
 	for i, v := range values {
 		mirrored[i] = b.Ranges[i].Mirror(v)
 	}
+
 	return mirrored, nil
 }
 
@@ -153,10 +167,13 @@ func NewParamCodecWithBounds(params *model.BarParams, bounds ParamBounds) (*Para
 	if err := model.ValidateBarParams(params); err != nil {
 		return nil, err
 	}
+
 	if err := bounds.Validate(); err != nil {
 		return nil, err
 	}
+
 	bounds = bounds.expandToInclude(params)
+
 	return &ParamCodec{
 		harmonicCount:    len(params.Chebyshev.HarmonicGains),
 		chebyshevEnabled: params.Chebyshev.Enabled,
@@ -179,30 +196,37 @@ func (b ParamBounds) Validate() error {
 		if math.IsNaN(r.Min) || math.IsNaN(r.Max) || math.IsInf(r.Min, 0) || math.IsInf(r.Max, 0) {
 			return fmt.Errorf("%s bounds must be finite", name)
 		}
+
 		if r.Min > r.Max {
 			return fmt.Errorf("%s bounds invalid: min %g > max %g", name, r.Min, r.Max)
 		}
+
 		if r.Min <= 0 && (name == "filter_freq" || name == "base_frequency" || name == "frequency_mult") {
 			return fmt.Errorf("%s bounds must be > 0 for log encoding", name)
 		}
 	}
+
 	return nil
 }
 
 func (b ParamBounds) expandToInclude(params *model.BarParams) ParamBounds {
 	b.InputMix = expandRange(b.InputMix, params.InputMix)
 	b.FilterFreq = expandRange(b.FilterFreq, params.FilterFrequency)
+
 	b.BaseFrequency = expandRange(b.BaseFrequency, params.BaseFrequency)
 	for _, mode := range params.Modes {
 		b.Amplitude = expandRange(b.Amplitude, mode.Amplitude)
+
 		b.DecayMs = expandRange(b.DecayMs, mode.DecayMs)
 		if params.BaseFrequency > 0 {
 			b.FrequencyMult = expandRange(b.FrequencyMult, mode.Frequency/params.BaseFrequency)
 		}
 	}
+
 	for _, gain := range params.Chebyshev.HarmonicGains {
 		b.HarmonicGain = expandRange(b.HarmonicGain, gain)
 	}
+
 	return b
 }
 
@@ -214,6 +238,7 @@ func (c *ParamCodec) Dimension() int {
 // EncodedBounds returns the bounds for encoded vectors.
 func (c *ParamCodec) EncodedBounds() Bounds {
 	ranges := make([]Range, 0, c.Dimension())
+
 	ranges = append(ranges,
 		c.bounds.InputMix,
 		logRange(c.bounds.FilterFreq),
@@ -226,9 +251,11 @@ func (c *ParamCodec) EncodedBounds() Bounds {
 			c.bounds.DecayMs,
 		)
 	}
+
 	for range c.harmonicCount {
 		ranges = append(ranges, c.bounds.HarmonicGain)
 	}
+
 	return Bounds{Ranges: ranges}
 }
 
@@ -237,11 +264,13 @@ func (c *ParamCodec) EncodeParams(params *model.BarParams) ([]float64, error) {
 	if err := model.ValidateBarParams(params); err != nil {
 		return nil, err
 	}
+
 	if len(params.Chebyshev.HarmonicGains) != c.harmonicCount {
 		return nil, fmt.Errorf("expected %d harmonic gains, got %d", c.harmonicCount, len(params.Chebyshev.HarmonicGains))
 	}
 
 	encoded := make([]float64, 0, c.Dimension())
+
 	encoded = append(encoded,
 		params.InputMix,
 		math.Log10(params.FilterFrequency),
@@ -251,12 +280,14 @@ func (c *ParamCodec) EncodeParams(params *model.BarParams) ([]float64, error) {
 		if mode.Frequency <= 0 || params.BaseFrequency <= 0 {
 			return nil, fmt.Errorf("mode frequency and base frequency must be > 0")
 		}
+
 		encoded = append(encoded,
 			mode.Amplitude,
 			math.Log10(mode.Frequency/params.BaseFrequency),
 			mode.DecayMs,
 		)
 	}
+
 	encoded = append(encoded, params.Chebyshev.HarmonicGains...)
 
 	return encoded, nil
@@ -293,11 +324,13 @@ func (c *ParamCodec) DecodeParams(encoded []float64) (*model.BarParams, error) {
 		}
 		index += 3
 	}
+
 	copy(params.Chebyshev.HarmonicGains, bounded[index:])
 
 	if err := model.ValidateBarParams(params); err != nil {
 		return nil, err
 	}
+
 	return params, nil
 }
 
@@ -307,6 +340,7 @@ func EncodeParams(params *model.BarParams) ([]float64, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return codec.EncodeParams(params)
 }
 
@@ -316,6 +350,7 @@ func DecodeParams(encoded []float64, template *model.BarParams) (*model.BarParam
 	if err != nil {
 		return nil, err
 	}
+
 	return codec.DecodeParams(encoded)
 }
 
@@ -330,8 +365,10 @@ func expandRange(r Range, value float64) Range {
 	if value < r.Min {
 		r.Min = value
 	}
+
 	if value > r.Max {
 		r.Max = value
 	}
+
 	return r
 }

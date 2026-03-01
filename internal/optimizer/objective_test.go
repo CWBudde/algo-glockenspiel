@@ -23,6 +23,7 @@ func TestComputeRMSErrorKnownDifference(t *testing.T) {
 	b := []float32{3, 4}
 
 	got := ComputeRMSError(a, b)
+
 	want := math.Sqrt((9.0 + 16.0) / 2.0)
 	if math.Abs(got-want) > 1e-12 {
 		t.Fatalf("unexpected RMS error: got %.12f want %.12f", got, want)
@@ -33,6 +34,7 @@ func TestComputeLogErrorUsesFloor(t *testing.T) {
 	signal := []float32{0.1, -0.2}
 
 	got := ComputeLogError(signal, signal, 1e-12, 0)
+
 	want := math.Log10(1e-12)
 	if math.Abs(got-want) > 1e-12 {
 		t.Fatalf("unexpected log error: got %.12f want %.12f", got, want)
@@ -89,9 +91,11 @@ func TestNewObjectiveFunctionRejectsBadInput(t *testing.T) {
 	if _, err := NewObjectiveFunction(nil, template, 44100, 69, 100, MetricRMS); err == nil {
 		t.Fatal("expected empty reference to fail")
 	}
+
 	if _, err := NewObjectiveFunction([]float32{0}, template, 0, 69, 100, MetricRMS); err == nil {
 		t.Fatal("expected invalid sample rate to fail")
 	}
+
 	if _, err := NewObjectiveFunction([]float32{0}, template, 44100, 69, 100, Metric("bad")); err == nil {
 		t.Fatal("expected invalid metric to fail")
 	}
@@ -104,6 +108,7 @@ func renderReference(t *testing.T, p *preset.Preset, sampleRate, note, velocity 
 	if err != nil {
 		t.Fatalf("NewSynthesizer failed: %v", err)
 	}
+
 	return engine.RenderNote(note, velocity, duration)
 }
 
@@ -114,5 +119,6 @@ func loadObjectivePreset(t *testing.T) *preset.Preset {
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
+
 	return p
 }

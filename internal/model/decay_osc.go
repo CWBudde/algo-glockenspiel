@@ -54,6 +54,7 @@ func (o *QuadDecayOscillator) SetSampleRate(sr float64) {
 	if sr <= 0 {
 		return
 	}
+
 	o.sampleRate = sr
 	o.calculateCoefficients()
 }
@@ -63,6 +64,7 @@ func (o *QuadDecayOscillator) SetFrequency(mode int, freq float64) {
 	if !validMode(mode) {
 		panic(fmt.Sprintf("invalid mode index %d", mode))
 	}
+
 	o.frequency[mode] = freq
 	o.calculateCoefficient(mode)
 }
@@ -72,6 +74,7 @@ func (o *QuadDecayOscillator) SetAmplitude(mode int, amp float64) {
 	if !validMode(mode) {
 		panic(fmt.Sprintf("invalid mode index %d", mode))
 	}
+
 	o.amplitude[mode] = amp
 }
 
@@ -80,6 +83,7 @@ func (o *QuadDecayOscillator) SetDecay(mode int, decayMs float64) {
 	if !validMode(mode) {
 		panic(fmt.Sprintf("invalid mode index %d", mode))
 	}
+
 	o.decayMs[mode] = decayMs
 	o.calculateCoefficient(mode)
 }
@@ -92,6 +96,7 @@ func (o *QuadDecayOscillator) MaxDecayFactor() float64 {
 			maxVal = o.decayFactor[i]
 		}
 	}
+
 	return maxVal
 }
 
@@ -117,6 +122,7 @@ func (o *QuadDecayOscillator) ProcessBlock32(input, output []float32) {
 	if len(output) < len(input) {
 		panic("output buffer too small")
 	}
+
 	for i, in := range input {
 		output[i] = o.ProcessSample32(in)
 	}
@@ -134,6 +140,7 @@ func (o *QuadDecayOscillator) calculateCoefficient(mode int) {
 		o.decayFactor[mode] = 0
 		o.cosCoeff[mode] = 0
 		o.sinCoeff[mode] = 0
+
 		return
 	}
 

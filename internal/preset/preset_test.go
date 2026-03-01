@@ -14,6 +14,7 @@ func TestLoadDefaultPreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected default preset to load, got error: %v", err)
 	}
+
 	if p.Name == "" {
 		t.Fatal("expected non-empty preset name")
 	}
@@ -24,6 +25,7 @@ func TestLoadMinimalPreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected minimal preset to load, got error: %v", err)
 	}
+
 	if p.Note != 69 {
 		t.Fatalf("expected note 69, got %d", p.Note)
 	}
@@ -46,6 +48,7 @@ func TestSaveAndLoadRoundTrip(t *testing.T) {
 	if got.Name != want.Name || got.Note != want.Note || got.Version != want.Version {
 		t.Fatalf("unexpected metadata round-trip: got %#v want %#v", got, want)
 	}
+
 	if len(got.Parameters.Chebyshev.HarmonicGains) != len(want.Parameters.Chebyshev.HarmonicGains) {
 		t.Fatalf("unexpected chebyshev gain length: got %d want %d",
 			len(got.Parameters.Chebyshev.HarmonicGains), len(want.Parameters.Chebyshev.HarmonicGains))
@@ -60,6 +63,7 @@ func TestValidateRejectsBadPreset(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
+
 	if !strings.Contains(err.Error(), "note") {
 		t.Fatalf("expected note validation error, got: %v", err)
 	}

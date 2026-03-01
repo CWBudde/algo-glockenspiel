@@ -36,6 +36,7 @@ func TestRunSynthWritesWAV(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected output file to exist: %v", err)
 	}
+
 	if stat.Size() <= 44 {
 		t.Fatalf("expected non-empty wav output, got size %d", stat.Size())
 	}

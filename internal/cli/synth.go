@@ -62,12 +62,15 @@ func runSynth(cmd *cobra.Command, options synthOptions) error {
 	if options.velocity < 0 || options.velocity > 127 {
 		return fmt.Errorf("velocity must be in [0,127], got %d", options.velocity)
 	}
+
 	if options.note < 0 || options.note > 127 {
 		return fmt.Errorf("note must be in [0,127], got %d", options.note)
 	}
+
 	if options.duration <= 0 {
 		return fmt.Errorf("duration must be positive, got %f", options.duration)
 	}
+
 	if options.sampleRate <= 0 {
 		return fmt.Errorf("sample-rate must be positive, got %d", options.sampleRate)
 	}
@@ -98,6 +101,7 @@ func runSynth(cmd *cobra.Command, options synthOptions) error {
 	if err != nil {
 		return err
 	}
+
 	renderedDuration := float64(len(samples)) / float64(options.sampleRate)
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
@@ -116,11 +120,13 @@ func writeWAV(path string, sampleRate int, samples []float32) error {
 	if err != nil {
 		return fmt.Errorf("create output file %q: %w", path, err)
 	}
+
 	defer func() {
 		_ = file.Close()
 	}()
 
 	encoder := wav.NewEncoder(file, sampleRate, 16, 1, 1)
+
 	intData := make([]int, len(samples))
 	for i, sample := range samples {
 		intData[i] = float32ToInt16(sample)
@@ -137,6 +143,7 @@ func writeWAV(path string, sampleRate int, samples []float32) error {
 	if err := encoder.Write(buffer); err != nil {
 		return fmt.Errorf("write wav data: %w", err)
 	}
+
 	if err := encoder.Close(); err != nil {
 		return fmt.Errorf("close wav writer: %w", err)
 	}

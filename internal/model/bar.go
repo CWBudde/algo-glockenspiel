@@ -29,6 +29,7 @@ func NewBar(params *BarParams, sampleRate int) (*Bar, error) {
 	if sampleRate <= 0 {
 		return nil, fmt.Errorf("sample rate must be positive: %d", sampleRate)
 	}
+
 	if err := ValidateBarParams(params); err != nil {
 		return nil, err
 	}
@@ -49,15 +50,18 @@ func (b *Bar) SetSampleRate(sampleRate int) error {
 	if sampleRate <= 0 {
 		return fmt.Errorf("sample rate must be positive: %d", sampleRate)
 	}
+
 	b.sampleRate = sampleRate
 	b.oscillator.SetSampleRate(float64(sampleRate))
 	b.lowpass = newLowpassSection(b.params.FilterFrequency, float64(sampleRate))
+
 	return nil
 }
 
 // Reset clears filter and oscillator state.
 func (b *Bar) Reset() {
 	b.oscillator.Reset()
+
 	if b.lowpass != nil {
 		b.lowpass.Reset()
 	}
@@ -71,6 +75,7 @@ func (b *Bar) Synthesize(velocity int, numSamples int) []float32 {
 
 	b.ensureBuffers(numSamples)
 	clearFloat32(b.excitationBuf[:numSamples])
+
 	if velocity > 0 {
 		b.excitationBuf[0] = float32(float64(velocity) * velocityScale)
 	}
@@ -84,12 +89,15 @@ func (b *Bar) ProcessExcitation(excitation []float32) []float32 {
 	if n == 0 {
 		return nil
 	}
+
 	b.ensureBuffers(n)
 
 	for i := 0; i < n; i++ {
 		b.filterBlock[i] = float64(excitation[i])
 	}
+
 	b.lowpass.ProcessBlock(b.filterBlock[:n])
+
 	for i := 0; i < n; i++ {
 		b.filteredBuf[i] = float32(b.filterBlock[i])
 	}
@@ -144,14 +152,18 @@ func (b *Bar) ensureBuffers(numSamples int) {
 
 func newLowpassSection(freq, sampleRate float64) *biquad.Section {
 	nyquistLimit := 0.499 * sampleRate
+
 	cutoff := freq
 	if cutoff >= nyquistLimit {
 		cutoff = nyquistLimit
 	}
+
 	if cutoff <= 0 {
 		cutoff = 1000
 	}
+
 	coeff := pass.LowpassRBJ(cutoff, 1/math.Sqrt2, sampleRate)
+
 	return biquad.NewSection(coeff)
 }
 
@@ -159,6 +171,7 @@ func applyChebyshev(input float64, gains []float64) float64 {
 	if len(gains) == 0 {
 		return input
 	}
+
 	x := clamp(input, -1, 1)
 
 	t0 := 1.0
@@ -184,8 +197,10 @@ func clamp(value, low, high float64) float64 {
 	if value < low {
 		return low
 	}
+
 	if value > high {
 		return high
 	}
+
 	return value
 }

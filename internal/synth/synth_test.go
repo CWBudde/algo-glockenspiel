@@ -45,6 +45,7 @@ func TestRenderNoteAutoStop(t *testing.T) {
 
 func TestRenderDifferentDurations(t *testing.T) {
 	p := loadTestPreset(t)
+
 	s, err := NewSynthesizer(p, 44100)
 	if err != nil {
 		t.Fatalf("new synthesizer failed: %v", err)
@@ -62,9 +63,11 @@ func loadTestPreset(t *testing.T) *preset.Preset {
 	t.Helper()
 
 	path := filepath.FromSlash("../../assets/presets/default.json")
+
 	p, err := preset.Load(path)
 	if err != nil {
 		t.Fatalf("failed to load test preset: %v", err)
 	}
+
 	return p
 }

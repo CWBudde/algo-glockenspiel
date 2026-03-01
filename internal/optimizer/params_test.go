@@ -28,6 +28,7 @@ func TestParamCodecEncodeDecodeRoundTrip(t *testing.T) {
 	assertClose(t, decoded.InputMix, params.InputMix, 1e-12, "input mix")
 	assertClose(t, decoded.FilterFrequency, params.FilterFrequency, 1e-9, "filter frequency")
 	assertClose(t, decoded.BaseFrequency, params.BaseFrequency, 1e-9, "base frequency")
+
 	if decoded.Chebyshev.Enabled != params.Chebyshev.Enabled {
 		t.Fatalf("chebyshev enabled mismatch: got %v want %v", decoded.Chebyshev.Enabled, params.Chebyshev.Enabled)
 	}
@@ -37,6 +38,7 @@ func TestParamCodecEncodeDecodeRoundTrip(t *testing.T) {
 		assertClose(t, decoded.Modes[i].Frequency, params.Modes[i].Frequency, 1e-9, "mode frequency")
 		assertClose(t, decoded.Modes[i].DecayMs, params.Modes[i].DecayMs, 1e-12, "mode decay")
 	}
+
 	for i := range params.Chebyshev.HarmonicGains {
 		assertClose(t, decoded.Chebyshev.HarmonicGains[i], params.Chebyshev.HarmonicGains[i], 1e-12, "harmonic gain")
 	}
@@ -54,6 +56,7 @@ func TestParamCodecEncodedBoundsMatchDimension(t *testing.T) {
 	if got, want := bounds.Dimension(), codec.Dimension(); got != want {
 		t.Fatalf("encoded bounds dimension mismatch: got %d want %d", got, want)
 	}
+
 	if !bounds.Contains(mustEncode(t, codec, &params)) {
 		t.Fatal("expected encoded parameters to be within generated bounds")
 	}
@@ -61,6 +64,7 @@ func TestParamCodecEncodedBoundsMatchDimension(t *testing.T) {
 
 func TestBoundsClamp(t *testing.T) {
 	params := validBarParams()
+
 	codec, err := NewParamCodec(&params)
 	if err != nil {
 		t.Fatalf("NewParamCodec failed: %v", err)
@@ -70,12 +74,14 @@ func TestBoundsClamp(t *testing.T) {
 	for i := range input {
 		input[i] = math.Inf(1)
 	}
+
 	input[0] = -10
 
 	clamped, err := codec.EncodedBounds().Clamp(input)
 	if err != nil {
 		t.Fatalf("Clamp failed: %v", err)
 	}
+
 	if !codec.EncodedBounds().Contains(clamped) {
 		t.Fatal("expected clamped vector to be within bounds")
 	}
@@ -83,6 +89,7 @@ func TestBoundsClamp(t *testing.T) {
 
 func TestBoundsMirror(t *testing.T) {
 	params := validBarParams()
+
 	codec, err := NewParamCodec(&params)
 	if err != nil {
 		t.Fatalf("NewParamCodec failed: %v", err)
@@ -98,6 +105,7 @@ func TestBoundsMirror(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Mirror failed: %v", err)
 	}
+
 	if !bounds.Contains(mirrored) {
 		t.Fatal("expected mirrored vector to be within bounds")
 	}
@@ -105,6 +113,7 @@ func TestBoundsMirror(t *testing.T) {
 
 func TestDecodeParamsRejectsWrongLength(t *testing.T) {
 	params := validBarParams()
+
 	codec, err := NewParamCodec(&params)
 	if err != nil {
 		t.Fatalf("NewParamCodec failed: %v", err)
@@ -128,6 +137,7 @@ func TestTopLevelDecodeParamsUsesTemplateMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeParams failed: %v", err)
 	}
+
 	if decoded.Chebyshev.Enabled {
 		t.Fatal("expected decoded params to preserve chebyshev enabled flag from template")
 	}
@@ -135,10 +145,12 @@ func TestTopLevelDecodeParamsUsesTemplateMetadata(t *testing.T) {
 
 func mustEncode(t *testing.T, codec *ParamCodec, params *model.BarParams) []float64 {
 	t.Helper()
+
 	encoded, err := codec.EncodeParams(params)
 	if err != nil {
 		t.Fatalf("EncodeParams failed: %v", err)
 	}
+
 	return encoded
 }
 
@@ -162,6 +174,7 @@ func validBarParams() model.BarParams {
 
 func assertClose(t *testing.T, got, want, tol float64, label string) {
 	t.Helper()
+
 	if math.Abs(got-want) > tol {
 		t.Fatalf("%s mismatch: got %.12f want %.12f", label, got, want)
 	}

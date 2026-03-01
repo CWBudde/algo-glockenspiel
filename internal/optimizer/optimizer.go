@@ -15,6 +15,7 @@ type OptimizeOptions struct {
 	MaxIterations int
 	TimeBudget    time.Duration
 	ReportEvery   int
+	Report        func(Progress)
 }
 
 // Result describes the outcome of an optimization run.
@@ -25,5 +26,15 @@ type Result struct {
 	Elapsed     time.Duration
 	Converged   bool
 	StopReason  string
+	Evaluations int
+}
+
+// Progress describes one optimizer progress update.
+type Progress struct {
+	Iteration   int
+	CurrentCost float64
+	BestCost    float64
+	BestParams  []float64
+	Elapsed     time.Duration
 	Evaluations int
 }
