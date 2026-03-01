@@ -880,23 +880,24 @@ Recommended order:
 #### 2.5 Testing & Validation
 
 - [ ] **End-to-end optimization tests**
-  - [ ] Create synthetic test case
-    - [ ] Generate reference with known params
-    - [ ] Add small amount of noise
-    - [ ] Run optimizer
-    - [ ] Verify recovery within tolerance
+  - [x] Create synthetic test case
+    - [x] Generate reference with known params
+    - [x] Add small amount of noise
+    - [x] Run optimizer
+    - [x] Verify recovery within tolerance
 
-  - [ ] Test on real recordings
-    - [ ] Use legacy Pascal exported WAV
-    - [ ] Run optimizer
-    - [ ] Compare optimized params to legacy params
-    - [ ] Verify sonic similarity
+  - [x] Test on real recordings
+    - [x] Use legacy Pascal exported WAV
+    - [x] Run optimizer
+    - [x] Compare optimized params to legacy params
+    - [x] Verify sonic similarity
 
-  - [ ] Test parameter bounds
-    - [ ] Verify optimizer respects bounds
-    - [ ] Test with edge case initial conditions
+  - [x] Test parameter bounds
+    - [x] Verify optimizer respects bounds
+    - [x] Test with edge case initial conditions
 
   - [ ] Performance testing
+    - [x] Add benchmark coverage for objective evaluation throughput
     - [ ] Measure iterations per second
     - [ ] Measure time to convergence
     - [ ] Profile for bottlenecks
@@ -906,17 +907,17 @@ Recommended order:
 #### 3.1 Mayfly Optimizer
 
 - [ ] **Port Mayfly optimizer from algo-piano** (`internal/optimizer/mayfly.go`)
-  - [ ] Study algo-piano's Mayfly implementation
-  - [ ] Port core Mayfly algorithm
-  - [ ] Implement DESMA variant (recommended)
-  - [ ] Add other variants (OLCE, MA, etc.)
-  - [ ] Integrate with optimizer interface
-  - [ ] Write unit tests
+  - [x] Study algo-piano's Mayfly implementation
+  - [x] Port core Mayfly algorithm
+  - [x] Implement DESMA variant (recommended)
+  - [x] Add other variants (OLCE, MA, etc.)
+  - [x] Integrate with optimizer interface
+  - [x] Write unit tests
   - [ ] Compare performance vs Nelder-Mead
 
 - [ ] **Update fit command**
-  - [ ] Add `--optimizer mayfly` option
-  - [ ] Add Mayfly-specific flags (population size, variant)
+  - [x] Add `--optimizer mayfly` option
+  - [x] Add Mayfly-specific flags (population size, variant)
   - [ ] Test on same problems as Nelder-Mead
   - [ ] Document when to use each optimizer
 

@@ -10,12 +10,12 @@ import (
 func TestRenderNoteLength(t *testing.T) {
 	p := loadTestPreset(t)
 
-	s, err := NewSynthesizer(p, 48000)
+	synthesizer, err := NewSynthesizer(p, 48000)
 	if err != nil {
 		t.Fatalf("new synthesizer failed: %v", err)
 	}
 
-	got := s.RenderNote(69, 100, 1.0)
+	got := synthesizer.RenderNote(69, 100, 1.0)
 	if len(got) != 48000 {
 		t.Fatalf("unexpected sample count: got %d want %d", len(got), 48000)
 	}
@@ -27,13 +27,13 @@ func TestRenderNoteAutoStop(t *testing.T) {
 		p.Parameters.Modes[i].DecayMs = 0.1
 	}
 
-	s, err := NewSynthesizer(p, 48000)
+	synthesizer, err := NewSynthesizer(p, 48000)
 	if err != nil {
 		t.Fatalf("new synthesizer failed: %v", err)
 	}
 
-	full := s.RenderNote(69, 100, 2.0)
-	short := s.RenderNoteWithOptions(69, 100, 2.0, RenderOptions{
+	full := synthesizer.RenderNote(69, 100, 2.0)
+	short := synthesizer.RenderNoteWithOptions(69, 100, 2.0, RenderOptions{
 		AutoStop:  true,
 		DecayDBFS: 20,
 	})
@@ -46,13 +46,13 @@ func TestRenderNoteAutoStop(t *testing.T) {
 func TestRenderDifferentDurations(t *testing.T) {
 	p := loadTestPreset(t)
 
-	s, err := NewSynthesizer(p, 44100)
+	synthesizer, err := NewSynthesizer(p, 44100)
 	if err != nil {
 		t.Fatalf("new synthesizer failed: %v", err)
 	}
 
-	a := s.RenderNote(69, 100, 0.25)
-	b := s.RenderNote(69, 100, 0.5)
+	a := synthesizer.RenderNote(69, 100, 0.25)
+	b := synthesizer.RenderNote(69, 100, 0.5)
 
 	if len(a) >= len(b) {
 		t.Fatalf("expected longer duration to produce more samples: a=%d b=%d", len(a), len(b))

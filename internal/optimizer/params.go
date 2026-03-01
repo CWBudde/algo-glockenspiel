@@ -15,32 +15,61 @@ type Range struct {
 	Max float64
 }
 
+// Width returns the numeric width of the range.
+func (r Range) Width() float64 {
+	return r.Max - r.Min
+}
+
 // Clamp forces a value into the range.
-func (r Range) Clamp(v float64) float64 {
-	if v < r.Min {
+func (r Range) Clamp(value float64) float64 {
+	if value < r.Min {
 		return r.Min
 	}
 
-	if v > r.Max {
+	if value > r.Max {
 		return r.Max
 	}
 
-	return v
+	return value
 }
 
 // Contains reports whether v lies within the range.
-func (r Range) Contains(v float64) bool {
-	return v >= r.Min && v <= r.Max
+func (r Range) Contains(value float64) bool {
+	return value >= r.Min && value <= r.Max
+}
+
+// Normalize maps a value from the range into [0,1].
+func (r Range) Normalize(value float64) float64 {
+	if r.Max == r.Min {
+		return 0
+	}
+
+	return (r.Clamp(value) - r.Min) / (r.Max - r.Min)
+}
+
+// Denormalize maps a [0,1] value back into the range.
+func (r Range) Denormalize(value float64) float64 {
+	if r.Max == r.Min {
+		return r.Min
+	}
+	if value < 0 {
+		value = 0
+	}
+	if value > 1 {
+		value = 1
+	}
+
+	return r.Min + value*(r.Max-r.Min)
 }
 
 // Mirror reflects v into the range.
-func (r Range) Mirror(v float64) float64 {
-	if math.IsNaN(v) {
+func (r Range) Mirror(value float64) float64 {
+	if math.IsNaN(value) {
 		return r.Min
 	}
 
-	if math.IsInf(v, 0) {
-		return r.Clamp(v)
+	if math.IsInf(value, 0) {
+		return r.Clamp(value)
 	}
 
 	if r.Min == r.Max {
@@ -48,14 +77,14 @@ func (r Range) Mirror(v float64) float64 {
 	}
 
 	width := r.Max - r.Min
-	for v < r.Min || v > r.Max {
-		if v < r.Min {
-			v = r.Min + (r.Min - v)
+	for value < r.Min || value > r.Max {
+		if value < r.Min {
+			value = r.Min + (r.Min - value)
 			continue
 		}
 
-		if v > r.Max {
-			v = r.Max - (v - r.Max)
+		if value > r.Max {
+			value = r.Max - (value - r.Max)
 		}
 
 		if width == 0 {
@@ -63,7 +92,7 @@ func (r Range) Mirror(v float64) float64 {
 		}
 	}
 
-	return v
+	return value
 }
 
 // Bounds describes the encoded vector bounds.
@@ -192,16 +221,16 @@ func (b ParamBounds) Validate() error {
 		"decay_ms":       b.DecayMs,
 		"harmonic_gain":  b.HarmonicGain,
 	}
-	for name, r := range ranges {
-		if math.IsNaN(r.Min) || math.IsNaN(r.Max) || math.IsInf(r.Min, 0) || math.IsInf(r.Max, 0) {
+	for name, valueRange := range ranges {
+		if math.IsNaN(valueRange.Min) || math.IsNaN(valueRange.Max) || math.IsInf(valueRange.Min, 0) || math.IsInf(valueRange.Max, 0) {
 			return fmt.Errorf("%s bounds must be finite", name)
 		}
 
-		if r.Min > r.Max {
-			return fmt.Errorf("%s bounds invalid: min %g > max %g", name, r.Min, r.Max)
+		if valueRange.Min > valueRange.Max {
+			return fmt.Errorf("%s bounds invalid: min %g > max %g", name, valueRange.Min, valueRange.Max)
 		}
 
-		if r.Min <= 0 && (name == "filter_freq" || name == "base_frequency" || name == "frequency_mult") {
+		if valueRange.Min <= 0 && (name == "filter_freq" || name == "base_frequency" || name == "frequency_mult") {
 			return fmt.Errorf("%s bounds must be > 0 for log encoding", name)
 		}
 	}
@@ -361,14 +390,14 @@ func logRange(r Range) Range {
 	}
 }
 
-func expandRange(r Range, value float64) Range {
-	if value < r.Min {
-		r.Min = value
+func expandRange(valueRange Range, value float64) Range {
+	if value < valueRange.Min {
+		valueRange.Min = value
 	}
 
-	if value > r.Max {
-		r.Max = value
+	if value > valueRange.Max {
+		valueRange.Max = value
 	}
 
-	return r
+	return valueRange
 }

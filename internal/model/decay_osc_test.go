@@ -7,18 +7,18 @@ import (
 
 func TestQuadDecayOscillatorCoefficientCalculation(t *testing.T) {
 	const (
-		sr      = 48000.0
-		freq    = 1000.0
-		decayMs = 100.0
+		sampleRate = 48000.0
+		freq       = 1000.0
+		decayMs    = 100.0
 	)
 
-	osc := NewQuadDecayOscillator(sr)
+	osc := NewQuadDecayOscillator(sampleRate)
 	osc.SetAmplitude(0, 1)
 	osc.SetFrequency(0, freq)
 	osc.SetDecay(0, decayMs)
 
-	wantDecay := math.Exp(-math.Ln2 / (0.001 * decayMs * sr))
-	wantPhase := 2 * math.Pi * freq / sr
+	wantDecay := math.Exp(-math.Ln2 / (0.001 * decayMs * sampleRate))
+	wantPhase := 2 * math.Pi * freq / sampleRate
 	wantSin, wantCos := math.Sincos(wantPhase)
 
 	if !approxEqual(osc.decayFactor[0], wantDecay, 1e-12) {
@@ -46,20 +46,20 @@ func TestQuadDecayOscillatorDecayEnvelope(t *testing.T) {
 
 	// Impulse excites imag state; outputs follow geometric decay for freq=0.
 	_ = osc.ProcessSample32(1)
-	y1 := osc.ProcessSample32(0)
-	y2 := osc.ProcessSample32(0)
-	y3 := osc.ProcessSample32(0)
+	firstOutput := osc.ProcessSample32(0)
+	secondOutput := osc.ProcessSample32(0)
+	thirdOutput := osc.ProcessSample32(0)
 
-	if y1 == 0 || y2 == 0 || y3 == 0 {
+	if firstOutput == 0 || secondOutput == 0 || thirdOutput == 0 {
 		t.Fatal("expected non-zero decaying response")
 	}
 
-	r1 := float64(y2 / y1)
-	r2 := float64(y3 / y2)
+	firstRatio := float64(secondOutput / firstOutput)
+	secondRatio := float64(thirdOutput / secondOutput)
 
 	want := osc.decayFactor[0]
-	if !approxEqual(r1, want, 1e-5) || !approxEqual(r2, want, 1e-5) {
-		t.Fatalf("unexpected decay ratios: r1=%.6f r2=%.6f want=%.6f", r1, r2, want)
+	if !approxEqual(firstRatio, want, 1e-5) || !approxEqual(secondRatio, want, 1e-5) {
+		t.Fatalf("unexpected decay ratios: r1=%.6f r2=%.6f want=%.6f", firstRatio, secondRatio, want)
 	}
 }
 
@@ -124,15 +124,15 @@ func BenchmarkQuadDecayOscillatorProcessSample32(b *testing.B) {
 		osc.SetAmplitude(i, 0.5)
 	}
 
-	var x float32 = 1
+	var sample float32 = 1
 
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		x = osc.ProcessSample32(x * 0)
+		sample = osc.ProcessSample32(sample * 0)
 	}
 
-	_ = x
+	_ = sample
 }
 
 func BenchmarkQuadDecayOscillatorProcessBlock32(b *testing.B) {
@@ -141,15 +141,15 @@ func BenchmarkQuadDecayOscillatorProcessBlock32(b *testing.B) {
 		osc.SetAmplitude(i, 0.5)
 	}
 
-	in := make([]float32, 512)
+	input := make([]float32, 512)
 	out := make([]float32, 512)
-	in[0] = 1
+	input[0] = 1
 
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		osc.ProcessBlock32(in, out)
-		in[0] = 0
+		osc.ProcessBlock32(input, out)
+		input[0] = 0
 	}
 }
 

@@ -77,39 +77,39 @@ func (p *BarParams) Validate() error {
 }
 
 // ValidateBarParams validates bar model parameters.
-func ValidateBarParams(p *BarParams) error {
-	if p == nil {
+func ValidateBarParams(params *BarParams) error {
+	if params == nil {
 		return errors.New("bar params cannot be nil")
 	}
 
-	if err := validateFiniteRange("input_mix", p.InputMix, InputMixMin, InputMixMax); err != nil {
+	if err := validateFiniteRange("input_mix", params.InputMix, InputMixMin, InputMixMax); err != nil {
 		return err
 	}
 
-	if err := validateFiniteRange("filter_frequency", p.FilterFrequency, FilterFrequencyMinHz, FilterFrequencyMaxHz); err != nil {
+	if err := validateFiniteRange("filter_frequency", params.FilterFrequency, FilterFrequencyMinHz, FilterFrequencyMaxHz); err != nil {
 		return err
 	}
 
-	if err := validateFiniteRange("base_frequency", p.BaseFrequency, FrequencyMinHz, FrequencyMaxHz); err != nil {
+	if err := validateFiniteRange("base_frequency", params.BaseFrequency, FrequencyMinHz, FrequencyMaxHz); err != nil {
 		return err
 	}
 
-	for i, mode := range p.Modes {
-		if err := validateFiniteRange(fmt.Sprintf("modes[%d].amplitude", i), mode.Amplitude, AmplitudeMin, AmplitudeMax); err != nil {
+	for modeIndex, mode := range params.Modes {
+		if err := validateFiniteRange(fmt.Sprintf("modes[%d].amplitude", modeIndex), mode.Amplitude, AmplitudeMin, AmplitudeMax); err != nil {
 			return err
 		}
 
-		if err := validateFiniteRange(fmt.Sprintf("modes[%d].frequency", i), mode.Frequency, FrequencyMinHz, FrequencyMaxHz); err != nil {
+		if err := validateFiniteRange(fmt.Sprintf("modes[%d].frequency", modeIndex), mode.Frequency, FrequencyMinHz, FrequencyMaxHz); err != nil {
 			return err
 		}
 
-		if err := validateFiniteRange(fmt.Sprintf("modes[%d].decay_ms", i), mode.DecayMs, DecayMsMin, DecayMsMax); err != nil {
+		if err := validateFiniteRange(fmt.Sprintf("modes[%d].decay_ms", modeIndex), mode.DecayMs, DecayMsMin, DecayMsMax); err != nil {
 			return err
 		}
 	}
 
-	for i, gain := range p.Chebyshev.HarmonicGains {
-		if err := validateFiniteRange(fmt.Sprintf("chebyshev.harmonic_gains[%d]", i), gain, HarmonicGainMin, HarmonicGainMax); err != nil {
+	for gainIndex, gain := range params.Chebyshev.HarmonicGains {
+		if err := validateFiniteRange(fmt.Sprintf("chebyshev.harmonic_gains[%d]", gainIndex), gain, HarmonicGainMin, HarmonicGainMax); err != nil {
 			return err
 		}
 	}

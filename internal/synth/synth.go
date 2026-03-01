@@ -29,23 +29,23 @@ type Synthesizer struct {
 }
 
 // NewSynthesizer initializes synthesis from a preset.
-func NewSynthesizer(p *preset.Preset, sampleRate int) (*Synthesizer, error) {
+func NewSynthesizer(presetConfig *preset.Preset, sampleRate int) (*Synthesizer, error) {
 	if sampleRate <= 0 {
 		return nil, fmt.Errorf("sample rate must be positive: %d", sampleRate)
 	}
 
-	if err := preset.Validate(p); err != nil {
+	if err := preset.Validate(presetConfig); err != nil {
 		return nil, err
 	}
 
-	bar, err := model.NewBar(&p.Parameters, sampleRate)
+	bar, err := model.NewBar(&presetConfig.Parameters, sampleRate)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Synthesizer{
 		bar:        bar,
-		preset:     p,
+		preset:     presetConfig,
 		sampleRate: sampleRate,
 		blockSize:  defaultBlockSize,
 	}, nil

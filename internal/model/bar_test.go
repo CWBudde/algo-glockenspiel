@@ -141,23 +141,23 @@ func peakAbs(buf []float32) float64 {
 	return peak
 }
 
-func rmsDiff(a, b []float32) float64 {
-	if len(a) != len(b) {
+func rmsDiff(first, second []float32) float64 {
+	if len(first) != len(second) {
 		return math.Inf(1)
 	}
 
-	if len(a) == 0 {
+	if len(first) == 0 {
 		return 0
 	}
 
 	sum := 0.0
 
-	for i := range a {
-		d := float64(a[i] - b[i])
+	for i := range first {
+		d := float64(first[i] - second[i])
 		sum += d * d
 	}
 
-	return math.Sqrt(sum / float64(len(a)))
+	return math.Sqrt(sum / float64(len(first)))
 }
 
 func rms(buf []float32) float64 {

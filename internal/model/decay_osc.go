@@ -32,15 +32,15 @@ func NewQuadDecayOscillator(sampleRate float64) *QuadDecayOscillator {
 		sampleRate = defaultOscSampleRate
 	}
 
-	o := &QuadDecayOscillator{
+	oscillator := &QuadDecayOscillator{
 		sampleRate: sampleRate,
 		frequency:  [NumModes]float64{1000, 2000, 3000, 4000},
 		decayMs:    [NumModes]float64{100, 50, 20, 10},
 		amplitude:  [NumModes]float64{1, 0, 0, 0},
 	}
-	o.calculateCoefficients()
+	oscillator.calculateCoefficients()
 
-	return o
+	return oscillator
 }
 
 // Reset clears all oscillator state.
@@ -102,14 +102,14 @@ func (o *QuadDecayOscillator) MaxDecayFactor() float64 {
 
 // ProcessSample32 processes one excitation sample and returns resonant output.
 func (o *QuadDecayOscillator) ProcessSample32(input float32) float32 {
-	in := float64(input)
+	inputValue := float64(input)
 	sum := 0.0
 
 	for i := range o.realState {
 		temp := o.imagState[i]*o.cosCoeff[i] + o.realState[i]*o.sinCoeff[i]
 
 		o.realState[i] = o.realState[i]*o.cosCoeff[i] - o.imagState[i]*o.sinCoeff[i]
-		o.imagState[i] = o.amplitude[i]*in + temp
+		o.imagState[i] = o.amplitude[i]*inputValue + temp
 
 		sum += temp
 	}

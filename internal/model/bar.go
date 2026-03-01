@@ -34,15 +34,15 @@ func NewBar(params *BarParams, sampleRate int) (*Bar, error) {
 		return nil, err
 	}
 
-	b := &Bar{
+	bar := &Bar{
 		oscillator: NewQuadDecayOscillator(float64(sampleRate)),
 		sampleRate: sampleRate,
 	}
-	if err := b.UpdateParams(params); err != nil {
+	if err := bar.UpdateParams(params); err != nil {
 		return nil, err
 	}
 
-	return b, nil
+	return bar, nil
 }
 
 // SetSampleRate updates sample rate and recomputes derived coefficients.
@@ -85,37 +85,37 @@ func (b *Bar) Synthesize(velocity int, numSamples int) []float32 {
 
 // ProcessExcitation runs an externally provided excitation through the chain.
 func (b *Bar) ProcessExcitation(excitation []float32) []float32 {
-	n := len(excitation)
-	if n == 0 {
+	sampleCount := len(excitation)
+	if sampleCount == 0 {
 		return nil
 	}
 
-	b.ensureBuffers(n)
+	b.ensureBuffers(sampleCount)
 
-	for i := 0; i < n; i++ {
+	for i := 0; i < sampleCount; i++ {
 		b.filterBlock[i] = float64(excitation[i])
 	}
 
-	b.lowpass.ProcessBlock(b.filterBlock[:n])
+	b.lowpass.ProcessBlock(b.filterBlock[:sampleCount])
 
-	for i := 0; i < n; i++ {
+	for i := 0; i < sampleCount; i++ {
 		b.filteredBuf[i] = float32(b.filterBlock[i])
 	}
 
 	if b.params.Chebyshev.Enabled && len(b.params.Chebyshev.HarmonicGains) > 0 {
-		for i := 0; i < n; i++ {
+		for i := 0; i < sampleCount; i++ {
 			b.distortedBuf[i] = float32(applyChebyshev(float64(b.filteredBuf[i]), b.params.Chebyshev.HarmonicGains))
 		}
 	} else {
-		copy(b.distortedBuf[:n], b.filteredBuf[:n])
+		copy(b.distortedBuf[:sampleCount], b.filteredBuf[:sampleCount])
 	}
 
-	out := make([]float32, n)
-	b.oscillator.ProcessBlock32(b.distortedBuf[:n], out)
+	out := make([]float32, sampleCount)
+	b.oscillator.ProcessBlock32(b.distortedBuf[:sampleCount], out)
 
 	if b.params.InputMix != 0 {
 		dryMix := float32(b.params.InputMix)
-		for i := 0; i < n; i++ {
+		for i := 0; i < sampleCount; i++ {
 			out[i] += dryMix * b.filteredBuf[i]
 		}
 	}
@@ -172,16 +172,16 @@ func applyChebyshev(input float64, gains []float64) float64 {
 		return input
 	}
 
-	x := clamp(input, -1, 1)
+	clampedInput := clamp(input, -1, 1)
 
-	t0 := 1.0
-	t1 := x
-	out := gains[0] * t1
+	prevPrevTerm := 1.0
+	prevTerm := clampedInput
+	out := gains[0] * prevTerm
 
 	for i := 1; i < len(gains); i++ {
-		t2 := 2*x*t1 - t0
-		out += gains[i] * t2
-		t0, t1 = t1, t2
+		nextTerm := 2*clampedInput*prevTerm - prevPrevTerm
+		out += gains[i] * nextTerm
+		prevPrevTerm, prevTerm = prevTerm, nextTerm
 	}
 
 	return out

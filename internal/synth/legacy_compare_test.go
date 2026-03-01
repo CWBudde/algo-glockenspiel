@@ -96,13 +96,13 @@ func loadMonoWAV(path string) ([]float64, int, error) {
 	return samples, intBuffer.Format.SampleRate, nil
 }
 
-func correlation(a, b []float64) float64 {
-	if len(a) == 0 || len(a) != len(b) {
+func correlation(first, second []float64) float64 {
+	if len(first) == 0 || len(first) != len(second) {
 		return 0
 	}
 
-	meanA := mean(a)
-	meanB := mean(b)
+	meanA := mean(first)
+	meanB := mean(second)
 
 	var (
 		num  float64
@@ -110,9 +110,9 @@ func correlation(a, b []float64) float64 {
 		denB float64
 	)
 
-	for i := range a {
-		da := a[i] - meanA
-		db := b[i] - meanB
+	for i := range first {
+		da := first[i] - meanA
+		db := second[i] - meanB
 		num += da * db
 		denA += da * da
 		denB += db * db
@@ -126,19 +126,19 @@ func correlation(a, b []float64) float64 {
 	return num / den
 }
 
-func rmsDifference(a, b []float64) float64 {
-	if len(a) == 0 || len(a) != len(b) {
+func rmsDifference(first, second []float64) float64 {
+	if len(first) == 0 || len(first) != len(second) {
 		return math.Inf(1)
 	}
 
 	sum := 0.0
 
-	for i := range a {
-		d := a[i] - b[i]
+	for i := range first {
+		d := first[i] - second[i]
 		sum += d * d
 	}
 
-	return math.Sqrt(sum / float64(len(a)))
+	return math.Sqrt(sum / float64(len(first)))
 }
 
 func mean(values []float64) float64 {

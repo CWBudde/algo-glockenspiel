@@ -26,6 +26,9 @@ type fitOptions struct {
 	timeBudget    float64
 	reportEvery   int
 	workDir       string
+	mayflyVariant string
+	mayflyPop     int
+	mayflySeed    int64
 }
 
 func newFitCmd() *cobra.Command {
@@ -39,6 +42,9 @@ func newFitCmd() *cobra.Command {
 		timeBudget:    30,
 		reportEvery:   10,
 		workDir:       filepath.FromSlash("out/fit"),
+		mayflyVariant: "desma",
+		mayflyPop:     10,
+		mayflySeed:    1,
 	}
 
 	cmd := &cobra.Command{
@@ -62,6 +68,9 @@ func newFitCmd() *cobra.Command {
 	flags.Float64Var(&options.timeBudget, "time-budget", options.timeBudget, "Optimization time budget in seconds")
 	flags.IntVar(&options.reportEvery, "report-every", options.reportEvery, "Write progress every N major iterations")
 	flags.StringVar(&options.workDir, "work-dir", options.workDir, "Directory for checkpoints and rendered fit output")
+	flags.StringVar(&options.mayflyVariant, "mayfly-variant", options.mayflyVariant, "Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa")
+	flags.IntVar(&options.mayflyPop, "mayfly-pop", options.mayflyPop, "Male/female population size for Mayfly")
+	flags.Int64Var(&options.mayflySeed, "mayfly-seed", options.mayflySeed, "Random seed for Mayfly")
 
 	_ = cmd.MarkFlagRequired("reference")
 	_ = cmd.MarkFlagRequired("output")
@@ -102,8 +111,11 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return fmt.Errorf("report-every must be >= 0, got %d", options.reportEvery)
 	}
 
-	if options.optimizerName != "simple" {
+	if options.optimizerName != "simple" && options.optimizerName != "mayfly" {
 		return fmt.Errorf("unsupported optimizer %q", options.optimizerName)
+	}
+	if options.optimizerName == "mayfly" && options.mayflyPop < 2 {
+		return fmt.Errorf("mayfly-pop must be >= 2, got %d", options.mayflyPop)
 	}
 
 	if err := os.MkdirAll(options.workDir, 0o755); err != nil {
@@ -136,13 +148,23 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 
 	optBounds := objective.Codec().EncodedBounds()
 
-	simpleOptimizer := &optimizer.SimpleOptimizer{}
 	bestCheckpointPath := func(iter int) string {
 		return filepath.Join(options.workDir, fmt.Sprintf("checkpoint_%04d.json", iter))
 	}
 	wroteCheckpoint := false
+	var selectedOptimizer optimizer.Optimizer
+	switch options.optimizerName {
+	case "simple":
+		selectedOptimizer = &optimizer.SimpleOptimizer{}
+	case "mayfly":
+		selectedOptimizer = &optimizer.MayflyOptimizer{
+			Variant:    options.mayflyVariant,
+			Population: options.mayflyPop,
+			Seed:       options.mayflySeed,
+		}
+	}
 
-	result, err := simpleOptimizer.Optimize(objective.Objective(), initialEncoded, optBounds, optimizer.OptimizeOptions{
+	result, err := selectedOptimizer.Optimize(objective.Objective(), initialEncoded, optBounds, optimizer.OptimizeOptions{
 		MaxIterations: options.maxIter,
 		TimeBudget:    time.Duration(options.timeBudget * float64(time.Second)),
 		ReportEvery:   options.reportEvery,

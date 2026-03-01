@@ -21,13 +21,13 @@ func TestLoadDefaultPreset(t *testing.T) {
 }
 
 func TestLoadMinimalPreset(t *testing.T) {
-	p, err := Load(filepath.FromSlash("../../testdata/presets/minimal.json"))
+	preset, err := Load(filepath.FromSlash("../../testdata/presets/minimal.json"))
 	if err != nil {
 		t.Fatalf("expected minimal preset to load, got error: %v", err)
 	}
 
-	if p.Note != 69 {
-		t.Fatalf("expected note 69, got %d", p.Note)
+	if preset.Note != 69 {
+		t.Fatalf("expected note 69, got %d", preset.Note)
 	}
 }
 

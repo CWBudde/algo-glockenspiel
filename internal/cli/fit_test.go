@@ -70,3 +70,26 @@ func TestRunFitWritesArtifacts(t *testing.T) {
 		t.Fatal("expected at least one checkpoint file")
 	}
 }
+
+func TestRunFitRejectsInvalidMayflyPopulation(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	err := runFit(cmd, fitOptions{
+		referencePath: "dummy.wav",
+		outputPath:    "dummy.json",
+		note:          69,
+		velocity:      100,
+		sampleRate:    44100,
+		optimizerName: "mayfly",
+		maxIter:       1,
+		timeBudget:    1,
+		reportEvery:   1,
+		workDir:       t.TempDir(),
+		mayflyPop:     1,
+	})
+	if err == nil {
+		t.Fatal("expected invalid mayfly population to fail")
+	}
+}

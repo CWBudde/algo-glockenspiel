@@ -25,16 +25,16 @@ func Load(path string) (*Preset, error) {
 		return nil, fmt.Errorf("read preset %q: %w", path, err)
 	}
 
-	var p Preset
-	if err := json.Unmarshal(data, &p); err != nil {
+	var preset Preset
+	if err := json.Unmarshal(data, &preset); err != nil {
 		return nil, fmt.Errorf("decode preset %q: %w", path, err)
 	}
 
-	if err := Validate(&p); err != nil {
+	if err := Validate(&preset); err != nil {
 		return nil, fmt.Errorf("validate preset %q: %w", path, err)
 	}
 
-	return &p, nil
+	return &preset, nil
 }
 
 // Save validates and writes a preset to JSON.
@@ -62,24 +62,24 @@ func Save(p *Preset, path string) error {
 }
 
 // Validate checks preset metadata and model parameter validity.
-func Validate(p *Preset) error {
-	if p == nil {
+func Validate(preset *Preset) error {
+	if preset == nil {
 		return errors.New("preset cannot be nil")
 	}
 
-	if p.Version == "" {
+	if preset.Version == "" {
 		return errors.New("version cannot be empty")
 	}
 
-	if p.Name == "" {
+	if preset.Name == "" {
 		return errors.New("name cannot be empty")
 	}
 
-	if p.Note < 0 || p.Note > 127 {
-		return fmt.Errorf("note out of MIDI range [0,127]: %d", p.Note)
+	if preset.Note < 0 || preset.Note > 127 {
+		return fmt.Errorf("note out of MIDI range [0,127]: %d", preset.Note)
 	}
 
-	if err := p.Parameters.Validate(); err != nil {
+	if err := preset.Parameters.Validate(); err != nil {
 		return fmt.Errorf("parameters: %w", err)
 	}
 
