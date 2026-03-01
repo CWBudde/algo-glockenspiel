@@ -22,8 +22,9 @@ const (
 // ObjectiveFunction evaluates synthesized audio against a reference signal.
 type ObjectiveFunction struct {
 	reference  []float32
-	template   preset.Preset
+	working    *preset.Preset
 	codec      *ParamCodec
+	engine     *synth.Synthesizer
 	sampleRate int
 	note       int
 	velocity   int
@@ -73,10 +74,17 @@ func NewObjectiveFunctionWithBounds(reference []float32, template *preset.Preset
 		return nil, err
 	}
 
+	working := *template
+	engine, err := synth.NewSynthesizer(&working, sampleRate)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ObjectiveFunction{
 		reference:  append([]float32(nil), reference...),
-		template:   *template,
+		working:    &working,
 		codec:      codec,
+		engine:     engine,
 		sampleRate: sampleRate,
 		note:       note,
 		velocity:   velocity,
@@ -125,15 +133,8 @@ func (o *ObjectiveFunction) Evaluate(encoded []float64) float64 {
 		return math.Inf(1)
 	}
 
-	workingPreset := o.template
-	workingPreset.Parameters = *params
-
-	engine, err := synth.NewSynthesizer(&workingPreset, o.sampleRate)
-	if err != nil {
-		return math.Inf(1)
-	}
-
-	rendered := engine.RenderNote(o.note, o.velocity, o.duration)
+	o.working.Parameters = *params
+	rendered := o.engine.RenderNote(o.note, o.velocity, o.duration)
 	switch o.metric {
 	case MetricRMS:
 		return ComputeRMSError(rendered, o.reference)

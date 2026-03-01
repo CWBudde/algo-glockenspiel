@@ -21,6 +21,7 @@ type Bar struct {
 	excitationBuf []float32
 	filteredBuf   []float32
 	distortedBuf  []float32
+	outputBuf     []float32
 	filterBlock   []float64
 }
 
@@ -110,7 +111,7 @@ func (b *Bar) ProcessExcitation(excitation []float32) []float32 {
 		copy(b.distortedBuf[:sampleCount], b.filteredBuf[:sampleCount])
 	}
 
-	out := make([]float32, sampleCount)
+	out := b.outputBuf[:sampleCount]
 	b.oscillator.ProcessBlock32(b.distortedBuf[:sampleCount], out)
 
 	if b.params.InputMix != 0 {
@@ -146,6 +147,7 @@ func (b *Bar) ensureBuffers(numSamples int) {
 		b.excitationBuf = make([]float32, numSamples)
 		b.filteredBuf = make([]float32, numSamples)
 		b.distortedBuf = make([]float32, numSamples)
+		b.outputBuf = make([]float32, numSamples)
 		b.filterBlock = make([]float64, numSamples)
 	}
 }

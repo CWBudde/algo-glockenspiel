@@ -964,19 +964,19 @@ Recommended order:
 
 - [ ] **Profile and optimize hot paths**
   - [ ] Run CPU profiler on fit command
-  - [ ] Identify bottlenecks
+  - [x] Identify bottlenecks
   - [ ] Optimize oscillator processing
     - [ ] Consider SIMD (assembly or compiler hints)
     - [ ] Optimize coefficient recalculation
 
   - [ ] Optimize objective function
-    - [ ] Minimize allocations
-    - [ ] Reuse buffers
+    - [x] Minimize allocations
+    - [x] Reuse buffers
     - [ ] Consider parallel evaluation (if optimizer supports)
 
   - [ ] Benchmark improvements
-    - [ ] Measure samples/second for synthesis
-    - [ ] Measure evaluations/second for optimization
+    - [x] Measure samples/second for synthesis
+    - [x] Measure evaluations/second for optimization
     - [ ] Compare before/after
 
 #### 3.5 Documentation & Examples
