@@ -15,36 +15,42 @@ import (
 )
 
 type fitOptions struct {
-	referencePath string
-	presetPath    string
-	outputPath    string
-	note          int
-	velocity      int
-	sampleRate    int
-	optimizerName string
-	maxIter       int
-	timeBudget    float64
-	reportEvery   int
-	workDir       string
-	mayflyVariant string
-	mayflyPop     int
-	mayflySeed    int64
+	referencePath   string
+	presetPath      string
+	outputPath      string
+	note            int
+	velocity        int
+	sampleRate      int
+	optimizerName   string
+	maxIter         int
+	timeBudget      float64
+	reportEvery     int
+	checkpointEvery int
+	workDir         string
+	resume          bool
+	metric          string
+	mayflyVariant   string
+	mayflyPop       int
+	mayflySeed      int64
 }
 
 func newFitCmd() *cobra.Command {
 	options := fitOptions{
-		presetPath:    filepath.FromSlash("assets/presets/default.json"),
-		note:          69,
-		velocity:      100,
-		sampleRate:    44100,
-		optimizerName: "simple",
-		maxIter:       100,
-		timeBudget:    30,
-		reportEvery:   10,
-		workDir:       filepath.FromSlash("out/fit"),
-		mayflyVariant: "desma",
-		mayflyPop:     10,
-		mayflySeed:    1,
+		presetPath:      filepath.FromSlash("assets/presets/default.json"),
+		note:            69,
+		velocity:        100,
+		sampleRate:      44100,
+		optimizerName:   "simple",
+		maxIter:         100,
+		timeBudget:      30,
+		reportEvery:     10,
+		checkpointEvery: 1,
+		workDir:         filepath.FromSlash("out/fit"),
+		resume:          false,
+		metric:          string(optimizer.MetricRMS),
+		mayflyVariant:   "desma",
+		mayflyPop:       10,
+		mayflySeed:      1,
 	}
 
 	cmd := &cobra.Command{
@@ -67,7 +73,10 @@ func newFitCmd() *cobra.Command {
 	flags.IntVar(&options.maxIter, "max-iter", options.maxIter, "Maximum optimizer iterations")
 	flags.Float64Var(&options.timeBudget, "time-budget", options.timeBudget, "Optimization time budget in seconds")
 	flags.IntVar(&options.reportEvery, "report-every", options.reportEvery, "Write progress every N major iterations")
+	flags.IntVar(&options.checkpointEvery, "checkpoint-interval", options.checkpointEvery, "Write checkpoint every N progress iterations (0 disables intermediate checkpoints)")
 	flags.StringVar(&options.workDir, "work-dir", options.workDir, "Directory for checkpoints and rendered fit output")
+	flags.BoolVar(&options.resume, "resume", options.resume, "Resume fit from the latest checkpoint in work-dir")
+	flags.StringVar(&options.metric, "metric", options.metric, "Objective metric: rms|log|spectral")
 	flags.StringVar(&options.mayflyVariant, "mayfly-variant", options.mayflyVariant, "Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa")
 	flags.IntVar(&options.mayflyPop, "mayfly-pop", options.mayflyPop, "Male/female population size for Mayfly")
 	flags.Int64Var(&options.mayflySeed, "mayfly-seed", options.mayflySeed, "Random seed for Mayfly")
@@ -110,9 +119,19 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	if options.reportEvery < 0 {
 		return fmt.Errorf("report-every must be >= 0, got %d", options.reportEvery)
 	}
+	if options.checkpointEvery < 0 {
+		return fmt.Errorf("checkpoint-interval must be >= 0, got %d", options.checkpointEvery)
+	}
 
 	if options.optimizerName != "simple" && options.optimizerName != "mayfly" {
 		return fmt.Errorf("unsupported optimizer %q", options.optimizerName)
+	}
+	if options.metric == "" {
+		options.metric = string(optimizer.MetricRMS)
+	}
+	metric, err := optimizer.ParseMetric(options.metric)
+	if err != nil {
+		return err
 	}
 	if options.optimizerName == "mayfly" && options.mayflyPop < 2 {
 		return fmt.Errorf("mayfly-pop must be >= 2, got %d", options.mayflyPop)
@@ -136,7 +155,7 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return err
 	}
 
-	objective, err := optimizer.NewObjectiveFunction(reference, initialPreset, options.sampleRate, options.note, options.velocity, optimizer.MetricRMS)
+	objective, err := optimizer.NewObjectiveFunction(reference, initialPreset, options.sampleRate, options.note, options.velocity, metric)
 	if err != nil {
 		return err
 	}
@@ -145,6 +164,24 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	if err != nil {
 		return err
 	}
+	if options.resume {
+		latestPath, err := optimizer.FindLatestCheckpoint(options.workDir)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err == nil {
+			cp, err := optimizer.LoadCheckpoint(latestPath)
+			if err != nil {
+				return err
+			}
+			if len(cp.BestParams) == len(initialEncoded) {
+				initialEncoded = append(initialEncoded[:0], cp.BestParams...)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"Resuming from %s (iteration=%d best=%0.6g)\n",
+					latestPath, cp.Iteration, cp.BestCost)
+			}
+		}
+	}
 
 	optBounds := objective.Codec().EncodedBounds()
 
@@ -152,6 +189,19 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return filepath.Join(options.workDir, fmt.Sprintf("checkpoint_%04d.json", iter))
 	}
 	wroteCheckpoint := false
+	saveCheckpoint := func(iteration int, params []float64, cost float64) error {
+		if len(params) == 0 {
+			return nil
+		}
+		return optimizer.SaveCheckpoint(bestCheckpointPath(iteration), &optimizer.Checkpoint{
+			Version:    "1.0",
+			Iteration:  iteration,
+			BestCost:   cost,
+			BestParams: append([]float64(nil), params...),
+			Optimizer:  options.optimizerName,
+			Metric:     options.metric,
+		})
+	}
 	var selectedOptimizer optimizer.Optimizer
 	switch options.optimizerName {
 	case "simple":
@@ -172,11 +222,8 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"iteration %d: current=%0.6g best=%0.6g evals=%d elapsed=%s\n",
 				progress.Iteration, progress.CurrentCost, progress.BestCost, progress.Evaluations, progress.Elapsed.Round(time.Millisecond))
-			if params, err := objective.Codec().DecodeParams(progress.BestParams); err == nil {
-				checkpoint := *initialPreset
-
-				checkpoint.Parameters = *params
-				if preset.Save(&checkpoint, bestCheckpointPath(progress.Iteration)) == nil {
+			if options.checkpointEvery > 0 && progress.Iteration%options.checkpointEvery == 0 {
+				if saveCheckpoint(progress.Iteration, progress.BestParams, progress.BestCost) == nil {
 					wroteCheckpoint = true
 				}
 			}
@@ -198,8 +245,8 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return err
 	}
 
-	if options.reportEvery > 0 && !wroteCheckpoint {
-		if err := preset.Save(&fittedPreset, bestCheckpointPath(result.Iterations)); err != nil {
+	if (!wroteCheckpoint && options.checkpointEvery > 0) || options.resume {
+		if err := saveCheckpoint(result.Iterations, result.BestParams, result.BestCost); err != nil {
 			return err
 		}
 	}

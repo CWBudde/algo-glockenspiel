@@ -1,22 +1,25 @@
 # Glockenspiel
 
-`glockenspiel` is a physical-model glockenspiel instrument implemented in Go. It combines a modal bar resonator, nonlinear excitation, offline parameter fitting, and a VST3 plugin layer for DAW use.
+`glockenspiel` is a Go implementation of a physical-model glockenspiel synthesizer. It started as a port of a legacy Pascal/Delphi model and currently ships as a CLI for note rendering and offline preset fitting.
 
-The project started as a port of a legacy Pascal/Delphi glockenspiel model and now ships as both a command-line tool and a plugin-oriented synthesis engine. It supports note rendering, preset authoring, parameter optimization against recorded references, checkpointed fitting workflows, and polyphonic playback across the MIDI range.
+## Status
 
-## Features
+Implemented today:
 
-- Four-mode physical bar model built around a quadrature decay oscillator.
-- Nonlinear excitation with lowpass shaping and Chebyshev harmonic generation.
-- CLI rendering to mono WAV with note scaling, velocity control, and auto-stop.
-- Preset loading, validation, editing, and JSON round-tripping.
-- Parameter fitting from reference WAV material.
-- Multiple optimizers: Nelder-Mead for fast local refinement and Mayfly for broader search.
-- Multiple distance metrics: RMS, log-RMS, and spectral distance.
-- Checkpoint and resume support for long optimization runs.
-- Legacy comparison coverage against exported reference renders.
-- Polyphonic engine and full MIDI-range note support.
-- VST3 wrapper with GUI parameter editing, preset browsing, and analysis views.
+- four-mode bar model with quadrature decay oscillators
+- preset load/save/validation
+- note rendering to mono WAV
+- offline fitting against reference WAVs
+- RMS, log-RMS, and spectral objective metrics
+- Nelder-Mead and Mayfly optimizer backends
+- checkpoint and resume support
+- legacy-reference regression tests
+
+Not implemented in this repository:
+
+- VST or DAW plugin support
+- GUI tooling
+- full internal optimizer-state resume
 
 ## Project Layout
 
@@ -26,33 +29,28 @@ The project started as a port of a legacy Pascal/Delphi glockenspiel model and n
 ├── assets/presets          # Built-in presets
 ├── internal/cli            # Cobra commands
 ├── internal/model          # Physical model and bar synthesis
-├── internal/optimizer      # Objective functions, optimizers, checkpoints
+├── internal/optimizer      # Objectives, optimizers, checkpoints
 ├── internal/preset         # JSON preset I/O and validation
-├── internal/synth          # Rendering engine and note orchestration
+├── internal/synth          # Rendering engine
 ├── testdata                # Reference audio and preset fixtures
 └── justfile                # Common development tasks
 ```
 
-## Installation
-
-Requirements:
+## Requirements
 
 - Go 1.25+
-- `just` for the convenience tasks in [`justfile`](/mnt/projekte/Code/algo-glockenspiel/justfile)
+- optional: `just`
+- optional: `treefmt`, `golangci-lint`
 
-Build the CLI:
+## Build
+
+With `just`:
 
 ```bash
 just build
 ```
 
-Install it into your Go bin directory:
-
-```bash
-just install
-```
-
-Build directly with Go:
+Directly:
 
 ```bash
 go build -o bin/glockenspiel ./cmd/glockenspiel
@@ -60,97 +58,99 @@ go build -o bin/glockenspiel ./cmd/glockenspiel
 
 ## Quick Start
 
-Render a note from the default preset:
+Render a note:
 
 ```bash
 glockenspiel synth \
   --preset assets/presets/default.json \
   --note 69 \
   --velocity 100 \
-  --duration 3.0 \
+  --duration 2.0 \
+  --sample-rate 44100 \
   --output out/a4.wav
 ```
 
-Fit a preset against a recorded note:
+Fit a preset against a reference note:
 
 ```bash
 glockenspiel fit \
-  --reference samples/a4.wav \
+  --reference testdata/reference/legacy_synth_a4.wav \
   --preset assets/presets/default.json \
   --output out/fitted-a4.json \
-  --optimizer mayfly \
+  --optimizer simple \
   --metric spectral \
-  --max-iter 2000 \
-  --checkpoint-interval 30s \
+  --max-iter 100 \
+  --time-budget 30 \
   --work-dir out/fit-a4
 ```
 
-Resume a stopped optimization:
+Resume from the latest checkpoint in a work directory:
 
 ```bash
 glockenspiel fit \
-  --resume out/fit-a4/checkpoint_latest.json \
-  --output out/fitted-a4.json
+  --reference testdata/reference/legacy_synth_a4.wav \
+  --preset assets/presets/default.json \
+  --output out/fitted-a4.json \
+  --work-dir out/fit-a4 \
+  --resume
 ```
 
-Print the version:
+For a more complete walkthrough, see [docs/user-guide.md](/mnt/projekte/Code/algo-glockenspiel/docs/user-guide.md).
 
-```bash
-glockenspiel version
-```
-
-## CLI Reference
+## CLI
 
 ### `glockenspiel synth`
 
-Render a single note to WAV.
+Renders a single note to a mono WAV file.
 
-Common flags:
+Important flags:
 
-- `--preset`: preset JSON file.
-- `--output`: output WAV path.
-- `--note`: MIDI note number.
-- `--velocity`: MIDI velocity `0..127`.
-- `--duration`: target render duration in seconds.
-- `--sample-rate`: output sample rate in Hz.
-- `--auto-stop`: stop once the tail decays below the configured threshold.
-- `--decay-dbfs`: auto-stop threshold in dBFS.
+- `--preset`: preset JSON path
+- `--output`: output WAV path
+- `--note`: MIDI note number
+- `--velocity`: MIDI velocity `0..127`
+- `--duration`: render duration in seconds
+- `--sample-rate`: output sample rate
+- `--auto-stop`: stop when the tail decays below threshold
+- `--decay-dbfs`: auto-stop threshold in dBFS
 
 ### `glockenspiel fit`
 
-Optimize model parameters to match a reference recording.
+Optimizes bar parameters against a mono reference WAV.
 
-Common flags:
+Important flags:
 
-- `--reference`: input WAV to fit.
-- `--preset`: starting preset.
-- `--output`: destination preset JSON.
-- `--note`: MIDI note number used during synthesis.
-- `--velocity`: strike velocity used during synthesis.
-- `--sample-rate`: synthesis sample rate.
-- `--optimizer`: `simple` or `mayfly`.
-- `--metric`: `rms`, `log-rms`, or `spectral`.
-- `--max-iter`: iteration cap.
-- `--time-budget`: wall-clock limit.
-- `--report-every`: progress report interval.
-- `--work-dir`: artifacts, checkpoints, and rendered comparisons.
-- `--resume`: resume from a saved checkpoint.
-- `--checkpoint-interval`: periodic checkpoint save interval.
+- `--reference`: input WAV to match
+- `--preset`: starting preset JSON
+- `--output`: fitted preset output path
+- `--note`: MIDI note used during synthesis
+- `--velocity`: strike velocity used during synthesis
+- `--sample-rate`: reference/render sample rate
+- `--optimizer`: `simple` or `mayfly`
+- `--metric`: `rms`, `log`, or `spectral`
+- `--max-iter`: iteration limit
+- `--time-budget`: time limit in seconds
+- `--report-every`: progress print interval
+- `--checkpoint-interval`: checkpoint write interval in progress iterations, `0` disables intermediate checkpoint writes
+- `--work-dir`: directory for checkpoints and rendered comparison output
+- `--resume`: resume from the latest `checkpoint_*.json` in `work-dir`
+- `--mayfly-variant`: `ma|desma|olce|eobbma|gsasma|mpma|aoblmoa`
+- `--mayfly-pop`: Mayfly population size
+- `--mayfly-seed`: Mayfly random seed
 
 Outputs:
 
-- fitted preset JSON
-- rendered fitted WAV
-- progress/checkpoint artifacts in the work directory
-- final similarity summary
+- fitted preset JSON at `--output`
+- rendered best-fit WAV at `<work-dir>/fitted_output.wav`
+- checkpoint files at `<work-dir>/checkpoint_*.json`
 
 ### `glockenspiel version`
 
-Print the build version.
+Prints the build version.
 
 ## Presets
 
-Presets are stored as JSON and validated on load and save. A preset contains metadata, the reference MIDI note, and the full bar parameter set.
+Presets are JSON files with metadata plus the full bar parameter set. The reference note stored in the preset is used as the scaling origin for rendering other MIDI notes.
 
 Example:
 
@@ -177,37 +177,25 @@ Example:
 }
 ```
 
-Built-in presets live in [`assets/presets/default.json`](/mnt/projekte/Code/algo-glockenspiel/assets/presets/default.json).
+See [default.json](/mnt/projekte/Code/algo-glockenspiel/assets/presets/default.json).
 
-## Optimization Workflow
+## Fitting Workflow
 
-The fitting pipeline is designed for both quick iteration and long-running searches:
+The fitting loop is:
 
-1. Load a preset or checkpoint.
-2. Encode model parameters into an optimization vector.
-3. Render a candidate note through the synthesis engine.
-4. Compare it to the reference using RMS, log-RMS, or spectral distance.
-5. Update the search state with Nelder-Mead or Mayfly.
-6. Persist checkpoints and the current best preset on schedule.
-7. Export the final preset and a comparison render.
+1. Load a preset and reference WAV.
+2. Encode bar parameters into an optimization vector.
+3. Render a candidate note.
+4. Compare the candidate against the reference with the selected metric.
+5. Update the search with Nelder-Mead or Mayfly.
+6. Persist checkpoints and the current best preset.
+7. Write the final preset and a rendered comparison WAV.
 
-Use `simple` when you already have a strong initial preset and want faster convergence. Use `mayfly` when the search space is rough, the initial preset is weak, or spectral matching matters more than raw speed.
-
-## Plugin and GUI
-
-The VST3 build exposes the same synthesis engine to a DAW environment with:
-
-- MIDI-triggered polyphonic playback
-- parameter automation
-- preset browser integration
-- waveform and spectrum views
-- note-range support across the full instrument
-
-The GUI is intended for sound design and fit-result inspection rather than command-line batch work.
+Use `simple` when you already have a reasonable starting preset and want predictable local refinement. Use `mayfly` when the initial preset is weak or the search surface is rough.
 
 ## Development
 
-Common tasks from [`justfile`](/mnt/projekte/Code/algo-glockenspiel/justfile):
+Common tasks:
 
 ```bash
 just fmt
@@ -225,30 +213,29 @@ go test -race ./...
 go test -run=^$ -bench=. -benchmem ./...
 ```
 
-## Testing and Validation
+## Testing
 
-The test suite covers:
+The repository includes tests for:
 
 - parameter validation
 - preset round-trips
-- oscillator correctness and numerical stability
-- bar synthesis behavior
-- synth integration
-- CLI command behavior
-- optimization infrastructure
+- oscillator stability
+- bar and synth integration
+- CLI behavior
+- optimizer infrastructure
 - checkpoint/resume flows
-- legacy render comparisons
+- synthetic and legacy reference fitting
 
-Reference assets for regression coverage live under [`testdata/reference`](/mnt/projekte/Code/algo-glockenspiel/testdata/reference).
+Reference audio lives in [testdata/reference](/mnt/projekte/Code/algo-glockenspiel/testdata/reference).
 
-## Architecture Notes
+## Architecture
 
-The synthesis chain is:
+Synthesis chain:
 
-1. Excitation impulse from note velocity.
-2. Lowpass pre-emphasis filtering.
-3. Chebyshev harmonic excitation.
-4. Four parallel decaying resonant modes.
-5. Dry/wet mix and final output.
+1. excitation impulse from velocity
+2. lowpass pre-emphasis
+3. Chebyshev harmonic excitation
+4. four decaying resonant modes
+5. dry/wet mix and output
 
-The optimizer stack is separate from the audio model, which keeps synthesis deterministic and makes new search strategies or metrics straightforward to add.
+The optimizer layer is kept separate from the synthesis engine so new metrics and search strategies can be added without changing the core model.

@@ -924,41 +924,41 @@ Recommended order:
 #### 3.2 Spectral Distance Metric
 
 - [ ] **Implement spectral comparison** (`internal/optimizer/spectral.go`)
-  - [ ] Add FFT dependency (algo-fft)
-  - [ ] Implement magnitude spectrum extraction
-  - [ ] Implement spectral distance metric
-    - [ ] Convert to dB scale
-    - [ ] Weight by frequency (emphasize fundamentals)
-    - [ ] Compute weighted difference
+  - [x] Add FFT dependency (algo-fft)
+  - [x] Implement magnitude spectrum extraction
+  - [x] Implement spectral distance metric
+    - [x] Convert to dB scale
+    - [x] Weight by frequency (emphasize fundamentals)
+    - [x] Compute weighted difference
 
-  - [ ] Add to objective function options
-  - [ ] Add `--metric` flag to fit command (rms|log-rms|spectral)
-  - [ ] Test spectral metric vs time-domain
+  - [x] Add to objective function options
+  - [x] Add `--metric` flag to fit command (rms|log|spectral)
+  - [x] Test spectral metric vs time-domain
   - [ ] Compare perceptual quality of results
 
 #### 3.3 Checkpoint & Resume
 
 - [ ] **Implement checkpoint system** (`internal/optimizer/checkpoint.go`)
-  - [ ] Define checkpoint file format (JSON)
-    - [ ] Current iteration
-    - [ ] Best parameters so far
-    - [ ] Best cost
+  - [x] Define checkpoint file format (JSON)
+    - [x] Current iteration
+    - [x] Best parameters so far
+    - [x] Best cost
     - [ ] Optimizer state (if applicable)
-    - [ ] Timestamp
+    - [x] Timestamp
 
-  - [ ] Implement checkpoint save
-    - [ ] Save every N iterations or N seconds
-    - [ ] Atomic write (temp file + rename)
+  - [x] Implement checkpoint save
+    - [x] Save every N iterations or N seconds
+    - [x] Atomic write (temp file + rename)
 
-  - [ ] Implement checkpoint load
-    - [ ] Resume from checkpoint file
+  - [x] Implement checkpoint load
+    - [x] Resume from checkpoint file
     - [ ] Restore optimizer state
-    - [ ] Continue from iteration N
+    - [x] Continue from iteration N
 
-  - [ ] Add to fit command
-    - [ ] Add `--resume` flag
-    - [ ] Add `--checkpoint-interval` flag
-    - [ ] Test resume works correctly
+  - [x] Add to fit command
+    - [x] Add `--resume` flag
+    - [x] Add `--checkpoint-interval` flag
+    - [x] Test resume works correctly
 
 #### 3.4 Performance Optimization
 
@@ -982,17 +982,17 @@ Recommended order:
 #### 3.5 Documentation & Examples
 
 - [ ] **Write comprehensive documentation**
-  - [ ] Update README.md
-    - [ ] Project overview
-    - [ ] Installation instructions
-    - [ ] Quick start guide
-    - [ ] CLI reference
+  - [x] Update README.md
+    - [x] Project overview
+    - [x] Installation instructions
+    - [x] Quick start guide
+    - [x] CLI reference
 
-  - [ ] Write user guide
-    - [ ] How to use synth command
-    - [ ] How to use fit command
-    - [ ] Parameter guide
-    - [ ] Troubleshooting
+  - [x] Write user guide
+    - [x] How to use synth command
+    - [x] How to use fit command
+    - [x] Parameter guide
+    - [x] Troubleshooting
 
   - [ ] Write developer guide
     - [ ] Architecture overview

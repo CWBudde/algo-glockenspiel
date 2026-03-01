@@ -101,6 +101,16 @@ func TestNewObjectiveFunctionRejectsBadInput(t *testing.T) {
 	}
 }
 
+func TestNewObjectiveFunctionAcceptsSpectralMetric(t *testing.T) {
+	template := loadObjectivePreset(t)
+	reference := make([]float32, 512)
+	reference[0] = 1
+
+	if _, err := NewObjectiveFunction(reference, template, 44100, 69, 100, MetricSpectral); err != nil {
+		t.Fatalf("expected spectral metric constructor to succeed, got %v", err)
+	}
+}
+
 func renderReference(t *testing.T, p *preset.Preset, sampleRate, note, velocity int, duration float64) []float32 {
 	t.Helper()
 

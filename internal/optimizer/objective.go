@@ -14,8 +14,9 @@ const defaultLogErrorFloor = 1e-20
 type Metric string
 
 const (
-	MetricRMS Metric = "rms"
-	MetricLog Metric = "log"
+	MetricRMS      Metric = "rms"
+	MetricLog      Metric = "log"
+	MetricSpectral Metric = "spectral"
 )
 
 // ObjectiveFunction evaluates synthesized audio against a reference signal.
@@ -59,7 +60,7 @@ func NewObjectiveFunctionWithBounds(reference []float32, template *preset.Preset
 		return nil, fmt.Errorf("reference audio cannot be empty")
 	}
 
-	if metric != MetricRMS && metric != MetricLog {
+	if metric != MetricRMS && metric != MetricLog && metric != MetricSpectral {
 		return nil, fmt.Errorf("unsupported metric %q", metric)
 	}
 
@@ -138,6 +139,8 @@ func (o *ObjectiveFunction) Evaluate(encoded []float64) float64 {
 		return ComputeRMSError(rendered, o.reference)
 	case MetricLog:
 		return ComputeLogError(rendered, o.reference, o.logFloor, o.costOffset)
+	case MetricSpectral:
+		return ComputeSpectralError(rendered, o.reference, o.sampleRate)
 	default:
 		return math.Inf(1)
 	}
