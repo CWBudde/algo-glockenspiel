@@ -515,6 +515,42 @@ testdata/
 
 ## Implementation Phases
 
+## Current Status (2026-03-01)
+
+The repository is in a stable Phase 1 state:
+
+- `go test ./...` passes.
+- The synth path is implemented end-to-end:
+  - parameter model
+  - preset loading/saving
+  - quadrature decay oscillator
+  - bar model
+  - synthesis engine
+  - `glockenspiel synth`
+- The `fit` command is still a placeholder that returns "not implemented yet".
+- `internal/optimizer` only contains package docs; optimization infrastructure has not started.
+- Legacy comparison support exists as an opt-in test (`internal/synth/legacy_compare_test.go`), but it requires:
+  - `GLOCKENSPIEL_STRICT_LEGACY_COMPARE=1`
+  - a rendered Go reference file at `testdata/output/go_synth_a4.wav`
+
+### Recommended Resume Point
+
+Resume at **Phase 2.1 Optimizer Infrastructure**. That is the first clearly unfinished implementation block and it unblocks the remaining `fit` command work.
+
+Recommended order:
+
+1. Add `internal/optimizer/optimizer.go` with the core interface and result/options types.
+2. Add `internal/optimizer/params.go` for parameter encoding/decoding and bounds handling.
+3. Add `internal/optimizer/objective.go` with RMS/log error metrics and the evaluation wrapper.
+4. Implement a first `SimpleOptimizer` using Gonum Nelder-Mead.
+5. Replace the `fit` CLI placeholder with a minimal working flow.
+
+### Notes Before Resuming
+
+- The plan below still reflects the original target architecture; use this status section as the source of truth for what is already done.
+- Phase 1 manual listening checks and strict legacy similarity verification are still open.
+- The strict legacy comparison test currently skips unless the external reference artifact has been rendered and placed in `testdata/output/`.
+
 ### Phase 0: Project Setup
 
 - [x] **Initialize Go module**
@@ -711,60 +747,60 @@ testdata/
 
 #### 2.1 Optimizer Infrastructure
 
-- [ ] **Define optimizer interface** (`internal/optimizer/optimizer.go`)
-  - [ ] Define `Optimizer` interface
-  - [ ] Define `ObjectiveFunc` type
-  - [ ] Define `Result` struct (best params, cost, iterations, elapsed time)
-  - [ ] Define `OptimizeOptions` struct (max iterations, time budget, report interval)
+- [x] **Define optimizer interface** (`internal/optimizer/optimizer.go`)
+  - [x] Define `Optimizer` interface
+  - [x] Define `ObjectiveFunc` type
+  - [x] Define `Result` struct (best params, cost, iterations, elapsed time)
+  - [x] Define `OptimizeOptions` struct (max iterations, time budget, report interval)
 
-- [ ] **Define parameter encoding/decoding** (`internal/optimizer/params.go`)
-  - [ ] Implement `EncodeParams(params *BarParams) []float64`
-    - [ ] Flatten BarParams to float64 slice
-    - [ ] Apply log scaling for frequency parameters
-    - [ ] Apply appropriate scaling for all params
+- [x] **Define parameter encoding/decoding** (`internal/optimizer/params.go`)
+  - [x] Implement parameter encoding for `BarParams`
+    - [x] Flatten BarParams to float64 slice
+    - [x] Apply log scaling for frequency parameters
+    - [x] Apply appropriate scaling for all params
 
-  - [ ] Implement `DecodeParams(encoded []float64) *BarParams`
-    - [ ] Convert flat array back to BarParams
-    - [ ] Apply inverse scaling
-    - [ ] Clamp to valid ranges
+  - [x] Implement parameter decoding back to `BarParams`
+    - [x] Convert flat array back to BarParams
+    - [x] Apply inverse scaling
+    - [x] Clamp to valid ranges
 
-  - [ ] Define `ParamBounds` struct
-  - [ ] Implement bounds checking and mirroring
+  - [x] Define `ParamBounds` struct
+  - [x] Implement bounds checking and mirroring
 
-  - [ ] Write unit tests
-    - [ ] Test encode/decode round-trip
-    - [ ] Test bounds enforcement
+  - [x] Write unit tests
+    - [x] Test encode/decode round-trip
+    - [x] Test bounds enforcement
 
 #### 2.2 Objective Function
 
-- [ ] **Implement objective function** (`internal/optimizer/objective.go`)
-  - [ ] Define `ObjectiveFunction` struct
-    - [ ] Reference audio field
-    - [ ] Synthesizer field
-    - [ ] Sample rate, note, velocity fields
+- [x] **Implement objective function** (`internal/optimizer/objective.go`)
+  - [x] Define `ObjectiveFunction` struct
+    - [x] Reference audio field
+    - [x] Template preset/codec fields
+    - [x] Sample rate, note, velocity fields
 
-  - [ ] Implement RMS error metric
-    - [ ] `ComputeRMSError(synth, ref []float32) float64`
-    - [ ] Handle length mismatch (truncate to shorter)
-    - [ ] Compute sample-by-sample squared error
-    - [ ] Return sqrt(mean(errors))
+  - [x] Implement RMS error metric
+    - [x] `ComputeRMSError(synth, ref []float32) float64`
+    - [x] Handle length mismatch (truncate to shorter)
+    - [x] Compute sample-by-sample squared error
+    - [x] Return sqrt(mean(errors))
 
-  - [ ] Implement log-scaled error (like legacy)
-    - [ ] `ComputeLogError(synth, ref []float32) float64`
-    - [ ] Apply log10 to RMS error
-    - [ ] Subtract cost scale factor
+  - [x] Implement log-scaled error (like legacy)
+    - [x] `ComputeLogError(synth, ref []float32) float64`
+    - [x] Apply log10 to RMS error
+    - [x] Subtract cost scale factor
 
-  - [ ] Implement objective wrapper
-    - [ ] `Evaluate(encoded []float64) float64`
-    - [ ] Decode parameters
-    - [ ] Synthesize audio
-    - [ ] Compute error metric
-    - [ ] Return cost
+  - [x] Implement objective wrapper
+    - [x] `Evaluate(encoded []float64) float64`
+    - [x] Decode parameters
+    - [x] Synthesize audio
+    - [x] Compute error metric
+    - [x] Return cost
 
-  - [ ] Write unit tests
-    - [ ] Test with identical signals (cost should be near zero)
-    - [ ] Test with known different signals
-    - [ ] Test edge cases (silence, very loud)
+  - [x] Write unit tests
+    - [x] Test with identical signals (cost should be near zero)
+    - [x] Test with known different signals
+    - [x] Test edge cases (silence, very loud)
 
 #### 2.3 Nelder-Mead Optimizer
 
