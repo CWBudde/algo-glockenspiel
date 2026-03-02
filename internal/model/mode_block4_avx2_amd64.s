@@ -1,0 +1,81 @@
+//go:build amd64
+
+#include "textflag.h"
+
+// func processModeBlock4AVX2Asm(realState, imagState, amplitude *float64, coeff *modeBlock4Coeff, input *float32, output *float64)
+TEXT ·processModeBlock4AVX2Asm(SB), NOSPLIT, $0-48
+	MOVQ realState+0(FP), AX
+	MOVQ imagState+8(FP), BX
+	MOVQ amplitude+16(FP), CX
+	MOVQ coeff+24(FP), DX
+	MOVQ input+32(FP), SI
+	MOVQ output+40(FP), DI
+
+	VMOVSD (AX), X0
+	VMOVSD (BX), X1
+	VMOVSD (CX), X2
+	VBROADCASTSD X0, Y0
+	VBROADCASTSD X1, Y1
+	VBROADCASTSD X2, Y2
+
+	// base = imag*baseCos + real*baseSin
+	VMOVUPD 0(DX), Y3
+	VMULPD Y1, Y3, Y3
+	VMOVUPD 32(DX), Y4
+	VMULPD Y0, Y4, Y4
+	VADDPD Y4, Y3, Y3
+
+	// excite = outX0*x0 + outX1*x1 + outX2*x2
+	VMOVSS 0(SI), X5
+	VCVTSS2SD X5, X5, X5
+	VBROADCASTSD X5, Y5
+	VMOVUPD 64(DX), Y6
+	VMULPD Y5, Y6, Y6
+
+	VMOVSS 4(SI), X7
+	VCVTSS2SD X7, X7, X7
+	VBROADCASTSD X7, Y7
+	VMOVUPD 96(DX), Y8
+	VMULPD Y7, Y8, Y8
+	VADDPD Y8, Y6, Y6
+
+	VMOVSS 8(SI), X9
+	VCVTSS2SD X9, X9, X9
+	VBROADCASTSD X9, Y9
+	VMOVUPD 128(DX), Y10
+	VMULPD Y9, Y10, Y10
+	VADDPD Y10, Y6, Y6
+
+	VMULPD Y2, Y6, Y6
+	VADDPD Y6, Y3, Y11
+	VMOVUPD Y11, (DI)
+
+	// imag = out3 + amp*x3
+	VMOVSS 12(SI), X12
+	VCVTSS2SD X12, X12, X12
+	VMULSD X2, X12, X12
+	VMOVSD 24(DI), X13
+	VADDSD X13, X12, X12
+
+	// real = real*c4 - imag*s4 - amp*(s3*x0 + s2*x1 + s1*x2)
+	VMOVSD 192(DX), X14
+	VMULSD X0, X14, X14
+	VMOVSD 200(DX), X15
+	VMULSD X1, X15, X15
+	VSUBSD X15, X14, X14
+
+	VMOVSD 184(DX), X15
+	VMULSD X5, X15, X15
+	VMOVSD 168(DX), X13
+	VMULSD X7, X13, X13
+	VADDSD X13, X15, X15
+	VMOVSD 32(DX), X13
+	VMULSD X9, X13, X13
+	VADDSD X13, X15, X15
+	VMULSD X2, X15, X15
+	VSUBSD X15, X14, X14
+
+	VMOVSD X14, (AX)
+	VMOVSD X12, (BX)
+	VZEROUPPER
+	RET

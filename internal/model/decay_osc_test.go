@@ -3,6 +3,8 @@ package model
 import (
 	"math"
 	"testing"
+
+	"github.com/cwbudde/glockenspiel/internal/cpufeat"
 )
 
 func TestQuadDecayOscillatorCoefficientCalculation(t *testing.T) {
@@ -150,6 +152,365 @@ func BenchmarkQuadDecayOscillatorProcessBlock32(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		osc.ProcessBlock32(input, out)
 		input[0] = 0
+	}
+}
+
+func BenchmarkQuadDecayOscillatorProcessBlock32Generic(b *testing.B) {
+	osc := NewQuadDecayOscillator(48000)
+	for i := 0; i < NumModes; i++ {
+		osc.SetAmplitude(i, 0.5)
+	}
+
+	input := make([]float32, 512)
+	out := make([]float32, 512)
+	input[0] = 1
+
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		osc.processBlock32Generic(input, out)
+		input[0] = 0
+	}
+}
+
+func BenchmarkProcessModeBlock4AVX2(b *testing.B) {
+	if !cpufeat.Detect().HasAVX2 {
+		b.Skip("AVX2 not available")
+	}
+
+	osc := NewQuadDecayOscillator(48000)
+	mode := 1
+	osc.SetMode(mode, 0.41, 1275, 145)
+	input := [4]float32{0.35, -0.2, 0.1, 0.45}
+	output := [4]float64{}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		realState := osc.realState[mode]
+		imagState := osc.imagState[mode]
+		amplitude := osc.amplitude[mode]
+		if !processModeBlock4AVX2(&realState, &imagState, &amplitude, &osc.block4Coeff[mode], &input, &output) {
+			b.Fatal("expected AVX2 mode-block path to be active")
+		}
+	}
+}
+
+func BenchmarkQuadDecayOscillatorProcessBlock32ModeBlock4PrototypeAVX2(b *testing.B) {
+	if !cpufeat.Detect().HasAVX2 {
+		b.Skip("AVX2 not available")
+	}
+
+	osc := NewQuadDecayOscillator(48000)
+	for i := 0; i < NumModes; i++ {
+		osc.SetAmplitude(i, 0.5)
+	}
+
+	input := make([]float32, 512)
+	out := make([]float32, 512)
+	input[0] = 1
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if !processBlock32ModeBlock4PrototypeAVX2(osc, input, out) {
+			b.Fatal("expected mode-block prototype path to be active")
+		}
+		input[0] = 0
+	}
+}
+
+func BenchmarkQuadDecayOscillatorProcessBlock32ModeBlock4KernelAVX2(b *testing.B) {
+	if !cpufeat.Detect().HasAVX2 {
+		b.Skip("AVX2 not available")
+	}
+
+	osc := NewQuadDecayOscillator(48000)
+	for i := 0; i < NumModes; i++ {
+		osc.SetAmplitude(i, 0.5)
+	}
+
+	input := make([]float32, 512)
+	out := make([]float32, 512)
+	input[0] = 1
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if !processBlock32ModeBlock4KernelAVX2(osc, input, out) {
+			b.Fatal("expected mode-block kernel path to be active")
+		}
+		input[0] = 0
+	}
+}
+
+func TestQuadDecayOscillatorProcessBlock32AVX2MatchesGeneric(t *testing.T) {
+	if !cpufeat.Detect().HasAVX2 {
+		t.Skip("AVX2 not available")
+	}
+
+	avx := NewQuadDecayOscillator(48000)
+	gen := NewQuadDecayOscillator(48000)
+	for i := 0; i < NumModes; i++ {
+		freq := float64(400 + 275*i)
+		amp := 0.25 + float64(i)*0.15
+		decay := 40.0 + float64(i)*55.0
+		avx.SetFrequency(i, freq)
+		avx.SetAmplitude(i, amp)
+		avx.SetDecay(i, decay)
+		gen.SetFrequency(i, freq)
+		gen.SetAmplitude(i, amp)
+		gen.SetDecay(i, decay)
+	}
+
+	input := make([]float32, 257)
+	for i := range input {
+		input[i] = float32(math.Sin(float64(i)*0.11) * 0.4)
+	}
+	avxOut := make([]float32, len(input))
+	genOut := make([]float32, len(input))
+
+	if !processBlock32AVX2(avx, input, avxOut) {
+		t.Fatal("expected AVX2 block path to be active")
+	}
+	gen.processBlock32Generic(input, genOut)
+
+	for i := range input {
+		if !approxEqual(float64(avxOut[i]), float64(genOut[i]), 1e-5) {
+			t.Fatalf("output mismatch at %d: got %.8f want %.8f", i, avxOut[i], genOut[i])
+		}
+	}
+
+	for i := 0; i < NumModes; i++ {
+		if !approxEqual(avx.realState[i], gen.realState[i], 1e-9) {
+			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, avx.realState[i], gen.realState[i])
+		}
+		if !approxEqual(avx.imagState[i], gen.imagState[i], 1e-9) {
+			t.Fatalf("imag state mismatch at mode %d: got %.12f want %.12f", i, avx.imagState[i], gen.imagState[i])
+		}
+	}
+}
+
+func TestQuadDecayOscillatorProcessBlock32ModeBlock4PrototypeMatchesGeneric(t *testing.T) {
+	if !cpufeat.Detect().HasAVX2 {
+		t.Skip("AVX2 not available")
+	}
+
+	avx := NewQuadDecayOscillator(48000)
+	gen := NewQuadDecayOscillator(48000)
+	for i := 0; i < NumModes; i++ {
+		freq := float64(400 + 275*i)
+		amp := 0.25 + float64(i)*0.15
+		decay := 40.0 + float64(i)*55.0
+		avx.SetMode(i, amp, freq, decay)
+		gen.SetMode(i, amp, freq, decay)
+	}
+
+	input := make([]float32, 259)
+	for i := range input {
+		input[i] = float32(math.Sin(float64(i)*0.11) * 0.4)
+	}
+	avxOut := make([]float32, len(input))
+	genOut := make([]float32, len(input))
+
+	if !processBlock32ModeBlock4PrototypeAVX2(avx, input, avxOut) {
+		t.Fatal("expected mode-block prototype path to be active")
+	}
+	gen.processBlock32Generic(input, genOut)
+
+	for i := range input {
+		if !approxEqual(float64(avxOut[i]), float64(genOut[i]), 1e-5) {
+			t.Fatalf("output mismatch at %d: got %.8f want %.8f", i, avxOut[i], genOut[i])
+		}
+	}
+
+	for i := 0; i < NumModes; i++ {
+		if !approxEqual(avx.realState[i], gen.realState[i], 1e-9) {
+			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, avx.realState[i], gen.realState[i])
+		}
+		if !approxEqual(avx.imagState[i], gen.imagState[i], 1e-9) {
+			t.Fatalf("imag state mismatch at mode %d: got %.12f want %.12f", i, avx.imagState[i], gen.imagState[i])
+		}
+	}
+}
+
+func TestQuadDecayOscillatorProcessBlock32ModeBlock4KernelMatchesGeneric(t *testing.T) {
+	if !cpufeat.Detect().HasAVX2 {
+		t.Skip("AVX2 not available")
+	}
+
+	avx := NewQuadDecayOscillator(48000)
+	gen := NewQuadDecayOscillator(48000)
+	for i := 0; i < NumModes; i++ {
+		freq := float64(400 + 275*i)
+		amp := 0.25 + float64(i)*0.15
+		decay := 40.0 + float64(i)*55.0
+		avx.SetMode(i, amp, freq, decay)
+		gen.SetMode(i, amp, freq, decay)
+	}
+
+	input := make([]float32, 259)
+	for i := range input {
+		input[i] = float32(math.Sin(float64(i)*0.11) * 0.4)
+	}
+	avxOut := make([]float32, len(input))
+	genOut := make([]float32, len(input))
+
+	if !processBlock32ModeBlock4KernelAVX2(avx, input, avxOut) {
+		t.Fatal("expected mode-block kernel path to be active")
+	}
+	gen.processBlock32Generic(input, genOut)
+
+	for i := range input {
+		if !approxEqual(float64(avxOut[i]), float64(genOut[i]), 1e-5) {
+			t.Fatalf("output mismatch at %d: got %.8f want %.8f", i, avxOut[i], genOut[i])
+		}
+	}
+
+	for i := 0; i < NumModes; i++ {
+		if !approxEqual(avx.realState[i], gen.realState[i], 1e-9) {
+			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, avx.realState[i], gen.realState[i])
+		}
+		if !approxEqual(avx.imagState[i], gen.imagState[i], 1e-9) {
+			t.Fatalf("imag state mismatch at mode %d: got %.12f want %.12f", i, avx.imagState[i], gen.imagState[i])
+		}
+	}
+}
+
+func TestProcessModeBlock4MatchesSampleBySample(t *testing.T) {
+	osc := NewQuadDecayOscillator(48000)
+	mode := 2
+	osc.SetMode(mode, 0.63, 1430, 180)
+
+	x0, x1, x2, x3 := 0.35, -0.2, 0.1, 0.45
+	block := processModeBlock4(
+		osc.realState[mode],
+		osc.imagState[mode],
+		osc.amplitude[mode],
+		osc.cosCoeff[mode],
+		osc.sinCoeff[mode],
+		osc.block4Coeff[mode],
+		x0, x1, x2, x3,
+	)
+
+	r, im := osc.realState[mode], osc.imagState[mode]
+	a, c, s := osc.amplitude[mode], osc.cosCoeff[mode], osc.sinCoeff[mode]
+	inputs := [4]float64{x0, x1, x2, x3}
+	var outputs [4]float64
+	for i, in := range inputs {
+		temp := im*c + r*s
+		r = r*c - im*s
+		im = a*in + temp
+		outputs[i] = temp
+	}
+
+	if !approxEqual(block.out0, outputs[0], 1e-12) {
+		t.Fatalf("out0 mismatch: got %.15f want %.15f", block.out0, outputs[0])
+	}
+	if !approxEqual(block.out1, outputs[1], 1e-12) {
+		t.Fatalf("out1 mismatch: got %.15f want %.15f", block.out1, outputs[1])
+	}
+	if !approxEqual(block.out2, outputs[2], 1e-12) {
+		t.Fatalf("out2 mismatch: got %.15f want %.15f", block.out2, outputs[2])
+	}
+	if !approxEqual(block.out3, outputs[3], 1e-12) {
+		t.Fatalf("out3 mismatch: got %.15f want %.15f", block.out3, outputs[3])
+	}
+	if !approxEqual(block.real, r, 1e-12) {
+		t.Fatalf("real mismatch: got %.15f want %.15f", block.real, r)
+	}
+	if !approxEqual(block.imag, im, 1e-12) {
+		t.Fatalf("imag mismatch: got %.15f want %.15f", block.imag, im)
+	}
+}
+
+func TestQuadDecayOscillatorProcessBlock32GenericMatchesSampleBySample(t *testing.T) {
+	gen := NewQuadDecayOscillator(48000)
+	ref := NewQuadDecayOscillator(48000)
+	for i := 0; i < NumModes; i++ {
+		freq := float64(410 + 235*i)
+		amp := 0.2 + float64(i)*0.17
+		decay := 45.0 + float64(i)*70.0
+		gen.SetMode(i, amp, freq, decay)
+		ref.SetMode(i, amp, freq, decay)
+	}
+
+	input := make([]float32, 259)
+	for i := range input {
+		input[i] = float32(math.Sin(float64(i)*0.09) * 0.7)
+	}
+	got := make([]float32, len(input))
+	want := make([]float32, len(input))
+
+	gen.processBlock32Generic(input, got)
+	for i, in := range input {
+		want[i] = ref.ProcessSample32(in)
+	}
+
+	for i := range input {
+		if !approxEqual(float64(got[i]), float64(want[i]), 1e-5) {
+			t.Fatalf("output mismatch at %d: got %.8f want %.8f", i, got[i], want[i])
+		}
+	}
+
+	for i := 0; i < NumModes; i++ {
+		if !approxEqual(gen.realState[i], ref.realState[i], 1e-9) {
+			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, gen.realState[i], ref.realState[i])
+		}
+		if !approxEqual(gen.imagState[i], ref.imagState[i], 1e-9) {
+			t.Fatalf("imag state mismatch at mode %d: got %.12f want %.12f", i, gen.imagState[i], ref.imagState[i])
+		}
+	}
+}
+
+func TestProcessModeBlock4AVX2MatchesScalar(t *testing.T) {
+	if !cpufeat.Detect().HasAVX2 {
+		t.Skip("AVX2 not available")
+	}
+
+	osc := NewQuadDecayOscillator(48000)
+	mode := 1
+	osc.SetMode(mode, 0.41, 1275, 145)
+
+	realState := osc.realState[mode]
+	imagState := osc.imagState[mode]
+	amplitude := osc.amplitude[mode]
+	input := [4]float32{0.35, -0.2, 0.1, 0.45}
+	output := [4]float64{}
+
+	want := processModeBlock4(
+		realState,
+		imagState,
+		amplitude,
+		osc.cosCoeff[mode],
+		osc.sinCoeff[mode],
+		osc.block4Coeff[mode],
+		float64(input[0]),
+		float64(input[1]),
+		float64(input[2]),
+		float64(input[3]),
+	)
+
+	gotReal := realState
+	gotImag := imagState
+	if !processModeBlock4AVX2(&gotReal, &gotImag, &amplitude, &osc.block4Coeff[mode], &input, &output) {
+		t.Fatal("expected AVX2 mode-block path to be active")
+	}
+
+	if !approxEqual(output[0], want.out0, 1e-12) {
+		t.Fatalf("out0 mismatch: got %.15f want %.15f", output[0], want.out0)
+	}
+	if !approxEqual(output[1], want.out1, 1e-12) {
+		t.Fatalf("out1 mismatch: got %.15f want %.15f", output[1], want.out1)
+	}
+	if !approxEqual(output[2], want.out2, 1e-12) {
+		t.Fatalf("out2 mismatch: got %.15f want %.15f", output[2], want.out2)
+	}
+	if !approxEqual(output[3], want.out3, 1e-12) {
+		t.Fatalf("out3 mismatch: got %.15f want %.15f", output[3], want.out3)
+	}
+	if !approxEqual(gotReal, want.real, 1e-12) {
+		t.Fatalf("real mismatch: got %.15f want %.15f", gotReal, want.real)
+	}
+	if !approxEqual(gotImag, want.imag, 1e-12) {
+		t.Fatalf("imag mismatch: got %.15f want %.15f", gotImag, want.imag)
 	}
 }
 

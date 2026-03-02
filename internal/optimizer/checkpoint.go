@@ -11,13 +11,27 @@ import (
 
 // Checkpoint stores resumable optimizer state at a coarse granularity.
 type Checkpoint struct {
-	Version    string    `json:"version"`
-	Timestamp  time.Time `json:"timestamp"`
-	Iteration  int       `json:"iteration"`
-	BestCost   float64   `json:"best_cost"`
-	BestParams []float64 `json:"best_params"`
-	Optimizer  string    `json:"optimizer"`
-	Metric     string    `json:"metric"`
+	Version    string          `json:"version"`
+	Timestamp  time.Time       `json:"timestamp"`
+	Iteration  int             `json:"iteration"`
+	BestCost   float64         `json:"best_cost"`
+	BestParams []float64       `json:"best_params"`
+	Optimizer  string          `json:"optimizer"`
+	Metric     string          `json:"metric"`
+	State      *OptimizerState `json:"state,omitempty"`
+}
+
+// OptimizerState stores coarse optimizer-specific resume metadata.
+type OptimizerState struct {
+	Kind   string               `json:"kind"`
+	Mayfly *MayflyCheckpointEnv `json:"mayfly,omitempty"`
+}
+
+// MayflyCheckpointEnv stores the Mayfly settings needed to resume consistently.
+type MayflyCheckpointEnv struct {
+	Variant    string `json:"variant"`
+	Population int    `json:"population"`
+	Seed       int64  `json:"seed"`
 }
 
 // SaveCheckpoint writes a checkpoint atomically to disk.

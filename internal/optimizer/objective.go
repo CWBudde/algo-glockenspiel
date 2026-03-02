@@ -104,23 +104,6 @@ func (o *ObjectiveFunction) Codec() *ParamCodec {
 	return o.codec
 }
 
-// ComputeRMSError returns the RMS difference between signals after truncation to the shorter length.
-func ComputeRMSError(synth, ref []float32) float64 {
-	sampleCount := minInt(len(synth), len(ref))
-	if sampleCount == 0 {
-		return math.Inf(1)
-	}
-
-	sum := 0.0
-
-	for i := 0; i < sampleCount; i++ {
-		d := float64(synth[i] - ref[i])
-		sum += d * d
-	}
-
-	return math.Sqrt(sum / float64(sampleCount))
-}
-
 // ComputeLogError returns log10 of RMS error with a small floor and optional offset.
 func ComputeLogError(synth, ref []float32, floor, offset float64) float64 {
 	if floor <= 0 {

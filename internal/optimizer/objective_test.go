@@ -34,6 +34,22 @@ func TestComputeRMSErrorKnownDifference(t *testing.T) {
 	}
 }
 
+func TestComputeRMSErrorMatchesGenericForLongInput(t *testing.T) {
+	a := make([]float32, 257)
+	b := make([]float32, 257)
+	for i := range a {
+		a[i] = float32(math.Sin(float64(i) * 0.13))
+		b[i] = float32(math.Cos(float64(i) * 0.07))
+	}
+
+	got := ComputeRMSError(a, b)
+	want := math.Sqrt(squaredDiffSumGeneric(a, b) / float64(len(a)))
+
+	if math.Abs(got-want) > 1e-4 {
+		t.Fatalf("unexpected long-input RMS error: got %.12f want %.12f", got, want)
+	}
+}
+
 func TestComputeLogErrorUsesFloor(t *testing.T) {
 	signal := []float32{0.1, -0.2}
 

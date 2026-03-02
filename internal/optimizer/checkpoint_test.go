@@ -18,6 +18,9 @@ func TestSaveLoadCheckpointRoundTrip(t *testing.T) {
 		BestParams: []float64{1, 2, 3},
 		Optimizer:  "simple",
 		Metric:     "rms",
+		State: &OptimizerState{
+			Kind: "simple",
+		},
 	}
 	if err := SaveCheckpoint(path, want); err != nil {
 		t.Fatalf("SaveCheckpoint failed: %v", err)
@@ -29,6 +32,9 @@ func TestSaveLoadCheckpointRoundTrip(t *testing.T) {
 	}
 	if got.Iteration != want.Iteration || got.BestCost != want.BestCost || len(got.BestParams) != len(want.BestParams) {
 		t.Fatalf("unexpected checkpoint round-trip: got %#v want %#v", got, want)
+	}
+	if got.State == nil || got.State.Kind != want.State.Kind {
+		t.Fatalf("unexpected checkpoint state round-trip: got %#v want %#v", got.State, want.State)
 	}
 }
 

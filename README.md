@@ -95,6 +95,8 @@ glockenspiel fit \
   --resume
 ```
 
+Resume restores the saved best parameter vector, optimizer/metric selection, remaining iteration budget, and Mayfly settings when present. It does not restore a full internal simplex or full Mayfly population snapshot.
+
 For a more complete walkthrough, see [docs/user-guide.md](/mnt/projekte/Code/algo-glockenspiel/docs/user-guide.md).
 
 ## CLI

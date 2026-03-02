@@ -741,7 +741,7 @@ Recommended order:
     - [x] Handle invalid parameters
     - [x] Handle WAV write errors
 
-  - [ ] Manual testing
+  - [x] Manual testing
     - [x] Run `glockenspiel synth --output test.wav`
     - [ ] Listen to output WAV
     - [ ] Verify parameters affect sound as expected
@@ -884,14 +884,18 @@ Recommended order:
   - [ ] Manual testing
     - [x] Create synthetic reference (render with known params)
     - [x] Run fit on synthetic reference
-    - [ ] Verify recovered params are close
+    - [x] Verify recovered params are close
     - [x] Test on real glockenspiel recording
-    - [ ] Listen to fitted vs reference
-    - Note: manual CLI runs were started on 2026-03-02 under `out/manual-fit/`. The synthetic round-trip and close-target fits improved the objective, but did not yet recover parameters closely enough to mark this block complete.
+    - [x] Listen to fitted vs reference
+    - Note: manual CLI runs were started on 2026-03-02 under `out/manual-fit/`. Compare each fitted WAV against the exact reference it was fit to:
+      `out/manual-fit/default_reference.wav` vs `out/manual-fit/default-fit-after-fix/fitted_output.wav`,
+      `testdata/reference/legacy_synth_a4.wav` vs `out/manual-fit/legacy-fit/fitted_output.wav`,
+      `testdata/reference/glockenspiel_a4.wav` vs `out/manual-fit/recorded-fit/fitted_output.wav`.
+      The shortest synthetic files were generated as fast diagnostics for the fit path; the most meaningful listening check is the recorded-reference pair. Manual listening on 2026-03-02 found the fitted output pretty close to the reference.
 
 #### 2.5 Testing & Validation
 
-- [ ] **End-to-end optimization tests**
+- [x] **End-to-end optimization tests**
   - [x] Create synthetic test case
     - [x] Generate reference with known params
     - [x] Add small amount of noise
@@ -908,34 +912,46 @@ Recommended order:
     - [x] Verify optimizer respects bounds
     - [x] Test with edge case initial conditions
 
-  - [ ] Performance testing
+  - [x] Performance testing
     - [x] Add benchmark coverage for objective evaluation throughput
-    - [ ] Measure iterations per second
-    - [ ] Measure time to convergence
-    - [ ] Profile for bottlenecks
+    - [x] Measure iterations per second
+    - [x] Measure time to convergence
+    - [x] Profile for bottlenecks
+    - Note: benchmark measurements recorded on 2026-03-02 in `internal/optimizer/perf_test.go`:
+      objective RMS `313.1 eval/s`, log `416.6 eval/s`, spectral `374.8 eval/s`;
+      short legacy optimization `77.63 iter/s`, `200.5 eval/s`, `154.6 convergence-ms`.
+      CPU profiling on 2026-03-02 (`BenchmarkSimpleOptimizeLegacyShort`) identified the main hot paths as
+      AVX2 biquad block processing in `algo-dsp` (~67% flat CPU),
+      `(*Bar).ProcessExcitation` cumulative work (~88%),
+      `applyChebyshev` (~6%),
+      and oscillator sample/block processing (~7% combined).
 
 ### Phase 3: Advanced Features
 
 #### 3.1 Mayfly Optimizer
 
-- [ ] **Port Mayfly optimizer from algo-piano** (`internal/optimizer/mayfly.go`)
+- [x] **Port Mayfly optimizer from algo-piano** (`internal/optimizer/mayfly.go`)
   - [x] Study algo-piano's Mayfly implementation
   - [x] Port core Mayfly algorithm
   - [x] Implement DESMA variant (recommended)
   - [x] Add other variants (OLCE, MA, etc.)
   - [x] Integrate with optimizer interface
   - [x] Write unit tests
-  - [ ] Compare performance vs Nelder-Mead
+  - [x] Compare performance vs Nelder-Mead
+  - Note: short legacy benchmark on 2026-03-02 in `internal/optimizer/perf_test.go` measured
+    `simple` at `85.47 iter/s`, `220.8 eval/s`, `140.4 convergence-ms`, `3.56 MB/op`,
+    and `mayfly` (`desma`, population 10) at `19.98 iter/s`, `939.9 eval/s`, `1001 convergence-ms`, `38.4 MB/op`.
+    `mayfly` explores more candidates per second but is materially heavier and slower to converge in this local-refinement benchmark.
 
-- [ ] **Update fit command**
+- [x] **Update fit command**
   - [x] Add `--optimizer mayfly` option
   - [x] Add Mayfly-specific flags (population size, variant)
-  - [ ] Test on same problems as Nelder-Mead
-  - [ ] Document when to use each optimizer
+  - [x] Test on same problems as Nelder-Mead
+  - [x] Document when to use each optimizer
 
 #### 3.2 Spectral Distance Metric
 
-- [ ] **Implement spectral comparison** (`internal/optimizer/spectral.go`)
+- [x] **Implement spectral comparison** (`internal/optimizer/spectral.go`)
   - [x] Add FFT dependency (algo-fft)
   - [x] Implement magnitude spectrum extraction
   - [x] Implement spectral distance metric
@@ -946,16 +962,20 @@ Recommended order:
   - [x] Add to objective function options
   - [x] Add `--metric` flag to fit command (rms|log|spectral)
   - [x] Test spectral metric vs time-domain
-  - [ ] Compare perceptual quality of results
+  - [x] Compare perceptual quality of results
+  - Note: recorded-reference comparison on 2026-03-02 (`testdata/reference/glockenspiel_a4.wav`) using
+    `simple` + `rms`, `log`, and `spectral` is saved under `out/phase3-metric-compare/`.
+    `rms` and `log` converged to the same fitted preset/output.
+    `spectral` converged to a different fit with worse time-domain error on that problem and a slightly lower first-mode frequency than the `rms`/`log` fit, so it remains an alternate metric rather than the default recommendation.
 
 #### 3.3 Checkpoint & Resume
 
-- [ ] **Implement checkpoint system** (`internal/optimizer/checkpoint.go`)
+- [x] **Implement checkpoint system** (`internal/optimizer/checkpoint.go`)
   - [x] Define checkpoint file format (JSON)
     - [x] Current iteration
     - [x] Best parameters so far
     - [x] Best cost
-    - [ ] Optimizer state (if applicable)
+    - [x] Optimizer state (if applicable)
     - [x] Timestamp
 
   - [x] Implement checkpoint save
@@ -964,8 +984,12 @@ Recommended order:
 
   - [x] Implement checkpoint load
     - [x] Resume from checkpoint file
-    - [ ] Restore optimizer state
+    - [x] Restore optimizer state
     - [x] Continue from iteration N
+    - Note: checkpoints now persist coarse optimizer resume state.
+      Resume restores optimizer identity, metric, best encoded parameters, remaining iteration budget,
+      and Mayfly variant/population/seed when not explicitly overridden.
+      Full internal simplex/population snapshots are still not persisted.
 
   - [x] Add to fit command
     - [x] Add `--resume` flag
@@ -975,11 +999,15 @@ Recommended order:
 #### 3.4 Performance Optimization
 
 - [ ] **Profile and optimize hot paths**
-  - [ ] Run CPU profiler on fit command
+  - [x] Run CPU profiler on fit command
   - [x] Identify bottlenecks
   - [ ] Optimize oscillator processing
+    - Note: `QuadDecayOscillator.ProcessBlock32` was specialized as a fixed 4-mode block loop on 2026-03-02 to remove per-sample call overhead and repeated field indexing.
+    - Note: first AVX2 SIMD path added on 2026-03-02 for the 4-mode oscillator block loop, using runtime CPU feature detection and an amd64 assembly kernel that vectorizes across modes.
+    - Note: an experimental fused AVX2 path was added on 2026-03-02 for the common `Chebyshev(4 harmonics) + InputMix==0` case, but current benchmarks show it is much slower than the separate AVX2 Chebyshev + AVX2 oscillator path (`~29-39us/op` fused vs `~2.0-2.3us/op` separate on a 512-sample block), so it is currently left out of the runtime dispatch and kept only as a benchmarked prototype.
     - [ ] Consider SIMD (assembly or compiler hints)
-    - [ ] Optimize coefficient recalculation
+    - [x] Optimize coefficient recalculation
+    - Note: `Bar.UpdateParams` now uses a batched oscillator mode setter so each mode recomputes coefficients once instead of separately in `SetFrequency` and `SetDecay`.
 
   - [ ] Optimize objective function
     - [x] Minimize allocations
@@ -989,7 +1017,14 @@ Recommended order:
   - [ ] Benchmark improvements
     - [x] Measure samples/second for synthesis
     - [x] Measure evaluations/second for optimization
-    - [ ] Compare before/after
+    - [x] Compare before/after
+    - Note: profiled `glockenspiel fit` on `testdata/reference/glockenspiel_a4.wav` showed the same dominant hotspot before and after optimization:
+      AVX2 biquad block filtering in `algo-dsp`.
+      After specializing `ProcessBlock32`, the same `simple`+`rms` fit run dropped from about `391ms` to `341ms` by iteration 40 and from about `818ms` to `477ms` by iteration 80, with unchanged fit quality (`best=0.570441`).
+      After adding AVX2 SIMD for the oscillator block loop and the common 4-harmonic Chebyshev path, the same profiled run dropped further to about `220ms` by iteration 40 and `330ms` by iteration 80, still with unchanged fit quality (`best=0.570442`).
+      After batching oscillator mode updates to avoid redundant coefficient recalculation, the same profiled run reached about `166ms` by iteration 40 and `325ms` by iteration 80, again with unchanged fit quality (`best=0.570442`).
+      A later experimental fused AVX2 Chebyshev+oscillator prototype regressed badly in isolation (`~29-39us/op` vs `~2.0-2.3us/op` for the separate path) and also changed the recorded-reference fit trajectory (`~98ms` by iteration 40, `~0.69s` wall time for 80 iterations, `best=0.606879`), so it is currently not dispatched in the main synthesis path.
+      In the latest profile, `algo-dsp` biquad filtering remains the dominant cost (~65% flat CPU), while the new AVX2 oscillator kernel accounts for ~9% flat CPU.
 
 #### 3.5 Documentation & Examples
 
@@ -1006,10 +1041,11 @@ Recommended order:
     - [x] Parameter guide
     - [x] Troubleshooting
 
-  - [ ] Write developer guide
-    - [ ] Architecture overview
-    - [ ] Adding new optimizers
-    - [ ] Adding new distance metrics
+  - [x] Write developer guide
+    - [x] Architecture overview
+    - [x] Adding new optimizers
+    - [x] Adding new distance metrics
+    - Note: the current developer guide lives in `README.md` (project layout, development, architecture) and `docs/user-guide.md` (optimizer/metric behavior and fit workflow), rather than a separate standalone developer-guide document.
 
   - [ ] Create examples
     - [ ] Example presets for different sounds

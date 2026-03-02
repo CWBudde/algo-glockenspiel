@@ -136,12 +136,24 @@ Use `simple` when:
 - your starting preset is already close
 - you want faster, more predictable local refinement
 - you are iterating frequently
+- you care more about optimizer iterations and lower allocation cost than broad exploration
 
 Use `mayfly` when:
 
 - the starting preset is weak
 - the search surface is rough
 - `simple` gets stuck too early
+- you are willing to spend more memory and wall-clock time per run to search more broadly
+
+Benchmark snapshot from `internal/optimizer/perf_test.go` on 2026-03-02, short legacy fit:
+
+- `simple`: `85.47 iter/s`, `220.8 eval/s`, `140.4 convergence-ms`, `3.56 MB/op`
+- `mayfly` (`desma`, population 10): `19.98 iter/s`, `939.9 eval/s`, `1001 convergence-ms`, `38.4 MB/op`
+
+Interpretation:
+
+- `simple` is the better default for local refinement from a reasonable preset
+- `mayfly` explores many more candidates per second, but it is materially heavier and slower to converge on this short benchmark
 
 Use `rms` when:
 
@@ -156,6 +168,25 @@ Use `spectral` when:
 
 - spectral shape matters more than waveform alignment
 - the reference and candidate are perceptually close but time-domain metrics look poor
+- you want an alternate search target after `rms` or `log` plateau, not a guaranteed better default
+
+Recorded A4 comparison on 2026-03-02 with `simple` from `assets/presets/default.json`:
+
+- `rms` and `log` converged to the same fitted preset and the same rendered output
+- `spectral` converged to a different fit with worse time-domain error on that problem
+- the `spectral` result also landed on a slightly lower first-mode frequency than the `rms`/`log` fit
+
+Artifacts from that comparison:
+
+- reference: `testdata/reference/glockenspiel_a4.wav`
+- `rms`: `out/phase3-metric-compare/rms/fitted_output.wav`
+- `log`: `out/phase3-metric-compare/log/fitted_output.wav`
+- `spectral`: `out/phase3-metric-compare/spectral/fitted_output.wav`
+
+Practical conclusion:
+
+- start with `simple` + `rms` or `log`
+- try `spectral` when the attack brightness or overtone balance sounds wrong even though the basic pitch/tail are close
 
 ## Parameter Guide
 
@@ -227,6 +258,16 @@ Check:
 - `--work-dir` is the same directory used in the earlier run
 - at least one checkpoint file exists
 - the checkpoint matches the current preset/metric/dimension setup
+
+When a checkpoint contains optimizer state, resume restores:
+
+- optimizer identity (`simple` or `mayfly`) unless you explicitly override it
+- metric unless you explicitly override it
+- the best encoded parameter vector found so far
+- remaining iteration budget relative to the saved checkpoint iteration
+- Mayfly variant, population, and seed unless you explicitly override them
+
+Resume does not restore a full internal simplex or full Mayfly population snapshot. It resumes from the saved best point plus the persisted optimizer settings.
 
 ### Fitting does not improve much
 

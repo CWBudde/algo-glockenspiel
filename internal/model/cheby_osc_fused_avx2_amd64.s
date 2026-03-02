@@ -1,0 +1,114 @@
+//go:build amd64
+
+#include "textflag.h"
+
+// func processChebyshev4OscillatorBlockAVX2Asm(realState, imagState, amplitude, cosCoeff, sinCoeff *float64, input, gains, output *float32, count int)
+TEXT ·processChebyshev4OscillatorBlockAVX2Asm(SB), NOSPLIT, $0-72
+	MOVQ realState+0(FP), AX
+	MOVQ imagState+8(FP), BX
+	MOVQ amplitude+16(FP), CX
+	MOVQ cosCoeff+24(FP), DX
+	MOVQ sinCoeff+32(FP), R8
+	MOVQ input+40(FP), SI
+	MOVQ gains+48(FP), R10
+	MOVQ output+56(FP), DI
+	MOVQ count+64(FP), R9
+
+	VMOVUPD (AX), Y0
+	VMOVUPD (BX), Y1
+	VMOVUPD (CX), Y2
+	VMOVUPD (DX), Y3
+	VMOVUPD (R8), Y4
+
+	MOVL $0x3f800000, AX
+	MOVD AX, X12
+	MOVL $0xbf800000, AX
+	MOVD AX, X13
+	MOVL $0x40000000, AX
+	MOVD AX, X14
+
+	TESTQ R9, R9
+	JLE done
+
+loop:
+	MOVSS 0(R10), X8
+	MOVSS 4(R10), X9
+	MOVSS 8(R10), X10
+	MOVSS 12(R10), X11
+	MOVL $0x3f800000, AX
+	MOVD AX, X12
+	MOVL $0xbf800000, AX
+	MOVD AX, X13
+
+	MOVSS (SI), X5
+	MAXSS X13, X5
+	MINSS X12, X5
+	MOVAPS X5, X15
+
+	MOVAPS X12, X6
+	MOVAPS X5, X7
+	MULSS X8, X7
+
+	// T2
+	MOVAPS X15, X12
+	MULSS X5, X12
+	MULSS X14, X12
+	SUBSS X6, X12
+	MOVAPS X12, X13
+	MULSS X9, X13
+	ADDSS X13, X7
+	MOVAPS X5, X6
+	MOVAPS X12, X5
+
+	// T3
+	MOVAPS X15, X12
+	MULSS X5, X12
+	MULSS X14, X12
+	SUBSS X6, X12
+	MOVAPS X12, X13
+	MULSS X10, X13
+	ADDSS X13, X7
+	MOVAPS X5, X6
+	MOVAPS X12, X5
+
+	// T4
+	MOVAPS X15, X12
+	MULSS X5, X12
+	MULSS X14, X12
+	SUBSS X6, X12
+	MOVAPS X12, X13
+	MULSS X11, X13
+	ADDSS X13, X7
+
+	VCVTSS2SD X7, X7, X7
+	VBROADCASTSD X7, Y5
+
+	VMULPD Y3, Y1, Y6
+	VMULPD Y4, Y0, Y7
+	VADDPD Y7, Y6, Y6
+
+	VMULPD Y3, Y0, Y8
+	VMULPD Y4, Y1, Y9
+	VSUBPD Y9, Y8, Y0
+
+	VMULPD Y5, Y2, Y1
+	VADDPD Y6, Y1, Y1
+
+	VEXTRACTF128 $1, Y6, X7
+	VADDPD X7, X6, X6
+	VHADDPD X6, X6, X6
+	VCVTSD2SS X6, X6, X6
+	VMOVSS X6, (DI)
+
+	ADDQ $4, SI
+	ADDQ $4, DI
+	DECQ R9
+	JNZ loop
+
+done:
+	MOVQ realState+0(FP), AX
+	MOVQ imagState+8(FP), BX
+	VMOVUPD Y0, (AX)
+	VMOVUPD Y1, (BX)
+	VZEROUPPER
+	RET

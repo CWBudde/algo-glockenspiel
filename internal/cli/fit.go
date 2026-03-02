@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"time"
 
 	"github.com/cwbudde/glockenspiel/internal/optimizer"
@@ -32,6 +33,7 @@ type fitOptions struct {
 	mayflyVariant   string
 	mayflyPop       int
 	mayflySeed      int64
+	cpuProfilePath  string
 }
 
 func newFitCmd() *cobra.Command {
@@ -80,6 +82,8 @@ func newFitCmd() *cobra.Command {
 	flags.StringVar(&options.mayflyVariant, "mayfly-variant", options.mayflyVariant, "Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa")
 	flags.IntVar(&options.mayflyPop, "mayfly-pop", options.mayflyPop, "Male/female population size for Mayfly")
 	flags.Int64Var(&options.mayflySeed, "mayfly-seed", options.mayflySeed, "Random seed for Mayfly")
+	flags.StringVar(&options.cpuProfilePath, "cpu-profile", options.cpuProfilePath, "Write a CPU profile for the fit command to this path")
+	_ = flags.MarkHidden("cpu-profile")
 
 	_ = cmd.MarkFlagRequired("reference")
 	_ = cmd.MarkFlagRequired("output")
@@ -140,6 +144,11 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	if err := os.MkdirAll(options.workDir, 0o755); err != nil {
 		return fmt.Errorf("create work dir: %w", err)
 	}
+	stopCPUProfile, err := startCPUProfile(options.cpuProfilePath)
+	if err != nil {
+		return err
+	}
+	defer stopCPUProfile()
 
 	reference, referenceRate, err := loadMonoWAVFloat32(options.referencePath)
 	if err != nil {
@@ -175,10 +184,14 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 				return err
 			}
 			if len(cp.BestParams) == len(initialEncoded) {
+				applyCheckpointResume(cmd, &options, cp)
 				initialEncoded = append(initialEncoded[:0], cp.BestParams...)
+				if cp.Iteration > 0 {
+					options.maxIter = maxInt(1, options.maxIter-cp.Iteration)
+				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-					"Resuming from %s (iteration=%d best=%0.6g)\n",
-					latestPath, cp.Iteration, cp.BestCost)
+					"Resuming from %s (iteration=%d best=%0.6g optimizer=%s metric=%s remaining-iter=%d)\n",
+					latestPath, cp.Iteration, cp.BestCost, options.optimizerName, options.metric, options.maxIter)
 			}
 		}
 	}
@@ -200,6 +213,7 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 			BestParams: append([]float64(nil), params...),
 			Optimizer:  options.optimizerName,
 			Metric:     options.metric,
+			State:      checkpointStateForOptions(options),
 		})
 	}
 	var selectedOptimizer optimizer.Optimizer
@@ -282,6 +296,97 @@ func projectToPCM16Domain(samples []float32) {
 	for i, sample := range samples {
 		samples[i] = float32(float64(float32ToInt16(sample)) / 32768.0)
 	}
+}
+
+func checkpointStateForOptions(options fitOptions) *optimizer.OptimizerState {
+	state := &optimizer.OptimizerState{
+		Kind: options.optimizerName,
+	}
+	if options.optimizerName == "mayfly" {
+		state.Mayfly = &optimizer.MayflyCheckpointEnv{
+			Variant:    options.mayflyVariant,
+			Population: options.mayflyPop,
+			Seed:       options.mayflySeed,
+		}
+	}
+	return state
+}
+
+func applyCheckpointResume(cmd *cobra.Command, options *fitOptions, cp *optimizer.Checkpoint) {
+	if options == nil || cp == nil {
+		return
+	}
+
+	if !flagChanged(cmd, "optimizer") && cp.Optimizer != "" {
+		options.optimizerName = cp.Optimizer
+	}
+	if !flagChanged(cmd, "metric") && cp.Metric != "" {
+		options.metric = cp.Metric
+	}
+	if cp.State == nil {
+		return
+	}
+	if !flagChanged(cmd, "optimizer") && cp.State.Kind != "" {
+		options.optimizerName = cp.State.Kind
+	}
+	if cp.State.Mayfly != nil {
+		if !flagChanged(cmd, "mayfly-variant") && cp.State.Mayfly.Variant != "" {
+			options.mayflyVariant = cp.State.Mayfly.Variant
+		}
+		if !flagChanged(cmd, "mayfly-pop") && cp.State.Mayfly.Population > 0 {
+			options.mayflyPop = cp.State.Mayfly.Population
+		}
+		if !flagChanged(cmd, "mayfly-seed") {
+			options.mayflySeed = cp.State.Mayfly.Seed
+		}
+	}
+}
+
+func flagChanged(cmd *cobra.Command, name string) bool {
+	if cmd == nil {
+		return false
+	}
+	flags := cmd.Flags()
+	if flags == nil {
+		return false
+	}
+	flag := flags.Lookup(name)
+	if flag == nil {
+		return false
+	}
+	return flag.Changed
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func startCPUProfile(path string) (func(), error) {
+	if path == "" {
+		return func() {}, nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("create cpu profile directory: %w", err)
+	}
+
+	file, err := os.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("create cpu profile %q: %w", path, err)
+	}
+
+	if err := pprof.StartCPUProfile(file); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("start cpu profile %q: %w", path, err)
+	}
+
+	return func() {
+		pprof.StopCPUProfile()
+		_ = file.Close()
+	}, nil
 }
 
 func loadMonoWAVFloat32(path string) ([]float32, int, error) {

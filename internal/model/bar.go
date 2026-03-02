@@ -23,6 +23,8 @@ type Bar struct {
 	distortedBuf  []float32
 	outputBuf     []float32
 	filterBlock   []float64
+	chebyGains4   [4]float32
+	hasCheby4     bool
 }
 
 // NewBar creates a new bar model instance.
@@ -103,16 +105,14 @@ func (b *Bar) ProcessExcitation(excitation []float32) []float32 {
 		b.filteredBuf[i] = float32(b.filterBlock[i])
 	}
 
-	if b.params.Chebyshev.Enabled && len(b.params.Chebyshev.HarmonicGains) > 0 {
-		for i := 0; i < sampleCount; i++ {
-			b.distortedBuf[i] = float32(applyChebyshev(float64(b.filteredBuf[i]), b.params.Chebyshev.HarmonicGains))
-		}
-	} else {
-		copy(b.distortedBuf[:sampleCount], b.filteredBuf[:sampleCount])
-	}
-
 	out := b.outputBuf[:sampleCount]
-	b.oscillator.ProcessBlock32(b.distortedBuf[:sampleCount], out)
+
+	if b.params.Chebyshev.Enabled && len(b.params.Chebyshev.HarmonicGains) > 0 {
+		processChebyshevBlock(b.filteredBuf[:sampleCount], b.distortedBuf[:sampleCount], b.params.Chebyshev.HarmonicGains, &b.chebyGains4, b.hasCheby4)
+		b.oscillator.ProcessBlock32(b.distortedBuf[:sampleCount], out)
+	} else {
+		b.oscillator.ProcessBlock32(b.filteredBuf[:sampleCount], out)
+	}
 
 	if b.params.InputMix != 0 {
 		dryMix := float32(b.params.InputMix)
@@ -132,11 +132,15 @@ func (b *Bar) UpdateParams(params *BarParams) error {
 
 	b.params = *params
 	b.lowpass = newLowpassSection(params.FilterFrequency, float64(b.sampleRate))
+	b.hasCheby4 = len(params.Chebyshev.HarmonicGains) == 4
+	if b.hasCheby4 {
+		for i := range b.chebyGains4 {
+			b.chebyGains4[i] = float32(params.Chebyshev.HarmonicGains[i])
+		}
+	}
 
 	for i, mode := range params.Modes {
-		b.oscillator.SetAmplitude(i, mode.Amplitude)
-		b.oscillator.SetFrequency(i, mode.Frequency)
-		b.oscillator.SetDecay(i, mode.DecayMs)
+		b.oscillator.SetMode(i, mode.Amplitude, mode.Frequency, mode.DecayMs)
 	}
 
 	return nil
@@ -187,6 +191,16 @@ func applyChebyshev(input float64, gains []float64) float64 {
 	}
 
 	return out
+}
+
+func processChebyshevBlock(input, output []float32, gains []float64, gains4 *[4]float32, has4 bool) {
+	if has4 && processChebyshevBlockAVX2(input, output, gains4) {
+		return
+	}
+
+	for i := range input {
+		output[i] = float32(applyChebyshev(float64(input[i]), gains))
+	}
 }
 
 func clearFloat32(buf []float32) {
