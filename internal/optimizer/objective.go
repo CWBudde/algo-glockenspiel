@@ -9,6 +9,7 @@ import (
 )
 
 const defaultLogErrorFloor = 1e-20
+const pcm16Scale = 32768.0
 
 // Metric selects the objective error metric.
 type Metric string
@@ -80,8 +81,11 @@ func NewObjectiveFunctionWithBounds(reference []float32, template *preset.Preset
 		return nil, err
 	}
 
+	projectedReference := append([]float32(nil), reference...)
+	projectToPCM16Domain(projectedReference)
+
 	return &ObjectiveFunction{
-		reference:  append([]float32(nil), reference...),
+		reference:  projectedReference,
 		working:    &working,
 		codec:      codec,
 		engine:     engine,
@@ -135,6 +139,7 @@ func (o *ObjectiveFunction) Evaluate(encoded []float64) float64 {
 
 	o.working.Parameters = *params
 	rendered := o.engine.RenderNote(o.note, o.velocity, o.duration)
+	projectToPCM16Domain(rendered)
 	switch o.metric {
 	case MetricRMS:
 		return ComputeRMSError(rendered, o.reference)
@@ -145,6 +150,21 @@ func (o *ObjectiveFunction) Evaluate(encoded []float64) float64 {
 	default:
 		return math.Inf(1)
 	}
+}
+
+func projectToPCM16Domain(samples []float32) {
+	for i, sample := range samples {
+		samples[i] = pcm16ToFloat32(float32ToPCM16(sample))
+	}
+}
+
+func float32ToPCM16(sample float32) int16 {
+	v := math.Max(-1, math.Min(1, float64(sample)))
+	return int16(math.Round(v * 32767))
+}
+
+func pcm16ToFloat32(sample int16) float32 {
+	return float32(float64(sample) / pcm16Scale)
 }
 
 // Objective returns the objective as an optimizer-compatible callback.

@@ -2,8 +2,12 @@ package optimizer
 
 import (
 	"math"
+	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/go-audio/audio"
+	"github.com/go-audio/wav"
 
 	"github.com/cwbudde/glockenspiel/internal/preset"
 	"github.com/cwbudde/glockenspiel/internal/synth"
@@ -58,6 +62,39 @@ func TestObjectiveEvaluateMatchesReference(t *testing.T) {
 	got := objective.Evaluate(encoded)
 	if got > 1e-8 {
 		t.Fatalf("expected near-zero objective cost, got %.12f", got)
+	}
+}
+
+func TestObjectiveEvaluateMatchesPCM16RoundTripReference(t *testing.T) {
+	template := loadObjectivePreset(t)
+	reference := renderReference(t, template, 44100, 69, 100, 0.1)
+
+	path := filepath.Join(t.TempDir(), "reference.wav")
+	if err := writePCM16WAV(path, 44100, reference); err != nil {
+		t.Fatalf("writePCM16WAV failed: %v", err)
+	}
+
+	loaded, sampleRate, err := loadPCM16WAV(path)
+	if err != nil {
+		t.Fatalf("loadPCM16WAV failed: %v", err)
+	}
+	if sampleRate != 44100 {
+		t.Fatalf("unexpected sample rate: got %d want 44100", sampleRate)
+	}
+
+	objective, err := NewObjectiveFunction(loaded, template, 44100, 69, 100, MetricRMS)
+	if err != nil {
+		t.Fatalf("NewObjectiveFunction failed: %v", err)
+	}
+
+	encoded, err := objective.Codec().EncodeParams(&template.Parameters)
+	if err != nil {
+		t.Fatalf("EncodeParams failed: %v", err)
+	}
+
+	got := objective.Evaluate(encoded)
+	if got > 1e-4 {
+		t.Fatalf("expected near-zero objective cost after PCM16 round-trip, got %.12f", got)
 	}
 }
 
@@ -131,4 +168,57 @@ func loadObjectivePreset(t *testing.T) *preset.Preset {
 	}
 
 	return p
+}
+
+func writePCM16WAV(path string, sampleRate int, samples []float32) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+
+	encoder := wav.NewEncoder(file, sampleRate, 16, 1, 1)
+	intData := make([]int, len(samples))
+	for i, sample := range samples {
+		intData[i] = int(float32ToPCM16(sample))
+	}
+
+	buffer := &audio.IntBuffer{
+		Format: &audio.Format{
+			NumChannels: 1,
+			SampleRate:  sampleRate,
+		},
+		SourceBitDepth: 16,
+		Data:           intData,
+	}
+	if err := encoder.Write(buffer); err != nil {
+		return err
+	}
+
+	return encoder.Close()
+}
+
+func loadPCM16WAV(path string) ([]float32, int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+
+	decoder := wav.NewDecoder(file)
+	intBuffer, err := decoder.FullPCMBuffer()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	samples := make([]float32, len(intBuffer.Data))
+	for i, sample := range intBuffer.Data {
+		samples[i] = pcm16ToFloat32(int16(sample))
+	}
+
+	return samples, intBuffer.Format.SampleRate, nil
 }

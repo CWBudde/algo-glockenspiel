@@ -531,9 +531,9 @@ testdata/
 
 ## Implementation Phases
 
-## Current Status (2026-03-01)
+## Current Status (2026-03-02)
 
-The repository is in a stable Phase 1 state:
+The repository is beyond the original Phase 1 checkpoint:
 
 - `go test ./...` passes.
 - The synth path is implemented end-to-end:
@@ -543,28 +543,39 @@ The repository is in a stable Phase 1 state:
   - bar model
   - synthesis engine
   - `glockenspiel synth`
-- The `fit` command is still a placeholder that returns "not implemented yet".
-- `internal/optimizer` only contains package docs; optimization infrastructure has not started.
-- Legacy comparison support exists as an opt-in test (`internal/synth/legacy_compare_test.go`), but it requires:
+- The optimizer stack is implemented:
+  - optimizer interface and progress/result types
+  - parameter encoding/decoding and bounds handling
+  - RMS, log-RMS, and spectral objective metrics
+  - Nelder-Mead and Mayfly optimizers
+  - checkpoint save/load and resume support
+- The `fit` command is implemented end-to-end:
+  - reference WAV loading
+  - optimizer execution
+  - checkpoint writing
+  - fitted preset export
+  - rendered comparison WAV output
+- Automated optimizer coverage exists for synthetic recovery, bounds handling, checkpoint/resume, and legacy-reference fitting.
+- Legacy comparison support also exists as an opt-in synth regression test (`internal/synth/legacy_compare_test.go`), but it requires:
   - `GLOCKENSPIEL_STRICT_LEGACY_COMPARE=1`
   - a rendered Go reference file at `testdata/output/go_synth_a4.wav`
 
 ### Recommended Resume Point
 
-Resume at **Phase 2.1 Optimizer Infrastructure**. That is the first clearly unfinished implementation block and it unblocks the remaining `fit` command work.
+Resume at **Phase 2.4 Manual Fit Testing**. The remaining gap is validating the implemented `fit` workflow manually against synthetic and recorded references, then recording the results in this plan.
 
 Recommended order:
 
-1. Add `internal/optimizer/optimizer.go` with the core interface and result/options types.
-2. Add `internal/optimizer/params.go` for parameter encoding/decoding and bounds handling.
-3. Add `internal/optimizer/objective.go` with RMS/log error metrics and the evaluation wrapper.
-4. Implement a first `SimpleOptimizer` using Gonum Nelder-Mead.
-5. Replace the `fit` CLI placeholder with a minimal working flow.
+1. Create a synthetic reference WAV from a known preset.
+2. Run `glockenspiel fit` against that synthetic reference.
+3. Verify the recovered preset is materially close to the source preset.
+4. Run `glockenspiel fit` against a recorded/legacy reference WAV in `testdata/reference/`.
+5. Compare the rendered fit output against the reference and capture listening notes.
 
 ### Notes Before Resuming
 
 - The plan below still reflects the original target architecture; use this status section as the source of truth for what is already done.
-- Phase 1 manual listening checks and strict legacy similarity verification are still open.
+- Manual listening checks are still open until they are run and documented.
 - The strict legacy comparison test currently skips unless the external reference artifact has been rendered and placed in `testdata/output/`.
 
 ### Phase 0: Project Setup
@@ -871,11 +882,12 @@ Recommended order:
     - [x] Print similarity metrics
 
   - [ ] Manual testing
-    - [ ] Create synthetic reference (render with known params)
-    - [ ] Run fit on synthetic reference
+    - [x] Create synthetic reference (render with known params)
+    - [x] Run fit on synthetic reference
     - [ ] Verify recovered params are close
-    - [ ] Test on real glockenspiel recording
+    - [x] Test on real glockenspiel recording
     - [ ] Listen to fitted vs reference
+    - Note: manual CLI runs were started on 2026-03-02 under `out/manual-fit/`. The synthetic round-trip and close-target fits improved the objective, but did not yet recover parameters closely enough to mark this block complete.
 
 #### 2.5 Testing & Validation
 

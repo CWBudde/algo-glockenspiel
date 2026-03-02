@@ -264,8 +264,10 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return err
 	}
 
-	rms := optimizer.ComputeRMSError(fittedSamples, reference)
-	logErr := optimizer.ComputeLogError(fittedSamples, reference, 1e-20, 0)
+	reportedSamples := append([]float32(nil), fittedSamples...)
+	projectToPCM16Domain(reportedSamples)
+	rms := optimizer.ComputeRMSError(reportedSamples, reference)
+	logErr := optimizer.ComputeLogError(reportedSamples, reference, 1e-20, 0)
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"Finished: best=%0.6g stop=%s iterations=%d evals=%d rms=%0.6g log=%0.6g\n",
@@ -274,6 +276,12 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		"Saved preset to %s and rendered fit to %s\n", options.outputPath, renderedPath)
 
 	return nil
+}
+
+func projectToPCM16Domain(samples []float32) {
+	for i, sample := range samples {
+		samples[i] = float32(float64(float32ToInt16(sample)) / 32768.0)
+	}
 }
 
 func loadMonoWAVFloat32(path string) ([]float32, int, error) {
