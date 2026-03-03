@@ -120,6 +120,18 @@ func TestQuadDecayOscillatorEdgeCases(t *testing.T) {
 	}
 }
 
+func TestQuadDecayOscillatorFlushesDenormals(t *testing.T) {
+	osc := NewQuadDecayOscillator(48000)
+	osc.realState[0] = 1e-320
+	osc.imagState[0] = -1e-320
+
+	osc.ProcessBlock32([]float32{0, 0, 0, 0}, make([]float32, 4))
+
+	if osc.realState[0] != 0 || osc.imagState[0] != 0 {
+		t.Fatalf("expected denormal state to be flushed, got real=%g imag=%g", osc.realState[0], osc.imagState[0])
+	}
+}
+
 func BenchmarkQuadDecayOscillatorProcessSample32(b *testing.B) {
 	osc := NewQuadDecayOscillator(48000)
 	for i := 0; i < NumModes; i++ {

@@ -8,6 +8,7 @@ import (
 const (
 	defaultOscSampleRate = 44100.0
 	minDecayMs           = 1e-9
+	flushDenormalFloor   = 1e-300
 )
 
 // QuadDecayOscillator models 4 decaying quadrature modes in parallel.
@@ -33,12 +34,12 @@ type modeBlock4Coeff struct {
 	outX0   [4]float64
 	outX1   [4]float64
 	outX2   [4]float64
-	c2 float64
-	s2 float64
-	c3 float64
-	s3 float64
-	c4 float64
-	s4 float64
+	c2      float64
+	s2      float64
+	c3      float64
+	s3      float64
+	c4      float64
+	s4      float64
 }
 
 // NewQuadDecayOscillator returns a zero-state oscillator with defaults.
@@ -141,6 +142,8 @@ func (o *QuadDecayOscillator) ProcessSample32(input float32) float32 {
 		sum += temp
 	}
 
+	o.flushDenormals()
+
 	return float32(sum)
 }
 
@@ -151,6 +154,7 @@ func (o *QuadDecayOscillator) ProcessBlock32(input, output []float32) {
 	}
 
 	if processBlock32AVX2(o, input, output) {
+		o.flushDenormals()
 		return
 	}
 
@@ -211,6 +215,7 @@ func (o *QuadDecayOscillator) processBlock32Generic(input, output []float32) {
 
 	o.realState[0], o.realState[1], o.realState[2], o.realState[3] = r0, r1, r2, r3
 	o.imagState[0], o.imagState[1], o.imagState[2], o.imagState[3] = im0, im1, im2, im3
+	o.flushDenormals()
 }
 
 type modeBlock4Result struct {
@@ -275,15 +280,26 @@ func (o *QuadDecayOscillator) calculateCoefficient(mode int) {
 		outX0:   [4]float64{0, c1, c2, c3},
 		outX1:   [4]float64{0, 0, c1, c2},
 		outX2:   [4]float64{0, 0, 0, c1},
-		c2: c2,
-		s2: s2,
-		c3: c3,
-		s3: s3,
-		c4: c3*c1 - s3*s1,
-		s4: c3*s1 + s3*c1,
+		c2:      c2,
+		s2:      s2,
+		c3:      c3,
+		s3:      s3,
+		c4:      c3*c1 - s3*s1,
+		s4:      c3*s1 + s3*c1,
 	}
 }
 
 func validMode(mode int) bool {
 	return mode >= 0 && mode < NumModes
+}
+
+func (o *QuadDecayOscillator) flushDenormals() {
+	for i := range o.realState {
+		if math.Abs(o.realState[i]) < flushDenormalFloor {
+			o.realState[i] = 0
+		}
+		if math.Abs(o.imagState[i]) < flushDenormalFloor {
+			o.imagState[i] = 0
+		}
+	}
 }

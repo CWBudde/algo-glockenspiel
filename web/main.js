@@ -15,9 +15,12 @@ let audioReady = false;
 let initAudioPromise = null;
 let masterGain = 0.7;
 let strikeVelocity = 96;
+let prewarmTimer = null;
 
 const activeVoices = [];
 const pressedKeys = new Set();
+const renderedNoteCache = new Map();
+const MAX_RENDERED_NOTES = 64;
 
 function midiToName(note) {
   const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -42,6 +45,28 @@ function panForNote(note) {
 }
 
 function renderNoteIntoVoice(note, velocity) {
+  const samples = getRenderedSamples(note, velocity);
+  if (!samples) {
+    return null;
+  }
+
+  return {
+    note,
+    pan: panForNote(note),
+    position: 0,
+    samples,
+  };
+}
+
+function getRenderedSamples(note, velocity) {
+  const cacheKey = `${note}:${velocity}`;
+  const cached = renderedNoteCache.get(cacheKey);
+  if (cached) {
+    renderedNoteCache.delete(cacheKey);
+    renderedNoteCache.set(cacheKey, cached);
+    return cached;
+  }
+
   const rendered = wasmRenderNote(note, velocity);
   if (!rendered || !rendered.length || !rendered.ptr || !wasmMemory) {
     return null;
@@ -53,12 +78,44 @@ function renderNoteIntoVoice(note, velocity) {
     Number(rendered.length),
   );
 
-  return {
-    note,
-    pan: panForNote(note),
-    position: 0,
-    samples: new Float32Array(samples),
+  const copied = new Float32Array(samples);
+  renderedNoteCache.set(cacheKey, copied);
+  if (renderedNoteCache.size > MAX_RENDERED_NOTES) {
+    const oldestKey = renderedNoteCache.keys().next().value;
+    renderedNoteCache.delete(oldestKey);
+  }
+
+  return copied;
+}
+
+function scheduleCachePrewarm(velocity) {
+  if (!wasmReady) {
+    return;
+  }
+
+  if (prewarmTimer !== null) {
+    window.clearTimeout(prewarmTimer);
+  }
+
+  const notes = Array.from({ length: SEMITONES }, (_, index) => FIRST_NOTE + index);
+  let index = 0;
+
+  const step = () => {
+    const started = performance.now();
+    while (index < notes.length && (performance.now() - started) < 8) {
+      getRenderedSamples(notes[index], velocity);
+      index += 1;
+    }
+
+    if (index < notes.length) {
+      prewarmTimer = window.setTimeout(step, 16);
+      return;
+    }
+
+    prewarmTimer = null;
   };
+
+  prewarmTimer = window.setTimeout(step, 32);
 }
 
 async function initAudio() {
@@ -103,8 +160,8 @@ async function initAudio() {
       }
 
       for (let frame = 0; frame < left.length; frame += 1) {
-        left[frame] = Math.tanh(left[frame]);
-        right[frame] = Math.tanh(right[frame]);
+        left[frame] = clamp(left[frame], -1, 1);
+        right[frame] = clamp(right[frame], -1, 1);
       }
     };
 
@@ -198,6 +255,7 @@ function bindControls() {
   velocity.addEventListener('input', () => {
     strikeVelocity = clamp(Number(velocity.value), 1, 127);
     velocityValue.textContent = String(strikeVelocity);
+    scheduleCachePrewarm(strikeVelocity);
   });
 
   gain.addEventListener('input', () => {
@@ -271,6 +329,7 @@ async function init() {
     buildInstrument();
     bindControls();
     bindKeyboard();
+    scheduleCachePrewarm(strikeVelocity);
     updateStatus('WASM loaded. Click a bar to start audio.');
   } catch (error) {
     console.error('Failed to load WASM demo', error);

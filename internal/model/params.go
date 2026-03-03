@@ -95,36 +95,52 @@ func ValidateBarParams(params *BarParams) error {
 	}
 
 	for modeIndex, mode := range params.Modes {
-		if err := validateFiniteRange(fmt.Sprintf("modes[%d].amplitude", modeIndex), mode.Amplitude, AmplitudeMin, AmplitudeMax); err != nil {
-			return err
+		if !isFiniteInRange(mode.Amplitude, AmplitudeMin, AmplitudeMax) {
+			return rangeErrorf("modes[%d].amplitude", modeIndex, mode.Amplitude, AmplitudeMin, AmplitudeMax)
 		}
 
-		if err := validateFiniteRange(fmt.Sprintf("modes[%d].frequency", modeIndex), mode.Frequency, FrequencyMinHz, FrequencyMaxHz); err != nil {
-			return err
+		if !isFiniteInRange(mode.Frequency, FrequencyMinHz, FrequencyMaxHz) {
+			return rangeErrorf("modes[%d].frequency", modeIndex, mode.Frequency, FrequencyMinHz, FrequencyMaxHz)
 		}
 
-		if err := validateFiniteRange(fmt.Sprintf("modes[%d].decay_ms", modeIndex), mode.DecayMs, DecayMsMin, DecayMsMax); err != nil {
-			return err
+		if !isFiniteInRange(mode.DecayMs, DecayMsMin, DecayMsMax) {
+			return rangeErrorf("modes[%d].decay_ms", modeIndex, mode.DecayMs, DecayMsMin, DecayMsMax)
 		}
 	}
 
 	for gainIndex, gain := range params.Chebyshev.HarmonicGains {
-		if err := validateFiniteRange(fmt.Sprintf("chebyshev.harmonic_gains[%d]", gainIndex), gain, HarmonicGainMin, HarmonicGainMax); err != nil {
-			return err
+		if !isFiniteInRange(gain, HarmonicGainMin, HarmonicGainMax) {
+			return rangeErrorf("chebyshev.harmonic_gains[%d]", gainIndex, gain, HarmonicGainMin, HarmonicGainMax)
 		}
 	}
 
 	return nil
 }
 
+func isFiniteInRange(value, min, max float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= min && value <= max
+}
+
 func validateFiniteRange(field string, value, min, max float64) error {
+	if !isFiniteInRange(value, min, max) {
+		return rangeError(field, value, min, max)
+	}
+
+	return nil
+}
+
+func rangeError(field string, value, min, max float64) error {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return fmt.Errorf("%s must be finite", field)
 	}
 
-	if value < min || value > max {
-		return fmt.Errorf("%s out of range [%g, %g]: %g", field, min, max, value)
+	return fmt.Errorf("%s out of range [%g, %g]: %g", field, min, max, value)
+}
+
+func rangeErrorf(fieldFmt string, index int, value, min, max float64) error {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return fmt.Errorf(fieldFmt+" must be finite", index)
 	}
 
-	return nil
+	return fmt.Errorf(fieldFmt+" out of range [%g, %g]: %g", index, min, max, value)
 }

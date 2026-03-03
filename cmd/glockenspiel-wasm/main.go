@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"syscall/js"
 	"unsafe"
 
@@ -18,6 +19,7 @@ const (
 var (
 	globalSynth *synth.Synthesizer
 	renderedBuf []float32
+	noteCache   map[string][]float32
 )
 
 func main() {
@@ -49,6 +51,7 @@ func wasmInit(_ js.Value, args []js.Value) interface{} {
 
 	globalSynth = s
 	renderedBuf = make([]float32, 0, sampleRate*2)
+	noteCache = make(map[string][]float32)
 
 	return nil
 }
@@ -64,6 +67,13 @@ func wasmRenderNote(_ js.Value, args []js.Value) interface{} {
 
 	note := args[0].Int()
 	velocity := args[1].Int()
+	cacheKey := fmt.Sprintf("%d:%d", note, velocity)
+
+	if cached, ok := noteCache[cacheKey]; ok && len(cached) > 0 {
+		result["ptr"] = float64(uintptr(unsafe.Pointer(&cached[0])))
+		result["length"] = len(cached)
+		return result
+	}
 
 	audio := globalSynth.RenderNoteWithOptions(note, velocity, webNoteDurationSeconds, synth.RenderOptions{
 		AutoStop:  true,
@@ -75,8 +85,10 @@ func wasmRenderNote(_ js.Value, args []js.Value) interface{} {
 	}
 
 	renderedBuf = append(renderedBuf[:0], audio...)
-	result["ptr"] = float64(uintptr(unsafe.Pointer(&renderedBuf[0])))
-	result["length"] = len(renderedBuf)
+	cached := append([]float32(nil), renderedBuf...)
+	noteCache[cacheKey] = cached
+	result["ptr"] = float64(uintptr(unsafe.Pointer(&cached[0])))
+	result["length"] = len(cached)
 
 	return result
 }
