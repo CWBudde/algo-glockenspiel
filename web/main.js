@@ -17,10 +17,7 @@ let masterGain = 0.7;
 let strikeVelocity = 96;
 let prewarmTimer = null;
 
-const activeVoices = [];
 const pressedKeys = new Set();
-const renderedNoteCache = new Map();
-const MAX_RENDERED_NOTES = 64;
 
 function midiToName(note) {
   const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -39,57 +36,8 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function panForNote(note) {
-  const relative = (note - FIRST_NOTE) / Math.max(1, SEMITONES - 1);
-  return relative * 1.2 - 0.6;
-}
-
-function renderNoteIntoVoice(note, velocity) {
-  const samples = getRenderedSamples(note, velocity);
-  if (!samples) {
-    return null;
-  }
-
-  return {
-    note,
-    pan: panForNote(note),
-    position: 0,
-    samples,
-  };
-}
-
-function getRenderedSamples(note, velocity) {
-  const cacheKey = `${note}:${velocity}`;
-  const cached = renderedNoteCache.get(cacheKey);
-  if (cached) {
-    renderedNoteCache.delete(cacheKey);
-    renderedNoteCache.set(cacheKey, cached);
-    return cached;
-  }
-
-  const rendered = wasmRenderNote(note, velocity);
-  if (!rendered || !rendered.length || !rendered.ptr || !wasmMemory) {
-    return null;
-  }
-
-  const samples = new Float32Array(
-    wasmMemory.buffer,
-    Number(rendered.ptr),
-    Number(rendered.length),
-  );
-
-  const copied = new Float32Array(samples);
-  renderedNoteCache.set(cacheKey, copied);
-  if (renderedNoteCache.size > MAX_RENDERED_NOTES) {
-    const oldestKey = renderedNoteCache.keys().next().value;
-    renderedNoteCache.delete(oldestKey);
-  }
-
-  return copied;
-}
-
 function scheduleCachePrewarm(velocity) {
-  if (!wasmReady) {
+  if (!wasmReady || typeof wasmPrewarmNotes === 'undefined') {
     return;
   }
 
@@ -103,7 +51,7 @@ function scheduleCachePrewarm(velocity) {
   const step = () => {
     const started = performance.now();
     while (index < notes.length && (performance.now() - started) < 8) {
-      getRenderedSamples(notes[index], velocity);
+      wasmPrewarmNotes(notes[index], 1, velocity);
       index += 1;
     }
 
@@ -139,34 +87,33 @@ async function initAudio() {
       left.fill(0);
       right.fill(0);
 
-      for (let voiceIndex = activeVoices.length - 1; voiceIndex >= 0; voiceIndex -= 1) {
-        const voice = activeVoices[voiceIndex];
-        const samples = voice.samples;
-        const pan = voice.pan;
-        const leftGain = masterGain * (1 - pan) * 0.5;
-        const rightGain = masterGain * (1 + pan) * 0.5;
-
-        for (let frame = 0; frame < left.length; frame += 1) {
-          if (voice.position >= samples.length) {
-            activeVoices.splice(voiceIndex, 1);
-            break;
-          }
-
-          const sample = samples[voice.position];
-          left[frame] += sample * leftGain;
-          right[frame] += sample * rightGain;
-          voice.position += 1;
-        }
+      if (!wasmMemory || typeof wasmProcessBlock === 'undefined') {
+        return;
       }
 
+      const interleavedPtr = wasmProcessBlock(left.length);
+      if (!interleavedPtr) {
+        return;
+      }
+
+      const interleaved = new Float32Array(
+        wasmMemory.buffer,
+        Number(interleavedPtr),
+        left.length * 2,
+      );
+
       for (let frame = 0; frame < left.length; frame += 1) {
-        left[frame] = clamp(left[frame], -1, 1);
-        right[frame] = clamp(right[frame], -1, 1);
+        left[frame] = interleaved[frame * 2];
+        right[frame] = interleaved[frame * 2 + 1];
       }
     };
 
     outputNode.connect(audioContext.destination);
     await audioContext.resume();
+
+    if (typeof wasmSetMasterGain !== 'undefined') {
+      wasmSetMasterGain(masterGain);
+    }
 
     audioReady = true;
     updateStatus(`Ready at ${Math.round(audioContext.sampleRate)} Hz. Strike a bar.`);
@@ -185,13 +132,9 @@ function strike(note) {
   }
 
   const start = () => {
-    const voice = renderNoteIntoVoice(note, strikeVelocity);
-    if (!voice) {
-      updateStatus('Failed to render note buffer.', true);
-      return;
+    if (typeof wasmNoteOn !== 'undefined') {
+      wasmNoteOn(note, strikeVelocity);
     }
-
-    activeVoices.push(voice);
   };
 
   if (!audioReady) {
@@ -261,6 +204,9 @@ function bindControls() {
   gain.addEventListener('input', () => {
     masterGain = clamp(Number(gain.value) / 100, 0.1, 1.0);
     gainValue.textContent = `${Math.round(masterGain * 100)}%`;
+    if (audioReady && typeof wasmSetMasterGain !== 'undefined') {
+      wasmSetMasterGain(masterGain);
+    }
   });
 }
 
@@ -321,7 +267,11 @@ async function init() {
 
     await new Promise((resolve) => window.setTimeout(resolve, 50));
 
-    if (typeof wasmInit === 'undefined' || typeof wasmRenderNote === 'undefined') {
+    if (
+      typeof wasmInit === 'undefined' ||
+      typeof wasmNoteOn === 'undefined' ||
+      typeof wasmProcessBlock === 'undefined'
+    ) {
       throw new Error('WASM exports not found');
     }
 
