@@ -49,6 +49,10 @@ bench:
 build:
     go build -o bin/glockenspiel ./cmd/glockenspiel
 
+# Build the WASM web demo
+build-web:
+    ./scripts/build-wasm.sh
+
 # Install the glockenspiel CLI binary
 install:
     go install ./cmd/glockenspiel

@@ -998,23 +998,25 @@ Recommended order:
 
 #### 3.4 Performance Optimization
 
-- [ ] **Profile and optimize hot paths**
+- [x] **Profile and optimize hot paths**
   - [x] Run CPU profiler on fit command
   - [x] Identify bottlenecks
-  - [ ] Optimize oscillator processing
+  - [x] Optimize oscillator processing
     - Note: `QuadDecayOscillator.ProcessBlock32` was specialized as a fixed 4-mode block loop on 2026-03-02 to remove per-sample call overhead and repeated field indexing.
     - Note: first AVX2 SIMD path added on 2026-03-02 for the 4-mode oscillator block loop, using runtime CPU feature detection and an amd64 assembly kernel that vectorizes across modes.
+    - Note: AVX2 dispatch was also added for the common 4-harmonic Chebyshev waveshaper path, so the hot `Chebyshev(4) -> oscillator` chain now has SIMD coverage in both stages on amd64.
     - Note: an experimental fused AVX2 path was added on 2026-03-02 for the common `Chebyshev(4 harmonics) + InputMix==0` case, but current benchmarks show it is much slower than the separate AVX2 Chebyshev + AVX2 oscillator path (`~29-39us/op` fused vs `~2.0-2.3us/op` separate on a 512-sample block), so it is currently left out of the runtime dispatch and kept only as a benchmarked prototype.
-    - [ ] Consider SIMD (assembly or compiler hints)
     - [x] Optimize coefficient recalculation
     - Note: `Bar.UpdateParams` now uses a batched oscillator mode setter so each mode recomputes coefficients once instead of separately in `SetFrequency` and `SetDecay`.
+    - Note: further SIMD experimentation remains possible, but the current amd64 runtime path already includes hand-written AVX2 kernels for the main oscillator block loop.
 
-  - [ ] Optimize objective function
+  - [x] Optimize objective function
     - [x] Minimize allocations
     - [x] Reuse buffers
-    - [ ] Consider parallel evaluation (if optimizer supports)
+    - [x] Add SIMD dispatch for the RMS error reduction on amd64 (`sumSquaredDiffAVX2Asm`)
+    - Note: parallel evaluation is still future work; the current optimizers evaluate candidates sequentially.
 
-  - [ ] Benchmark improvements
+  - [x] Benchmark improvements
     - [x] Measure samples/second for synthesis
     - [x] Measure evaluations/second for optimization
     - [x] Compare before/after
@@ -1062,8 +1064,14 @@ Recommended order:
 This phase is for future work after the CLI tool is complete and stable.
 
 - [ ] **VST3 Wrapper**
-  - [ ] Evaluate Go VST3 libraries
+  - [x] Evaluate Go VST3 libraries
+    - Note: initial research completed on 2026-03-03 in `docs/vst3-evaluation.md`.
+    - Note: current recommendation is to use the Steinberg VST3 SDK/C API as the source of truth and prototype the first Go plugin skeleton with `justyntemme/vst3go`, falling back to a local `cgo` bridge if the wrapper blocks required functionality.
+    - Note: `vst3go` is now the selected first spike target; see `docs/vst3go-spike.md`. Its current README still lists MIDI support as planned, so the first milestone should validate processor/controller and parameter plumbing before committing to full instrument behavior.
   - [ ] Implement VST3 plugin skeleton
+    - Note: initial package skeleton created in `plugin/vst3/` with stable parameter IDs, parameter specs, and `BarParams` mapping helpers, but no SDK-backed processor/controller has been added yet.
+    - Note: first `vst3go` scaffold added on 2026-03-03 in `plugin/vst3/` and `cmd/glockenspiel-vst3/`, but it is currently guarded behind a `vst3go` build tag because the published `github.com/justyntemme/vst3go v0.1.1` module is missing the VST3 C headers referenced by its `cgo` sources.
+    - Note: upstream repository inspection on 2026-03-03 indicates those headers live under `include/vst3` as a Git submodule pointing at Steinberg's `vst3_c_api` repository, which explains why `go get` did not fetch them. The likely next step is a local fork/`replace` or separate vendoring of the header tree.
   - [ ] Integrate synthesis engine
   - [ ] Handle MIDI input
   - [ ] Implement parameter mapping

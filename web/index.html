@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Algo Glockenspiel</title>
+    <meta
+      name="description"
+      content="Play the physical-model glockenspiel in your browser."
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">Physical Model Web Demo</p>
+        <h1>Algo Glockenspiel</h1>
+        <p class="lede">
+          Two octaves of struck bars driven by the repository’s default preset.
+          Click or tap a bar, or use the keyboard row shown on each note.
+        </p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Instrument</h2>
+            <p id="status" class="status">Loading WebAssembly...</p>
+          </div>
+
+          <div class="controls">
+            <label class="control">
+              <span>Velocity</span>
+              <input id="velocity" type="range" min="1" max="127" value="96" />
+              <output id="velocity-value" for="velocity">96</output>
+            </label>
+
+            <label class="control">
+              <span>Level</span>
+              <input id="gain" type="range" min="10" max="100" value="70" />
+              <output id="gain-value" for="gain">70%</output>
+            </label>
+          </div>
+        </div>
+
+        <div id="glockenspiel" class="glockenspiel" aria-label="Playable glockenspiel"></div>
+      </section>
+
+      <footer class="footer">
+        <p>Keys: follow the printed labels on each bar for computer keyboard play.</p>
+      </footer>
+    </main>
+
+    <script src="wasm_exec.js"></script>
+    <script src="main.js" type="module"></script>
+  </body>
+</html>

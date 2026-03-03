@@ -9,6 +9,7 @@ Implemented today:
 - four-mode bar model with quadrature decay oscillators
 - preset load/save/validation
 - note rendering to mono WAV
+- browser-playable WebAssembly demo
 - offline fitting against reference WAVs
 - RMS, log-RMS, and spectral objective metrics
 - Nelder-Mead and Mayfly optimizer backends
@@ -94,6 +95,15 @@ glockenspiel fit \
   --work-dir out/fit-a4 \
   --resume
 ```
+
+Run the browser demo:
+
+```bash
+./scripts/build-wasm.sh
+python3 -m http.server -d web 8080
+```
+
+Then open `http://localhost:8080`.
 
 Resume restores the saved best parameter vector, optimizer/metric selection, remaining iteration budget, and Mayfly settings when present. It does not restore a full internal simplex or full Mayfly population snapshot.
 
