@@ -3,7 +3,6 @@
 package main
 
 import (
-	"fmt"
 	"math"
 	"syscall/js"
 	"unsafe"
@@ -17,18 +16,18 @@ const (
 	webDecayDBFS           = -72.0
 	webMinGain             = 0.1
 	webMaxVoices           = 64
+	webDefaultBlockFrames  = 128
 )
 
 type voice struct {
-	samples []float32
-	pos     int
-	left    float32
-	right   float32
+	stream *synth.Voice
+	left   float32
+	right  float32
+	buffer []float32
 }
 
 type engine struct {
 	synth      *synth.Synthesizer
-	noteCache  map[string][]float32
 	voices     []voice
 	mixBuffer  []float32
 	masterGain float32
@@ -43,7 +42,6 @@ func main() {
 	js.Global().Set("wasmNoteOn", js.FuncOf(wasmNoteOn))
 	js.Global().Set("wasmSetMasterGain", js.FuncOf(wasmSetMasterGain))
 	js.Global().Set("wasmProcessBlock", js.FuncOf(wasmProcessBlock))
-	js.Global().Set("wasmPrewarmNotes", js.FuncOf(wasmPrewarmNotes))
 	js.Global().Set("wasmGetMemoryBuffer", js.FuncOf(wasmGetMemoryBuffer))
 
 	println("WASM glockenspiel module loaded")
@@ -68,9 +66,8 @@ func wasmInit(_ js.Value, args []js.Value) interface{} {
 
 	globalEngine = &engine{
 		synth:      s,
-		noteCache:  make(map[string][]float32),
 		voices:     make([]voice, 0, 16),
-		mixBuffer:  make([]float32, 128*2),
+		mixBuffer:  make([]float32, webDefaultBlockFrames*2),
 		masterGain: 0.7,
 	}
 
@@ -121,25 +118,6 @@ func wasmProcessBlock(_ js.Value, args []js.Value) interface{} {
 	return float64(uintptr(unsafe.Pointer(ptr)))
 }
 
-func wasmPrewarmNotes(_ js.Value, args []js.Value) interface{} {
-	if globalEngine == nil || len(args) < 3 {
-		return nil
-	}
-
-	startNote := args[0].Int()
-	count := args[1].Int()
-	velocity := args[2].Int()
-	if count <= 0 {
-		return nil
-	}
-
-	for i := 0; i < count; i++ {
-		_, _ = globalEngine.cachedNote(startNote+i, velocity)
-	}
-
-	return nil
-}
-
 func wasmGetMemoryBuffer(_ js.Value, _ []js.Value) interface{} {
 	mem := js.Global().Get("__algoGlockenspielWasmMemory")
 	if !mem.Truthy() {
@@ -150,8 +128,11 @@ func wasmGetMemoryBuffer(_ js.Value, _ []js.Value) interface{} {
 }
 
 func (e *engine) noteOn(note, velocity int) {
-	samples, ok := e.cachedNote(note, velocity)
-	if !ok || len(samples) == 0 {
+	stream, err := e.synth.NewVoice(note, velocity, webNoteDurationSeconds, synth.RenderOptions{
+		AutoStop:  true,
+		DecayDBFS: webDecayDBFS,
+	})
+	if err != nil {
 		return
 	}
 
@@ -162,29 +143,11 @@ func (e *engine) noteOn(note, velocity int) {
 
 	left, right := gainsForNote(note, e.masterGain)
 	e.voices = append(e.voices, voice{
-		samples: samples,
-		left:    left,
-		right:   right,
+		stream: stream,
+		left:   left,
+		right:  right,
+		buffer: make([]float32, webDefaultBlockFrames),
 	})
-}
-
-func (e *engine) cachedNote(note, velocity int) ([]float32, bool) {
-	cacheKey := fmt.Sprintf("%d:%d", note, velocity)
-	if cached, ok := e.noteCache[cacheKey]; ok {
-		return cached, true
-	}
-
-	audio := e.synth.RenderNoteWithOptions(note, velocity, webNoteDurationSeconds, synth.RenderOptions{
-		AutoStop:  true,
-		DecayDBFS: webDecayDBFS,
-	})
-	if len(audio) == 0 {
-		return nil, false
-	}
-
-	cached := append([]float32(nil), audio...)
-	e.noteCache[cacheKey] = cached
-	return cached, true
 }
 
 func (e *engine) processBlock(frames int) *float32 {
@@ -198,24 +161,18 @@ func (e *engine) processBlock(frames int) *float32 {
 
 	writeIndex := 0
 	for _, v := range e.voices {
-		remaining := len(v.samples) - v.pos
-		if remaining <= 0 {
-			continue
+		if len(v.buffer) < frames {
+			v.buffer = make([]float32, frames)
 		}
 
-		n := frames
-		if remaining < n {
-			n = remaining
-		}
-
+		n := v.stream.RenderInto(v.buffer[:frames])
 		for i := 0; i < n; i++ {
-			sample := v.samples[v.pos+i]
+			sample := v.buffer[i]
 			buf[i*2] += sample * v.left
 			buf[i*2+1] += sample * v.right
 		}
 
-		v.pos += n
-		if v.pos < len(v.samples) {
+		if v.stream.Active() {
 			e.voices[writeIndex] = v
 			writeIndex++
 		}

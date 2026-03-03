@@ -15,7 +15,6 @@ let audioReady = false;
 let initAudioPromise = null;
 let masterGain = 0.7;
 let strikeVelocity = 96;
-let prewarmTimer = null;
 
 const pressedKeys = new Set();
 
@@ -34,36 +33,6 @@ function updateStatus(message, isError = false) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
-}
-
-function scheduleCachePrewarm(velocity) {
-  if (!wasmReady || typeof wasmPrewarmNotes === 'undefined') {
-    return;
-  }
-
-  if (prewarmTimer !== null) {
-    window.clearTimeout(prewarmTimer);
-  }
-
-  const notes = Array.from({ length: SEMITONES }, (_, index) => FIRST_NOTE + index);
-  let index = 0;
-
-  const step = () => {
-    const started = performance.now();
-    while (index < notes.length && (performance.now() - started) < 8) {
-      wasmPrewarmNotes(notes[index], 1, velocity);
-      index += 1;
-    }
-
-    if (index < notes.length) {
-      prewarmTimer = window.setTimeout(step, 16);
-      return;
-    }
-
-    prewarmTimer = null;
-  };
-
-  prewarmTimer = window.setTimeout(step, 32);
 }
 
 async function initAudio() {
@@ -198,7 +167,6 @@ function bindControls() {
   velocity.addEventListener('input', () => {
     strikeVelocity = clamp(Number(velocity.value), 1, 127);
     velocityValue.textContent = String(strikeVelocity);
-    scheduleCachePrewarm(strikeVelocity);
   });
 
   gain.addEventListener('input', () => {
@@ -279,7 +247,6 @@ async function init() {
     buildInstrument();
     bindControls();
     bindKeyboard();
-    scheduleCachePrewarm(strikeVelocity);
     updateStatus('WASM loaded. Click a bar to start audio.');
   } catch (error) {
     console.error('Failed to load WASM demo', error);

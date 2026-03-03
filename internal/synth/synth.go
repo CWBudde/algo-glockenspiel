@@ -20,6 +20,18 @@ type RenderOptions struct {
 	DecayDBFS float64
 }
 
+// Voice streams a single struck note incrementally.
+type Voice struct {
+	bar                    *model.Bar
+	remainingSamples       int
+	strikeVelocity         int
+	autoStop               bool
+	threshold              float64
+	consecutiveQuietBlocks int
+	blockSize              int
+	done                   bool
+}
+
 // Synthesizer orchestrates note rendering from a preset.
 type Synthesizer struct {
 	bar        *model.Bar
@@ -58,55 +70,55 @@ func (s *Synthesizer) RenderNote(note, velocity int, duration float64) []float32
 
 // RenderNoteWithOptions renders a note with additional stop controls.
 func (s *Synthesizer) RenderNoteWithOptions(note, velocity int, duration float64, options RenderOptions) []float32 {
-	if duration <= 0 {
+	voice, err := s.NewVoice(note, velocity, duration, options)
+	if err != nil {
 		return nil
+	}
+
+	out := make([]float32, 0, voice.remainingSamples)
+	buf := make([]float32, s.blockSize)
+	for voice.Active() {
+		n := voice.RenderInto(buf)
+		if n == 0 {
+			break
+		}
+		out = append(out, buf[:n]...)
+	}
+
+	return out
+}
+
+// NewVoice prepares a streaming note voice.
+func (s *Synthesizer) NewVoice(note, velocity int, duration float64, options RenderOptions) (*Voice, error) {
+	if duration <= 0 {
+		return nil, fmt.Errorf("duration must be positive: %g", duration)
 	}
 
 	totalSamples := int(math.Round(duration * float64(s.sampleRate)))
 	if totalSamples <= 0 {
-		return nil
+		return nil, fmt.Errorf("duration produced no samples: %g", duration)
 	}
 
 	params := s.scaledParamsForNote(note)
-	if err := s.bar.UpdateParams(&params); err != nil {
-		return nil
+	bar, err := model.NewBar(&params, s.sampleRate)
+	if err != nil {
+		return nil, err
 	}
-
-	s.bar.Reset()
+	bar.Reset()
 
 	threshold := math.Pow(10, options.DecayDBFS/20)
 	if options.DecayDBFS == 0 {
 		threshold = math.Pow(10, defaultDecayThreshold/20)
 	}
 
-	out := make([]float32, 0, totalSamples)
-	remaining := totalSamples
-	strikeVelocity := velocity
-	consecutiveQuietBlocks := 0
-
-	for remaining > 0 {
-		n := s.blockSize
-		if remaining < n {
-			n = remaining
-		}
-
-		block := s.bar.Synthesize(strikeVelocity, n)
-		strikeVelocity = 0
-
-		if options.AutoStop && shouldStop(block, threshold) {
-			consecutiveQuietBlocks++
-			if consecutiveQuietBlocks >= autoStopBlockCount {
-				break
-			}
-		} else {
-			consecutiveQuietBlocks = 0
-		}
-
-		out = append(out, block...)
-		remaining -= n
-	}
-
-	return out
+	return &Voice{
+		bar:              bar,
+		remainingSamples: totalSamples,
+		strikeVelocity:   velocity,
+		autoStop:         options.AutoStop,
+		threshold:        threshold,
+		blockSize:        s.blockSize,
+	}, nil
 }
 
 func (s *Synthesizer) scaledParamsForNote(note int) model.BarParams {
@@ -139,4 +151,44 @@ func shouldStop(block []float32, threshold float64) bool {
 	rms := math.Sqrt(sum / float64(len(block)))
 
 	return rms < threshold
+}
+
+// Active reports whether the voice can still render audio.
+func (v *Voice) Active() bool {
+	return v != nil && !v.done && v.remainingSamples > 0
+}
+
+// RenderInto writes the next chunk into dst and returns the sample count written.
+func (v *Voice) RenderInto(dst []float32) int {
+	if !v.Active() || len(dst) == 0 {
+		return 0
+	}
+
+	n := len(dst)
+	if n > v.blockSize {
+		n = v.blockSize
+	}
+	if n > v.remainingSamples {
+		n = v.remainingSamples
+	}
+
+	block := v.bar.Synthesize(v.strikeVelocity, n)
+	v.strikeVelocity = 0
+	copy(dst[:n], block)
+
+	if v.autoStop && shouldStop(block, v.threshold) {
+		v.consecutiveQuietBlocks++
+		if v.consecutiveQuietBlocks >= autoStopBlockCount {
+			v.done = true
+		}
+	} else {
+		v.consecutiveQuietBlocks = 0
+	}
+
+	v.remainingSamples -= n
+	if v.remainingSamples <= 0 {
+		v.done = true
+	}
+
+	return n
 }

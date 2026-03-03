@@ -59,6 +59,48 @@ func TestRenderDifferentDurations(t *testing.T) {
 	}
 }
 
+func TestVoiceRenderMatchesRenderNote(t *testing.T) {
+	p := loadTestPreset(t)
+
+	synthesizer, err := NewSynthesizer(p, 44100)
+	if err != nil {
+		t.Fatalf("new synthesizer failed: %v", err)
+	}
+
+	full := synthesizer.RenderNoteWithOptions(69, 100, 0.5, RenderOptions{
+		AutoStop:  true,
+		DecayDBFS: -72,
+	})
+
+	voice, err := synthesizer.NewVoice(69, 100, 0.5, RenderOptions{
+		AutoStop:  true,
+		DecayDBFS: -72,
+	})
+	if err != nil {
+		t.Fatalf("NewVoice failed: %v", err)
+	}
+
+	chunk := make([]float32, 37)
+	streamed := make([]float32, 0, len(full))
+	for voice.Active() {
+		n := voice.RenderInto(chunk)
+		if n == 0 {
+			break
+		}
+		streamed = append(streamed, chunk[:n]...)
+	}
+
+	if len(streamed) != len(full) {
+		t.Fatalf("streamed length mismatch: got %d want %d", len(streamed), len(full))
+	}
+
+	for i := range full {
+		if streamed[i] != full[i] {
+			t.Fatalf("sample %d mismatch: got %g want %g", i, streamed[i], full[i])
+		}
+	}
+}
+
 func loadTestPreset(t *testing.T) *preset.Preset {
 	t.Helper()
 
