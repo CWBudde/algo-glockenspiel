@@ -169,7 +169,7 @@ h1 {
   display: grid;
   grid-template-columns: 132px minmax(0, 1fr);
   gap: 14px;
-  padding: 20px 20px 10px;
+  padding: 18px 20px 8px;
 }
 
 .control-rail {
@@ -209,6 +209,7 @@ h1 {
   inset: 0;
   opacity: 0;
   cursor: pointer;
+  pointer-events: none;
 }
 
 .dial-face {
@@ -265,7 +266,7 @@ h1 {
 
 .instrument-stage {
   position: relative;
-  min-height: 580px;
+  min-height: 500px;
 }
 
 .rack-wrap {
@@ -276,7 +277,7 @@ h1 {
 
 .rack-shadow {
   position: absolute;
-  inset: 52px 40px 56px 36px;
+  inset: 44px 40px 42px 36px;
   border-radius: 38px;
   background: radial-gradient(circle at 50% 40%, rgba(115, 56, 21, 0.18), rgba(115, 56, 21, 0) 65%);
   filter: blur(18px);
@@ -284,7 +285,7 @@ h1 {
 
 .rack {
   position: relative;
-  min-height: 530px;
+  min-height: 456px;
   border-radius: 32px;
   background:
     linear-gradient(180deg, rgba(255, 245, 231, 0.75), rgba(255, 245, 231, 0) 10%),
@@ -298,7 +299,7 @@ h1 {
 .rack::after {
   content: "";
   position: absolute;
-  inset: 88px 54px 94px 54px;
+  inset: 54px 48px 46px 48px;
   border-radius: 24px;
   background:
     linear-gradient(180deg, rgba(142, 77, 37, 0.18), rgba(142, 77, 37, 0)),
@@ -309,7 +310,7 @@ h1 {
 }
 
 .rack::after {
-  inset: 102px 68px 108px 68px;
+  inset: 68px 60px 58px 60px;
   border-radius: 18px;
   background: linear-gradient(180deg, rgba(60, 21, 4, 0.28), rgba(60, 21, 4, 0.08));
 }
@@ -327,13 +328,10 @@ h1 {
   z-index: 3;
 }
 
-.rail-top {
-  top: 146px;
-}
-
-.rail-bottom {
-  top: 314px;
-}
+.rail-sharp-back { top: 118px; }
+.rail-sharp-front { top: 136px; }
+.rail-natural-back { top: 266px; }
+.rail-natural-front { top: 286px; }
 
 .note-lane {
   position: absolute;
@@ -343,13 +341,13 @@ h1 {
 }
 
 .note-lane-sharps {
-  top: 94px;
-  height: 186px;
+  top: 76px;
+  height: 176px;
 }
 
 .note-lane-naturals {
-  top: 208px;
-  height: 260px;
+  top: 172px;
+  height: 244px;
 }
 
 .bar {
@@ -424,7 +422,7 @@ h1 {
 .mallet {
   position: absolute;
   right: 9%;
-  bottom: 34px;
+  bottom: 12px;
   width: min(36vw, 420px);
   pointer-events: none;
   filter: drop-shadow(0 12px 16px rgba(62, 31, 10, 0.26));
@@ -437,12 +435,12 @@ h1 {
   background:
     linear-gradient(180deg, rgba(177, 111, 56, 0.9), rgba(100, 56, 27, 0.94)),
     url("assets/wood-panel.svg") center/cover no-repeat;
-  padding: 14px 18px 18px;
+  padding: 10px 18px 16px;
 }
 
 .keyboard {
   position: relative;
-  height: 132px;
+  height: 126px;
   margin: 0 auto;
 }
 
@@ -516,7 +514,7 @@ h1 {
   }
 
   .instrument-stage {
-    min-height: 540px;
+    min-height: 470px;
   }
 }
 
@@ -551,37 +549,29 @@ h1 {
   }
 
   .instrument-stage {
-    min-height: 460px;
+    min-height: 410px;
   }
 
   .rack-wrap {
     padding: 0;
   }
 
-  .rack::before {
-    inset: 64px 20px 82px 20px;
-  }
+  .rack::before { inset: 46px 18px 38px 18px; }
+  .rack::after { inset: 58px 28px 48px 28px; }
 
-  .rack::after {
-    inset: 76px 32px 94px 32px;
-  }
-
-  .rail-top {
-    top: 114px;
-  }
-
-  .rail-bottom {
-    top: 252px;
-  }
+  .rail-sharp-back { top: 98px; }
+  .rail-sharp-front { top: 114px; }
+  .rail-natural-back { top: 220px; }
+  .rail-natural-front { top: 238px; }
 
   .note-lane-sharps {
-    top: 72px;
-    height: 160px;
+    top: 58px;
+    height: 150px;
   }
 
   .note-lane-naturals {
-    top: 164px;
-    height: 220px;
+    top: 140px;
+    height: 204px;
   }
 
   .bar-note {

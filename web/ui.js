@@ -135,9 +135,11 @@ function createPianoKey(entry, kind, onStrike) {
   key.type = "button";
   key.className = `piano-key ${kind}`;
   key.dataset.note = String(entry.note);
-  key.style.left = `${leftPercent(entry.x)}%`;
   if (kind === "black") {
+    key.style.left = `${centerPercent(entry.center)}%`;
     key.style.transform = "translateX(-50%)";
+  } else {
+    key.style.left = `${centerPercent(entry.center - 0.5)}%`;
   }
 
   const label = document.createElement("span");
@@ -185,12 +187,21 @@ export function wireKeyboard({ onStrike, activateNote }) {
 }
 
 export function bindDial(input, output, formatter) {
-  const assembly = input.closest(".dial-control");
+  const control = input.closest(".dial-control");
+  const assembly = input.closest(".dial-assembly");
   const face = assembly?.querySelector("[data-dial-face]");
+  const min = Number(input.min || 0);
+  const max = Number(input.max || 100);
+
+  const setValueFromRatio = (ratio) => {
+    const clamped = Math.min(1, Math.max(0, ratio));
+    const value = min + clamped * (max - min);
+    input.value = String(Math.round(value));
+    sync();
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
 
   const sync = () => {
-    const min = Number(input.min || 0);
-    const max = Number(input.max || 100);
     const value = Number(input.value);
     const ratio = (value - min) / (max - min || 1);
     const turn = -132 + ratio * 264;
@@ -202,6 +213,35 @@ export function bindDial(input, output, formatter) {
     }
   };
 
+  const applyPointer = (event) => {
+    if (!face) return;
+    const rect = face.getBoundingClientRect();
+    const dx = event.clientX - (rect.left + rect.width / 2);
+    const dy = event.clientY - (rect.top + rect.height / 2);
+    const angle = Math.atan2(dy, dx) * 180 / Math.PI + 90;
+    const wrapped = angle < -180 ? angle + 360 : angle;
+    const clamped = Math.min(132, Math.max(-132, wrapped));
+    setValueFromRatio((clamped + 132) / 264);
+  };
+
   input.addEventListener("input", sync);
+  face?.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    face.setPointerCapture?.(event.pointerId);
+    applyPointer(event);
+  });
+  face?.addEventListener("pointermove", (event) => {
+    if ((event.buttons & 1) === 0) return;
+    applyPointer(event);
+  });
+  control?.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    const step = (max - min) / 80;
+    const delta = event.deltaY < 0 ? step : -step;
+    const next = Math.min(max, Math.max(min, Number(input.value) + delta));
+    input.value = String(Math.round(next));
+    sync();
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }, { passive: false });
   sync();
 }
