@@ -76,12 +76,12 @@ export function computeKeyboardLayout() {
 
 function naturalLength(note) {
   const ratio = (note - FIRST_NOTE) / (LAST_NOTE - FIRST_NOTE);
-  return Math.round(238 - ratio * 92);
+  return Math.round(190 - ratio * 74);
 }
 
 function accidentalLength(note) {
   const ratio = (note - FIRST_NOTE) / (LAST_NOTE - FIRST_NOTE);
-  return Math.round(178 - ratio * 64);
+  return Math.round(142 - ratio * 51);
 }
 
 function centerPercent(xUnits, totalWhiteUnits) {

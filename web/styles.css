@@ -374,7 +374,7 @@ h1 {
 .bar {
   --center: 0%;
   --length: 200px;
-  --aspect: 92 / 420;
+  --aspect: 101 / 420;
   position: absolute;
   left: var(--center);
   width: auto;
@@ -401,8 +401,9 @@ h1 {
 
 .bar.accidental {
   bottom: 0;
-  --aspect: 78 / 360;
+  --aspect: 90 / 360;
   background-image: url("assets/bar-accidental.svg");
+  z-index: 1;
 }
 
 .bar:hover,
