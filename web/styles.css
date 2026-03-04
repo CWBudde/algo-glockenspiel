@@ -8,7 +8,6 @@
   --muted: #6b5442;
   --accent: #8d562d;
   --gold: #e3bb7a;
-  --keyboard-width-unit: 6.6666667%;
   --font-display: "Avenir Next Condensed", "Franklin Gothic Demi Cond", "Trebuchet MS", sans-serif;
   --font-body: "Avenir Next", "Segoe UI", sans-serif;
 }
@@ -464,18 +463,19 @@ h1 {
   position: relative;
   height: 126px;
   margin: 0 auto;
+  --keyboard-white-unit: calc(100% / var(--keyboard-white-count, 15));
 }
 
 .piano-key {
   position: absolute;
-  bottom: 0;
   border: 0;
   padding: 0;
   cursor: pointer;
 }
 
 .piano-key.white {
-  width: var(--keyboard-width-unit);
+  bottom: 0;
+  width: var(--keyboard-white-unit);
   height: 116px;
   border-radius: 0 0 8px 8px;
   background:
@@ -487,7 +487,8 @@ h1 {
 
 .piano-key.black {
   z-index: 2;
-  width: calc(var(--keyboard-width-unit) * 0.56);
+  top: 0;
+  width: calc(var(--keyboard-white-unit) * 0.56);
   height: 72px;
   border-radius: 0 0 7px 7px;
   background:

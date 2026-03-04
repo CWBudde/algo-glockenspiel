@@ -1,6 +1,7 @@
 export const FIRST_NOTE = 60; // C4
 export const LAST_NOTE = 84; // C6
-export const TOTAL_WHITE_UNITS = 15;
+export const KEYBOARD_FIRST_NOTE = 48; // C3
+export const KEYBOARD_LAST_NOTE = 96; // C7
 export const WHITE_OFFSETS = new Set([0, 2, 4, 5, 7, 9, 11]);
 export const KEY_BINDINGS = [
   "A", "W", "S", "E", "D", "F", "T", "G", "Y", "H", "U", "J",
@@ -43,6 +44,36 @@ export function computeNoteLayout() {
   return { naturals, accidentals };
 }
 
+export function computeKeyboardLayout() {
+  const whites = [];
+  const blacks = [];
+  let whiteIndex = 0;
+
+  for (let note = KEYBOARD_FIRST_NOTE; note <= KEYBOARD_LAST_NOTE; note += 1) {
+    const pitchClass = note % 12;
+    if (WHITE_OFFSETS.has(pitchClass)) {
+      whites.push({
+        note,
+        name: midiToName(note),
+        center: whiteIndex + 0.5,
+      });
+      whiteIndex += 1;
+    } else {
+      blacks.push({
+        note,
+        name: midiToName(note),
+        center: whiteIndex,
+      });
+    }
+  }
+
+  return {
+    whites,
+    blacks,
+    totalWhiteUnits: whiteIndex,
+  };
+}
+
 function naturalLength(note) {
   const ratio = (note - FIRST_NOTE) / (LAST_NOTE - FIRST_NOTE);
   return Math.round(238 - ratio * 92);
@@ -53,36 +84,39 @@ function accidentalLength(note) {
   return Math.round(178 - ratio * 64);
 }
 
-function centerPercent(xUnits) {
-  return (xUnits / TOTAL_WHITE_UNITS) * 100;
+function centerPercent(xUnits, totalWhiteUnits) {
+  return (xUnits / totalWhiteUnits) * 100;
 }
 
 export function buildUI({ naturalContainer, accidentalContainer, keyboardContainer, onStrike }) {
   const { naturals, accidentals } = computeNoteLayout();
+  const keyboard = computeKeyboardLayout();
   const noteButtons = new Map();
   const pianoKeys = new Map();
 
   naturals.forEach((entry, index) => {
-    const button = createBarButton(entry, "natural", KEY_BINDINGS[index] || "", onStrike);
+    const button = createBarButton(entry, "natural", KEY_BINDINGS[index] || "", onStrike, 15);
     naturalContainer.appendChild(button);
     noteButtons.set(entry.note, button);
   });
 
   accidentals.forEach((entry) => {
     const index = entry.note - FIRST_NOTE;
-    const button = createBarButton(entry, "accidental", KEY_BINDINGS[index] || "", onStrike);
+    const button = createBarButton(entry, "accidental", KEY_BINDINGS[index] || "", onStrike, 15);
     accidentalContainer.appendChild(button);
     noteButtons.set(entry.note, button);
   });
 
-  naturals.forEach((entry) => {
-    const key = createPianoKey(entry, "white", onStrike);
+  keyboardContainer.style.setProperty("--keyboard-white-count", String(keyboard.totalWhiteUnits));
+
+  keyboard.whites.forEach((entry) => {
+    const key = createPianoKey(entry, "white", onStrike, keyboard.totalWhiteUnits);
     keyboardContainer.appendChild(key);
     pianoKeys.set(entry.note, key);
   });
 
-  accidentals.forEach((entry) => {
-    const key = createPianoKey(entry, "black", onStrike);
+  keyboard.blacks.forEach((entry) => {
+    const key = createPianoKey(entry, "black", onStrike, keyboard.totalWhiteUnits);
     keyboardContainer.appendChild(key);
     pianoKeys.set(entry.note, key);
   });
@@ -105,12 +139,12 @@ export function buildUI({ naturalContainer, accidentalContainer, keyboardContain
   };
 }
 
-function createBarButton(entry, kind, keyHint, onStrike) {
+function createBarButton(entry, kind, keyHint, onStrike, totalWhiteUnits) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = `bar ${kind}`;
   button.dataset.note = String(entry.note);
-  button.style.setProperty("--center", `${centerPercent(entry.center)}%`);
+  button.style.setProperty("--center", `${centerPercent(entry.center, totalWhiteUnits)}%`);
   button.style.setProperty("--length", `${entry.length}px`);
 
   const note = document.createElement("span");
@@ -130,16 +164,16 @@ function createBarButton(entry, kind, keyHint, onStrike) {
   return button;
 }
 
-function createPianoKey(entry, kind, onStrike) {
+function createPianoKey(entry, kind, onStrike, totalWhiteUnits) {
   const key = document.createElement("button");
   key.type = "button";
   key.className = `piano-key ${kind}`;
   key.dataset.note = String(entry.note);
   if (kind === "black") {
-    key.style.left = `${centerPercent(entry.center)}%`;
+    key.style.left = `${centerPercent(entry.center, totalWhiteUnits)}%`;
     key.style.transform = "translateX(-50%)";
   } else {
-    key.style.left = `${centerPercent(entry.center - 0.5)}%`;
+    key.style.left = `${centerPercent(entry.center - 0.5, totalWhiteUnits)}%`;
   }
 
   const label = document.createElement("span");
@@ -162,7 +196,9 @@ export function wireKeyboard({ onStrike, activateNote }) {
   const pressed = new Set();
   const keyMap = new Map();
   for (let note = FIRST_NOTE; note <= LAST_NOTE; note += 1) {
-    keyMap.set(KEY_BINDINGS[note - FIRST_NOTE], note);
+    if (KEY_BINDINGS[note - FIRST_NOTE]) {
+      keyMap.set(KEY_BINDINGS[note - FIRST_NOTE], note);
+    }
   }
 
   document.addEventListener("keydown", (event) => {
