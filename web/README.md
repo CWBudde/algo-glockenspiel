@@ -1,6 +1,8 @@
 # Algo Glockenspiel Web Demo
 
 Browser demo for the default glockenspiel preset using Go WebAssembly plus a small JavaScript mixer.
+The current UI mirrors the plugin-editor mockup under `plugin/vst3/ui/` and uses
+the same note geometry, piano alignment, and control layout.
 
 ## Build
 

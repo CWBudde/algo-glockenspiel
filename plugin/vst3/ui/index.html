@@ -3,20 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Algo Glockenspiel</title>
-    <meta
-      name="description"
-      content="Play the physical-model glockenspiel in your browser with a piano-aligned instrument view."
-    />
-    <link rel="stylesheet" href="styles.css" />
+    <title>Algo Glockenspiel UI Mockup</title>
+    <link rel="stylesheet" href="../../../web/styles.css" />
   </head>
-  <body data-ui-surface="web">
+  <body data-ui-surface="plugin-mockup">
     <main class="studio-shell">
       <header class="studio-topbar">
         <div class="brand">
-          <img src="assets/glockenmark.svg" alt="" class="brand-mark" />
+          <img src="../../../web/assets/glockenmark.svg" alt="" class="brand-mark" />
           <div>
-            <p class="brand-kicker">Physical Model Instrument</p>
+            <p class="brand-kicker">Plugin Editor Mockup</p>
             <h1>Algo Glockenspiel VST3</h1>
           </div>
         </div>
@@ -36,7 +32,7 @@
 
         <button type="button" class="preset-action" disabled>Save</button>
         <button type="button" class="preset-action" disabled>Load</button>
-        <p class="preset-note">Preset browser wiring is still pending.</p>
+        <p class="preset-note">Shared visual shell for the future plugin editor.</p>
       </section>
 
       <section class="instrument-card">
@@ -64,10 +60,10 @@
               <output id="velocity-value" for="velocity">96</output>
             </label>
 
-            <p id="status" class="status-panel">Loading WebAssembly...</p>
+            <p id="status" class="status-panel">Editor mockup. No audio engine attached.</p>
           </aside>
 
-          <section class="instrument-stage" aria-label="Playable glockenspiel">
+          <section class="instrument-stage" aria-label="Glockenspiel editor view">
             <div class="rack-wrap">
               <div class="rack-shadow"></div>
               <div class="rack">
@@ -75,7 +71,7 @@
                 <div class="rail rail-bottom"></div>
                 <div class="note-lane note-lane-sharps" id="bars-accidental"></div>
                 <div class="note-lane note-lane-naturals" id="bars-natural"></div>
-                <img src="assets/mallet.svg" alt="" class="mallet" />
+                <img src="../../../web/assets/mallet.svg" alt="" class="mallet" />
               </div>
             </div>
           </section>
@@ -87,7 +83,6 @@
       </section>
     </main>
 
-    <script src="wasm_exec.js"></script>
-    <script src="main.js" type="module"></script>
+    <script type="module" src="mockup.js"></script>
   </body>
 </html>

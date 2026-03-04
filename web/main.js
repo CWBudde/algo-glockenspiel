@@ -1,11 +1,4 @@
-const FIRST_NOTE = 72; // C5
-const OCTAVES = 2;
-const SEMITONES = OCTAVES * 12;
-const WHITE_OFFSETS = new Set([0, 2, 4, 5, 7, 9, 11]);
-const KEY_BINDINGS = [
-  'A', 'W', 'S', 'E', 'D', 'F', 'T', 'G', 'Y', 'H', 'U', 'J',
-  'K', 'O', 'L', 'P', ';', "'", ']', '\\', 'Z', 'X', 'C', 'V',
-];
+import { bindDial, buildUI, wireKeyboard } from "./ui.js";
 
 let audioContext = null;
 let outputNode = null;
@@ -15,20 +8,12 @@ let audioReady = false;
 let initAudioPromise = null;
 let masterGain = 0.7;
 let strikeVelocity = 96;
-
-const pressedKeys = new Set();
-
-function midiToName(note) {
-  const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-  const pitchClass = note % 12;
-  const octave = Math.floor(note / 12) - 1;
-  return `${names[pitchClass]}${octave}`;
-}
+let ui = null;
 
 function updateStatus(message, isError = false) {
-  const status = document.getElementById('status');
+  const status = document.getElementById("status");
   status.textContent = message;
-  status.dataset.error = isError ? 'true' : 'false';
+  status.dataset.error = isError ? "true" : "false";
 }
 
 function clamp(value, min, max) {
@@ -43,7 +28,7 @@ async function initAudio() {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
     const initError = wasmInit(audioContext.sampleRate);
-    if (typeof initError === 'string' && initError.length > 0) {
+    if (typeof initError === "string" && initError.length > 0) {
       throw new Error(initError);
     }
 
@@ -56,7 +41,7 @@ async function initAudio() {
       left.fill(0);
       right.fill(0);
 
-      if (!wasmMemory || typeof wasmProcessBlock === 'undefined') {
+      if (!wasmMemory || typeof wasmProcessBlock === "undefined") {
         return;
       }
 
@@ -80,12 +65,12 @@ async function initAudio() {
     outputNode.connect(audioContext.destination);
     await audioContext.resume();
 
-    if (typeof wasmSetMasterGain !== 'undefined') {
+    if (typeof wasmSetMasterGain !== "undefined") {
       wasmSetMasterGain(masterGain);
     }
 
     audioReady = true;
-    updateStatus(`Ready at ${Math.round(audioContext.sampleRate)} Hz. Strike a bar.`);
+    updateStatus(`Ready at ${Math.round(audioContext.sampleRate)} Hz`);
   })();
 
   try {
@@ -96,12 +81,13 @@ async function initAudio() {
 }
 
 function strike(note) {
-  if (!wasmReady) {
+  if (!wasmReady || !ui) {
     return;
   }
 
   const start = () => {
-    if (typeof wasmNoteOn !== 'undefined') {
+    ui.activateNote(note);
+    if (typeof wasmNoteOn !== "undefined") {
       wasmNoteOn(note, strikeVelocity);
     }
   };
@@ -117,102 +103,44 @@ function strike(note) {
   start();
 }
 
-function createBar(note, index) {
-  const bar = document.createElement('button');
-  const accidental = !WHITE_OFFSETS.has(note % 12);
-  bar.type = 'button';
-  bar.className = accidental ? 'bar accidental' : 'bar natural';
-  bar.dataset.note = String(note);
-
-  const name = document.createElement('span');
-  name.className = 'note-name';
-  name.textContent = midiToName(note);
-
-  const hint = document.createElement('span');
-  hint.className = 'key-hint';
-  hint.textContent = KEY_BINDINGS[index] || '';
-
-  bar.append(name, hint);
-
-  const activate = () => {
-    bar.classList.add('active');
-    strike(note);
-    window.clearTimeout(bar._activeTimer);
-    bar._activeTimer = window.setTimeout(() => {
-      bar.classList.remove('active');
-    }, 180);
-  };
-
-  bar.addEventListener('pointerdown', (event) => {
-    event.preventDefault();
-    activate();
-  });
-
-  return bar;
-}
-
-function buildInstrument() {
-  const instrument = document.getElementById('glockenspiel');
-  for (let index = 0; index < SEMITONES; index += 1) {
-    instrument.appendChild(createBar(FIRST_NOTE + index, index));
-  }
-}
-
 function bindControls() {
-  const velocity = document.getElementById('velocity');
-  const velocityValue = document.getElementById('velocity-value');
-  const gain = document.getElementById('gain');
-  const gainValue = document.getElementById('gain-value');
+  const velocity = document.getElementById("velocity");
+  const velocityValue = document.getElementById("velocity-value");
+  const gain = document.getElementById("gain");
+  const gainValue = document.getElementById("gain-value");
 
-  velocity.addEventListener('input', () => {
+  bindDial(velocity, velocityValue, (value) => String(value));
+  bindDial(gain, gainValue, (value) => `${value}%`);
+
+  velocity.addEventListener("input", () => {
     strikeVelocity = clamp(Number(velocity.value), 1, 127);
-    velocityValue.textContent = String(strikeVelocity);
   });
 
-  gain.addEventListener('input', () => {
+  gain.addEventListener("input", () => {
     masterGain = clamp(Number(gain.value) / 100, 0.1, 1.0);
-    gainValue.textContent = `${Math.round(masterGain * 100)}%`;
-    if (audioReady && typeof wasmSetMasterGain !== 'undefined') {
+    if (audioReady && typeof wasmSetMasterGain !== "undefined") {
       wasmSetMasterGain(masterGain);
     }
   });
 }
 
-function bindKeyboard() {
-  const keyMap = new Map();
-  KEY_BINDINGS.forEach((key, index) => {
-    keyMap.set(key, FIRST_NOTE + index);
-  });
-
-  document.addEventListener('keydown', (event) => {
-    if (event.repeat) {
-      return;
-    }
-
-    const normalized = event.key.toUpperCase();
-    const note = keyMap.get(normalized);
-    if (note === undefined || pressedKeys.has(normalized)) {
-      return;
-    }
-
-    pressedKeys.add(normalized);
-    const bar = document.querySelector(`[data-note="${note}"]`);
-    if (bar) {
-      bar.classList.add('active');
-      window.setTimeout(() => bar.classList.remove('active'), 180);
-    }
-    strike(note);
-  });
-
-  document.addEventListener('keyup', (event) => {
-    pressedKeys.delete(event.key.toUpperCase());
-  });
-}
-
 async function init() {
   try {
+    ui = buildUI({
+      naturalContainer: document.getElementById("bars-natural"),
+      accidentalContainer: document.getElementById("bars-accidental"),
+      keyboardContainer: document.getElementById("piano"),
+      onStrike: strike,
+    });
+
+    wireKeyboard({
+      onStrike: strike,
+      activateNote: ui.activateNote,
+    });
+    bindControls();
+
     const go = new Go();
-    const response = await fetch('dist/glockenspiel.wasm');
+    const response = await fetch("dist/glockenspiel.wasm");
     if (!response.ok) {
       throw new Error(`Failed to fetch WASM: ${response.status}`);
     }
@@ -227,31 +155,26 @@ async function init() {
 
     wasmMemory = result.instance.exports.mem || result.instance.exports.memory || null;
     if (!wasmMemory) {
-      throw new Error('WASM memory export not found');
+      throw new Error("WASM memory export not found");
     }
 
-    window.__algoGlockenspielWasmMemory = wasmMemory;
     go.run(result.instance);
-
     await new Promise((resolve) => window.setTimeout(resolve, 50));
 
     if (
-      typeof wasmInit === 'undefined' ||
-      typeof wasmNoteOn === 'undefined' ||
-      typeof wasmProcessBlock === 'undefined'
+      typeof wasmInit === "undefined" ||
+      typeof wasmNoteOn === "undefined" ||
+      typeof wasmProcessBlock === "undefined"
     ) {
-      throw new Error('WASM exports not found');
+      throw new Error("WASM exports not found");
     }
 
     wasmReady = true;
-    buildInstrument();
-    bindControls();
-    bindKeyboard();
-    updateStatus('WASM loaded. Click a bar to start audio.');
+    updateStatus("WASM loaded. Strike a bar to start audio.");
   } catch (error) {
-    console.error('Failed to load WASM demo', error);
+    console.error("Failed to load WASM demo", error);
     updateStatus(error.message, true);
   }
 }
 
-window.addEventListener('load', init);
+window.addEventListener("load", init);

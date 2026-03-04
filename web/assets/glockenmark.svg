@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 80" fill="none">
+  <defs>
+    <linearGradient id="wood" x1="10" y1="10" x2="118" y2="70" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9A6233"/>
+      <stop offset="1" stop-color="#5B3117"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="14" y1="14" x2="60" y2="70" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F6E8C7"/>
+      <stop offset="1" stop-color="#C89A54"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="8" width="10" height="60" rx="3" fill="url(#wood)"/>
+  <rect x="18" y="18" width="10" height="50" rx="3" fill="url(#metal)"/>
+  <rect x="32" y="12" width="10" height="56" rx="3" fill="url(#metal)"/>
+  <rect x="46" y="22" width="10" height="46" rx="3" fill="url(#metal)"/>
+  <path d="M78 14h20c11.046 0 20 8.954 20 20v0c0 11.046-8.954 20-20 20H78V14Z" fill="url(#wood)"/>
+  <path d="M72 40h18" stroke="#F6E8C7" stroke-width="10" stroke-linecap="round"/>
+  <path d="M82 20L62 60" stroke="#F6E8C7" stroke-width="8" stroke-linecap="round"/>
+</svg>

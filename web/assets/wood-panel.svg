@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" preserveAspectRatio="none">
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="900" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D6A16B"/>
+      <stop offset="0.45" stop-color="#A96433"/>
+      <stop offset="1" stop-color="#6E3D1E"/>
+    </linearGradient>
+    <filter id="grain">
+      <feTurbulence type="fractalNoise" baseFrequency="0.008 0.08" numOctaves="3" seed="5" result="noise"/>
+      <feColorMatrix in="noise" type="matrix"
+        values="1 0 0 0 0
+                0 1 0 0 0
+                0 0 1 0 0
+                0 0 0 .25 0"/>
+      <feBlend mode="multiply" in2="SourceGraphic"/>
+    </filter>
+  </defs>
+  <rect width="1600" height="900" fill="url(#base)"/>
+  <g filter="url(#grain)" opacity=".7">
+    <path d="M0 160C280 110 520 210 840 164c286-40 470-8 760 52v74c-264-54-482-88-760-48-314 46-546-46-840 8V160Z" fill="#C68448"/>
+    <path d="M0 420c198-52 496 18 790-22 246-34 480-126 810-36v78c-286-76-540 10-810 44-302 38-562-24-790 20v-84Z" fill="#8F4D27"/>
+    <path d="M0 676c220 18 402-50 684-34 248 14 492 90 916 30v110H0V676Z" fill="#5F3219"/>
+  </g>
+</svg>
