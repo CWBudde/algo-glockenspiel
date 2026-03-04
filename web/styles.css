@@ -329,29 +329,29 @@ h1 {
 
 .rail-sharp-back {
   left: 11%;
-  top: 118px;
-  transform: rotate(3.4deg);
+  top: 110px;
+  transform: rotate(2.8deg);
   transform-origin: left center;
 }
 
 .rail-sharp-front {
   left: 11%;
-  top: 160px;
-  transform: rotate(-3.2deg);
+  top: 154px;
+  transform: rotate(-2.6deg);
   transform-origin: left center;
 }
 
 .rail-natural-back {
   left: 9%;
-  top: 248px;
-  transform: rotate(3.4deg);
+  top: 272px;
+  transform: rotate(2.8deg);
   transform-origin: left center;
 }
 
 .rail-natural-front {
   left: 9%;
-  top: 336px;
-  transform: rotate(-3.2deg);
+  top: 378px;
+  transform: rotate(-2.6deg);
   transform-origin: left center;
 }
 
@@ -375,7 +375,7 @@ h1 {
 .bar {
   --center: 0%;
   --length: 200px;
-  --aspect: 84 / 420;
+  --aspect: 92 / 420;
   position: absolute;
   left: var(--center);
   width: auto;
@@ -402,7 +402,7 @@ h1 {
 
 .bar.accidental {
   bottom: 0;
-  --aspect: 72 / 360;
+  --aspect: 78 / 360;
   background-image: url("assets/bar-accidental.svg");
 }
 
@@ -581,10 +581,10 @@ h1 {
   .rack::before { inset: 46px 18px 38px 18px; }
   .rack::after { inset: 58px 28px 48px 28px; }
 
-  .rail-sharp-back { top: 98px; }
-  .rail-sharp-front { top: 132px; }
-  .rail-natural-back { top: 206px; }
-  .rail-natural-front { top: 278px; }
+  .rail-sharp-back { top: 92px; }
+  .rail-sharp-front { top: 126px; }
+  .rail-natural-back { top: 222px; }
+  .rail-natural-front { top: 306px; }
 
   .note-lane-sharps {
     top: 58px;

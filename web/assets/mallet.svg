@@ -1,15 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 90" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -10 420 100" fill="none">
   <defs>
     <linearGradient id="shaft" x1="24" y1="58" x2="348" y2="34" gradientUnits="userSpaceOnUse">
       <stop stop-color="#8F5A2B"/>
       <stop offset="1" stop-color="#D1A370"/>
     </linearGradient>
-    <radialGradient id="head" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(360 40) rotate(123.69) scale(34 29.5616)">
+    <radialGradient id="head" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(360 17) rotate(123.69) scale(34 29.5616)">
       <stop stop-color="#E9C195"/>
       <stop offset="1" stop-color="#A76A35"/>
     </radialGradient>
   </defs>
   <rect x="22" y="60" width="341" height="8" rx="4" transform="rotate(-8 22 60)" fill="url(#shaft)"/>
-  <circle cx="360" cy="40" r="24" fill="url(#head)"/>
-  <circle cx="352" cy="33" r="8" fill="#F0D7B8" opacity=".75"/>
+  <circle cx="360" cy="17" r="24" fill="url(#head)"/>
+  <circle cx="352" cy="10" r="8" fill="#F0D7B8" opacity=".75"/>
 </svg>
