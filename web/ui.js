@@ -178,7 +178,11 @@ function createPianoKey(entry, kind, onStrike, totalWhiteUnits) {
 
   const label = document.createElement("span");
   label.className = "piano-note";
-  label.textContent = entry.name;
+  if (kind === "black") {
+    label.textContent = "";
+  } else {
+    label.textContent = entry.name;
+  }
   if (!entry.name.startsWith("C") && kind === "white") {
     label.textContent = "";
   }

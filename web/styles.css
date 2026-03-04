@@ -474,7 +474,7 @@ h1 {
 }
 
 .piano-key.white {
-  bottom: 0;
+  top: 0;
   width: var(--keyboard-white-unit);
   height: 116px;
   border-radius: 0 0 8px 8px;
@@ -487,7 +487,7 @@ h1 {
 
 .piano-key.black {
   z-index: 2;
-  top: 4px;
+  top: 0;
   width: calc(var(--keyboard-white-unit) * 0.56);
   height: 72px;
   border-radius: 0 0 7px 7px;
