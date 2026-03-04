@@ -1,6 +1,6 @@
 export const FIRST_NOTE = 60; // C4
 export const LAST_NOTE = 84; // C6
-export const KEYBOARD_FIRST_NOTE = 48; // C3
+export const KEYBOARD_FIRST_NOTE = 36; // C2
 export const KEYBOARD_LAST_NOTE = 96; // C7
 export const WHITE_OFFSETS = new Set([0, 2, 4, 5, 7, 9, 11]);
 export const KEY_BINDINGS = [
