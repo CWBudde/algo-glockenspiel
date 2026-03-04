@@ -317,8 +317,7 @@ h1 {
 
 .rail {
   position: absolute;
-  left: 8%;
-  right: 8%;
+  width: 78%;
   height: 18px;
   border-radius: 999px;
   background:
@@ -328,10 +327,33 @@ h1 {
   z-index: 3;
 }
 
-.rail-sharp-back { top: 118px; }
-.rail-sharp-front { top: 136px; }
-.rail-natural-back { top: 266px; }
-.rail-natural-front { top: 286px; }
+.rail-sharp-back {
+  left: 11%;
+  top: 118px;
+  transform: rotate(3.4deg);
+  transform-origin: left center;
+}
+
+.rail-sharp-front {
+  left: 11%;
+  top: 160px;
+  transform: rotate(-3.2deg);
+  transform-origin: left center;
+}
+
+.rail-natural-back {
+  left: 9%;
+  top: 248px;
+  transform: rotate(3.4deg);
+  transform-origin: left center;
+}
+
+.rail-natural-front {
+  left: 9%;
+  top: 336px;
+  transform: rotate(-3.2deg);
+  transform-origin: left center;
+}
 
 .note-lane {
   position: absolute;
@@ -560,9 +582,9 @@ h1 {
   .rack::after { inset: 58px 28px 48px 28px; }
 
   .rail-sharp-back { top: 98px; }
-  .rail-sharp-front { top: 114px; }
-  .rail-natural-back { top: 220px; }
-  .rail-natural-front { top: 238px; }
+  .rail-sharp-front { top: 132px; }
+  .rail-natural-back { top: 206px; }
+  .rail-natural-front { top: 278px; }
 
   .note-lane-sharps {
     top: 58px;
