@@ -40,11 +40,12 @@ Assessment:
 
 This is the most predictable technical base if we want to own the integration layer and keep surprises low.
 
-### 2. `justyntemme/vst3go`
+### 2. `vst3go`
 
-Primary source:
+Primary sources:
 
-- https://github.com/justyntemme/vst3go
+- original upstream: https://github.com/justyntemme/vst3go
+- current fork in use for this repository: https://github.com/CWBudde/vst3go
 
 What it appears to provide:
 
@@ -93,7 +94,7 @@ Start with a minimal VST3 processor/controller prototype using the official Stei
 Concretely:
 
 1. Use the Steinberg SDK documentation and C API as the source of truth.
-2. Attempt the first plugin skeleton with `justyntemme/vst3go`.
+2. Attempt the first plugin skeleton with `vst3go`.
 3. If the wrapper blocks required functionality, replace only that layer with a local `cgo` bridge instead of changing the DSP code.
 
 This keeps the DSP in Go, avoids premature GUI work, and limits lock-in to a small third-party wrapper. It also leaves room to pivot quickly if `vst3go` cannot yet supply the MIDI/event path we need for a real instrument.

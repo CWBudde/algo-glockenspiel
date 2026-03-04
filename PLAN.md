@@ -1066,14 +1066,17 @@ This phase is for future work after the CLI tool is complete and stable.
 - [ ] **VST3 Wrapper**
   - [x] Evaluate Go VST3 libraries
     - Note: initial research completed on 2026-03-03 in `docs/vst3-evaluation.md`.
-    - Note: current recommendation is to use the Steinberg VST3 SDK/C API as the source of truth and prototype the first Go plugin skeleton with `justyntemme/vst3go`, falling back to a local `cgo` bridge if the wrapper blocks required functionality.
+    - Note: current recommendation is to use the Steinberg VST3 SDK/C API as the source of truth and prototype the first Go plugin skeleton with `vst3go`, falling back to a local `cgo` bridge if the wrapper blocks required functionality.
     - Note: `vst3go` is now the selected first spike target; see `docs/vst3go-spike.md`. Its current README still lists MIDI support as planned, so the first milestone should validate processor/controller and parameter plumbing before committing to full instrument behavior.
   - [ ] Implement VST3 plugin skeleton
     - Note: initial package skeleton created in `plugin/vst3/` with stable parameter IDs, parameter specs, and `BarParams` mapping helpers, but no SDK-backed processor/controller has been added yet.
-    - Note: first `vst3go` scaffold added on 2026-03-03 in `plugin/vst3/` and `cmd/glockenspiel-vst3/`, but it is currently guarded behind a `vst3go` build tag because the published `github.com/justyntemme/vst3go v0.1.1` module is missing the VST3 C headers referenced by its `cgo` sources.
+    - Note: first `vst3go` scaffold added on 2026-03-03 in `plugin/vst3/` and `cmd/glockenspiel-vst3/`, but it is currently guarded behind a `vst3go` build tag because the original published `github.com/justyntemme/vst3go v0.1.1` module is missing the VST3 C headers referenced by its `cgo` sources.
     - Note: upstream repository inspection on 2026-03-03 indicates those headers live under `include/vst3` as a Git submodule pointing at Steinberg's `vst3_c_api` repository, which explains why `go get` did not fetch them. The likely next step is a local fork/`replace` or separate vendoring of the header tree.
-  - [ ] Integrate synthesis engine
-  - [ ] Handle MIDI input
+    - Note: on 2026-03-04 the project was switched to `replace github.com/cwbudde/vst3go => ../vst3go`, the fork submodule `include/vst3` was initialized successfully, and the current Linux/`cgo` spike now passes `go test -tags=vst3go ./plugin/vst3` and `go build -tags=vst3go ./cmd/glockenspiel-vst3`.
+  - [x] Integrate synthesis engine
+    - Note: on 2026-03-04 the Linux/`cgo` `vst3go` spike was connected to the existing Go synthesis engine. The current processor builds persistent per-note `model.Bar` resonators from plugin parameters and streams summed mono output to the plugin's stereo buses.
+  - [x] Handle MIDI input
+    - Note: the current spike handles VST3 MIDI note-on plus all-notes-off/all-sound-off control changes, with sample-offset-aware block segmentation inside the processor. Note-off currently does not silence a resonator; bars continue decaying naturally after the initial strike.
   - [ ] Implement parameter mapping
   - [ ] Test in DAW (Reaper, etc.)
 
@@ -1084,9 +1087,12 @@ This phase is for future work after the CLI tool is complete and stable.
   - [ ] Add visualization (waveform, spectrum)
 
 - [ ] **Polyphony**
-  - [ ] Implement voice allocation
-  - [ ] Handle multiple simultaneous notes
-  - [ ] Implement note-off handling
+  - [x] Implement voice allocation
+    - Note: the current processor uses a simple plugin-local polyphony cap (`16`) with oldest-voice stealing.
+  - [x] Handle multiple simultaneous notes
+    - Note: active per-note `model.Bar` resonators are mixed together into the stereo output buffers.
+  - [x] Implement note-off handling
+    - Note: note-off is intentionally non-gating in the current model; a struck bar continues to decay after the impulse, and the processor only retires a resonator after repeated quiet blocks.
   - [ ] Optimize for real-time performance
 
 - [ ] **Multi-note Support**

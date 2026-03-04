@@ -3,8 +3,8 @@
 package vst3
 
 import (
-	frameworkplugin "github.com/justyntemme/vst3go/pkg/framework/plugin"
-	vst3plugin "github.com/justyntemme/vst3go/pkg/plugin"
+	frameworkplugin "github.com/cwbudde/vst3go/pkg/framework/plugin"
+	vst3plugin "github.com/cwbudde/vst3go/pkg/plugin"
 )
 
 const (

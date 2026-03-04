@@ -75,9 +75,25 @@ var parameterSpecs = []ParameterSpec{
 	{ID: ParamMode4DecayMs, Key: "mode_4_decay_ms", Name: "Mode 4 Decay", Unit: "ms", Min: model.DecayMsMin, Max: model.DecayMsMax, Default: 100},
 }
 
+var defaultSnapshot = Snapshot{
+	InputMix:         0.472433640370972,
+	FilterFrequency:  522.935295651445,
+	BaseFrequency:    440.0,
+	ChebyshevEnabled: true,
+	ChebyshevGains:   [model.NumModes]float64{1.0, 0.5, 0.3, 0.2},
+	ModeAmplitude:    [model.NumModes]float64{0.885860562324524, 1.99459731578827, -0.464719623327255, 0.363913357257843},
+	ModeFrequency:    [model.NumModes]float64{1756.64123535156, 4768.10693359375, 38.241283416748, 32.6347961425781},
+	ModeDecayMs:      [model.NumModes]float64{188.223281860352, 1.60327112674713, 5.55945539474487, 8.6815824508667},
+}
+
 // ParameterSpecs returns the stable parameter definitions for the first VST3 spike.
 func ParameterSpecs() []ParameterSpec {
 	return append([]ParameterSpec(nil), parameterSpecs...)
+}
+
+// DefaultSnapshot returns the current plugin default parameter state.
+func DefaultSnapshot() Snapshot {
+	return defaultSnapshot
 }
 
 // SnapshotFromBarParams projects model parameters into plugin-facing parameter state.

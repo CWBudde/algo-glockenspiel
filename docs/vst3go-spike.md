@@ -4,13 +4,13 @@ Date: 2026-03-03
 
 ## Objective
 
-Use `justyntemme/vst3go` for the first VST3 integration spike, while keeping the scope small enough to validate the wrapper before we commit the plugin architecture around it.
+Use `cwbudde/vst3go` for the first VST3 integration spike, while keeping the scope small enough to validate the wrapper before we commit the plugin architecture around it.
 
 ## Current Read
 
-Upstream repository:
+Current fork repository:
 
-- https://github.com/justyntemme/vst3go
+- https://github.com/CWBudde/vst3go
 
 Important constraints from upstream documentation:
 
@@ -20,7 +20,7 @@ Important constraints from upstream documentation:
 
 Important constraint from the actual `v0.1.1` module fetch:
 
-- the published Go module currently does not include the `include/vst3/vst3_c_api.h` header tree referenced by its `cgo` sources, so importing `vst3go` directly fails to compile unless that packaging issue is worked around
+- the original upstream published Go module did not include the `include/vst3/vst3_c_api.h` header tree referenced by its `cgo` sources, so importing it directly failed to compile unless that packaging issue was worked around
 - root cause: `vst3go` tracks `include/vst3` as a Git submodule that points to Steinberg's `vst3_c_api` repository, and Go module downloads do not include Git submodule contents
 
 ## Recommended Spike Scope
@@ -85,3 +85,12 @@ Status:
 Most likely next integration fix:
 
 - vendor or otherwise fetch the Steinberg `vst3_c_api` headers separately into a local fork or local replacement of `vst3go`
+
+Current local status on 2026-03-04:
+
+- this repository now uses `replace github.com/cwbudde/vst3go => ../vst3go`
+- the fork submodule `include/vst3` was initialized locally
+- the tag-gated spike now compiles:
+  - `go test -tags=vst3go ./plugin/vst3`
+  - `go build -tags=vst3go ./cmd/glockenspiel-vst3`
+- remaining work is no longer dependency bootstrapping; it is actual plugin behavior integration

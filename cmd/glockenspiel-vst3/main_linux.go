@@ -4,9 +4,9 @@ package main
 
 import (
 	"github.com/cwbudde/glockenspiel/plugin/vst3"
-	vst3plugin "github.com/justyntemme/vst3go/pkg/plugin"
+	vst3plugin "github.com/cwbudde/vst3go/pkg/plugin"
 
-	_ "github.com/justyntemme/vst3go/pkg/plugin/cbridge"
+	_ "github.com/cwbudde/vst3go/pkg/plugin/cbridge"
 )
 
 func init() {
