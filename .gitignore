@@ -11,3 +11,4 @@
 
 # generated artifacts
 /out/
+/web/dist/
