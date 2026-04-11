@@ -1,4 +1,5 @@
 import { bindDial, buildUI, wireKeyboard } from "./ui.js";
+import { applyWoodTexture } from "./wood-texture.js";
 
 let audioContext = null;
 let outputNode = null;
@@ -126,6 +127,8 @@ function bindControls() {
 
 async function init() {
   try {
+    applyWoodTexture();
+
     ui = buildUI({
       naturalContainer: document.getElementById("bars-natural"),
       accidentalContainer: document.getElementById("bars-accidental"),
