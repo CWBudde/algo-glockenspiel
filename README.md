@@ -2,6 +2,8 @@
 
 `glockenspiel` is a Go implementation of a physical-model glockenspiel synthesizer. It started as a port of a legacy Pascal/Delphi model and currently ships as a CLI for note rendering and offline preset fitting.
 
+A live browser demo is available at https://cwbudde.github.io/algo-glockenspiel/.
+
 ## Status
 
 Implemented today:
@@ -9,7 +11,7 @@ Implemented today:
 - four-mode bar model with quadrature decay oscillators
 - preset load/save/validation
 - note rendering to mono WAV
-- browser-playable WebAssembly demo
+- browser-playable WebAssembly live demo
 - offline fitting against reference WAVs
 - RMS, log-RMS, and spectral objective metrics
 - Nelder-Mead and Mayfly optimizer backends

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestPhase0TestdataExists(t *testing.T) {
+func TestRepositoryTestdataFixturesExist(t *testing.T) {
 	requiredPaths := []string{
 		"testdata/reference/glockenspiel_a4.wav",
 		"testdata/presets",
