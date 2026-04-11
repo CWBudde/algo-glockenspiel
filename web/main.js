@@ -1,5 +1,5 @@
 import { bindDial, buildUI, wireKeyboard } from "./ui.js";
-import { applyWoodTexture } from "./wood-texture.js";
+import { applyWoodTexture, getWoodSpeciesOptions } from "./wood-texture.js";
 
 let audioContext = null;
 let outputNode = null;
@@ -10,6 +10,7 @@ let initAudioPromise = null;
 let masterGain = 0.7;
 let strikeVelocity = 96;
 let ui = null;
+let woodSpecies = "beech";
 
 function updateStatus(message, isError = false) {
   const status = document.getElementById("status");
@@ -109,9 +110,37 @@ function bindControls() {
   const velocityValue = document.getElementById("velocity-value");
   const gain = document.getElementById("gain");
   const gainValue = document.getElementById("gain-value");
+  const woodSelect = document.getElementById("wood-species");
+  const woodNote = document.getElementById("wood-note");
 
   bindDial(velocity, velocityValue, (value) => String(value));
   bindDial(gain, gainValue, (value) => `${value}%`);
+
+  if (woodSelect) {
+    const species = getWoodSpeciesOptions();
+    woodSelect.replaceChildren(
+      ...species.map(({ id, label }) => {
+        const option = document.createElement("option");
+        option.value = id;
+        option.textContent = label;
+        return option;
+      }),
+    );
+    woodSelect.value = woodSpecies;
+    if (woodNote) {
+      const initial = species.find(({ id }) => id === woodSpecies);
+      woodNote.textContent = initial?.description || "";
+    }
+
+    woodSelect.addEventListener("change", () => {
+      woodSpecies = woodSelect.value;
+      applyWoodTexture(document.documentElement, woodSpecies);
+      if (woodNote) {
+        const selected = species.find(({ id }) => id === woodSpecies);
+        woodNote.textContent = selected?.description || "";
+      }
+    });
+  }
 
   velocity.addEventListener("input", () => {
     strikeVelocity = clamp(Number(velocity.value), 1, 127);
@@ -127,7 +156,7 @@ function bindControls() {
 
 async function init() {
   try {
-    applyWoodTexture();
+    applyWoodTexture(document.documentElement, woodSpecies);
 
     ui = buildUI({
       naturalContainer: document.getElementById("bars-natural"),

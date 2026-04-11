@@ -2,10 +2,9 @@ const TEXTURE_WIDTH = 1024;
 const TEXTURE_HEIGHT = 576;
 const SEED = 918273;
 
-// The panel texture is a tangential slice through a semi-ring-porous hardwood:
-// growth rings in cylindrical tree space, z-driven radial/tangential distortion,
-// pores as longitudinal tubes, and rays as radial ribbons.
-const PRESET = {
+// The panel texture is a tangential slice through cylindrical tree space:
+// growth rings, z-driven distortion, longitudinal pores, and radial rays.
+const BASE_PRESET = {
   boardWidthCm: 56,
   boardHeightCm: 31.5,
   tangentOffsetCm: 12.2,
@@ -40,6 +39,140 @@ const PRESET = {
   finishHighlight: 0.1,
 };
 
+const SPECIES_PRESETS = {
+  beech: {
+    name: "Beech",
+    description: "Light diffuse-porous beech with subtle ring contrast and very restrained figure.",
+    beerBase: [0.89, 0.8, 0.64],
+    alphaBase: 0.22,
+    alphaLatewood: 0.34,
+    alphaRingNoise: 0.05,
+    alphaDetailNoise: 0.03,
+    poreCellCm: 0.58,
+    poreRadiusEarlyCm: 0.022,
+    poreRadiusLateCm: 0.014,
+    poreDensity: 0.16,
+    poreDarkening: 0.08,
+    rayThetaCell: 0.06,
+    rayHeightCm: 1.5,
+    rayWidthCm: 0.03,
+    rayLengthCm: 0.44,
+    rayStrength: 0.04,
+    ringSpacingCm: 1.42,
+    latewoodThreshold: 0.79,
+    latewoodTransition: 0.08,
+    rippleAmpCm: 0.03,
+    rippleFreqZ: 0.52,
+    rippleFreqCirc: 0.18,
+    ripple2AmpCm: 0.01,
+    ripple2FreqZ: 1.1,
+    ripple2FreqCirc: 0.08,
+    tangentialAmpCm: 0.008,
+    tangentialFreqZ: 0.36,
+    tangentialFreqCirc: 0.14,
+    finishHighlight: 0.025,
+  },
+  walnut: {
+    name: "Walnut",
+    description: "Dark semi-ring-porous walnut with restrained rays and soft curl.",
+    beerBase: [0.67, 0.5, 0.32],
+    alphaBase: 0.9,
+    alphaLatewood: 0.62,
+    alphaRingNoise: 0.09,
+    alphaDetailNoise: 0.05,
+    poreCellCm: 0.46,
+    poreRadiusEarlyCm: 0.08,
+    poreRadiusLateCm: 0.028,
+    poreDensity: 0.34,
+    poreDarkening: 0.34,
+    rayThetaCell: 0.06,
+    rayHeightCm: 1.65,
+    rayWidthCm: 0.04,
+    rayLengthCm: 0.58,
+    rayStrength: 0.06,
+    ringSpacingCm: 1.28,
+    latewoodThreshold: 0.75,
+    latewoodTransition: 0.11,
+    rippleAmpCm: 0.13,
+    rippleFreqZ: 1.1,
+    rippleFreqCirc: 0.56,
+    ripple2AmpCm: 0.05,
+    ripple2FreqZ: 2.8,
+    ripple2FreqCirc: 0.16,
+    tangentialAmpCm: 0.04,
+    tangentialFreqZ: 0.72,
+    tangentialFreqCirc: 0.34,
+    finishHighlight: 0.07,
+  },
+  oak: {
+    name: "Oak",
+    description: "Ring-porous oak with strong pore structure and prominent medullary rays.",
+    beerBase: [0.79, 0.64, 0.43],
+    alphaBase: 0.58,
+    alphaLatewood: 1.18,
+    alphaRingNoise: 0.14,
+    alphaDetailNoise: 0.08,
+    poreCellCm: 0.34,
+    poreRadiusEarlyCm: 0.12,
+    poreRadiusLateCm: 0.022,
+    poreDensity: 0.62,
+    poreDarkening: 0.48,
+    rayThetaCell: 0.03,
+    rayHeightCm: 2.4,
+    rayWidthCm: 0.12,
+    rayLengthCm: 1.2,
+    rayStrength: 0.22,
+    ringSpacingCm: 1.05,
+    latewoodThreshold: 0.67,
+    latewoodTransition: 0.16,
+    rippleAmpCm: 0.09,
+    rippleFreqZ: 0.88,
+    rippleFreqCirc: 0.34,
+    ripple2AmpCm: 0.03,
+    ripple2FreqZ: 1.9,
+    ripple2FreqCirc: 0.12,
+    tangentialAmpCm: 0.02,
+    tangentialFreqZ: 0.55,
+    tangentialFreqCirc: 0.2,
+    finishHighlight: 0.04,
+  },
+  maple: {
+    name: "Maple",
+    description: "Diffuse-porous curly maple with fine pores and stronger figured ripple.",
+    beerBase: [0.84, 0.72, 0.53],
+    alphaBase: 0.48,
+    alphaLatewood: 0.82,
+    alphaRingNoise: 0.11,
+    alphaDetailNoise: 0.06,
+    poreCellCm: 0.54,
+    poreRadiusEarlyCm: 0.032,
+    poreRadiusLateCm: 0.018,
+    poreDensity: 0.2,
+    poreDarkening: 0.16,
+    rayThetaCell: 0.05,
+    rayHeightCm: 1.7,
+    rayWidthCm: 0.045,
+    rayLengthCm: 0.68,
+    rayStrength: 0.08,
+    ringSpacingCm: 1.36,
+    latewoodThreshold: 0.74,
+    latewoodTransition: 0.09,
+    rippleAmpCm: 0.28,
+    rippleFreqZ: 1.9,
+    rippleFreqCirc: 1.02,
+    ripple2AmpCm: 0.14,
+    ripple2FreqZ: 4.2,
+    ripple2FreqCirc: 0.24,
+    tangentialAmpCm: 0.11,
+    tangentialFreqZ: 1.22,
+    tangentialFreqCirc: 0.64,
+    finishHighlight: 0.14,
+  },
+};
+
+const DEFAULT_SPECIES = "beech";
+const textureCache = new Map();
+
 const LIGHT_DIR = normalize3([-0.35, 0.92, 0.18]);
 const VIEW_DIR = normalize3([0.08, 0.97, 0.24]);
 const HALF_DIR = normalize3([
@@ -48,7 +181,15 @@ const HALF_DIR = normalize3([
   LIGHT_DIR[2] + VIEW_DIR[2],
 ]);
 
-export function applyWoodTexture(root = null) {
+export function getWoodSpeciesOptions() {
+  return Object.entries(SPECIES_PRESETS).map(([id, preset]) => ({
+    id,
+    label: preset.name,
+    description: preset.description,
+  }));
+}
+
+export function applyWoodTexture(root = null, species = DEFAULT_SPECIES) {
   if (typeof document === "undefined") {
     return;
   }
@@ -58,11 +199,22 @@ export function applyWoodTexture(root = null) {
     return;
   }
 
-  const textureUrl = createWoodTexture();
+  const resolvedSpecies = SPECIES_PRESETS[species] ? species : DEFAULT_SPECIES;
+  let textureUrl = textureCache.get(resolvedSpecies);
+  if (!textureUrl) {
+    textureUrl = createWoodTexture(resolvePreset(resolvedSpecies));
+    textureCache.set(resolvedSpecies, textureUrl);
+  }
+
   target.style.setProperty("--wood-panel-texture", `url("${textureUrl}")`);
+  target.dataset.woodSpecies = resolvedSpecies;
 }
 
-function createWoodTexture() {
+function resolvePreset(species) {
+  return { ...BASE_PRESET, ...SPECIES_PRESETS[species] };
+}
+
+function createWoodTexture(preset) {
   const canvas = document.createElement("canvas");
   canvas.width = TEXTURE_WIDTH;
   canvas.height = TEXTURE_HEIGHT;
@@ -79,7 +231,7 @@ function createWoodTexture() {
     const v = y / (TEXTURE_HEIGHT - 1);
     for (let x = 0; x < TEXTURE_WIDTH; x += 1) {
       const u = x / (TEXTURE_WIDTH - 1);
-      const color = sampleBoard(u, v);
+      const color = sampleBoard(preset, u, v);
       const index = (y * TEXTURE_WIDTH + x) * 4;
       pixels[index] = color[0];
       pixels[index + 1] = color[1];
@@ -92,22 +244,22 @@ function createWoodTexture() {
   return canvas.toDataURL("image/png");
 }
 
-function sampleBoard(u, v) {
-  const point = boardToTree(u, v);
-  const distorted = distortPoint(point);
-  const ring = sampleGrowthRing(distorted);
-  const pore = samplePores(distorted);
-  const ray = sampleRays(distorted);
-  const fiber = sampleFiberDirection(point);
+function sampleBoard(preset, u, v) {
+  const point = boardToTree(preset, u, v);
+  const distorted = distortPoint(preset, point);
+  const ring = sampleGrowthRing(preset, distorted);
+  const pore = samplePores(preset, distorted);
+  const ray = sampleRays(preset, distorted);
+  const fiber = sampleFiberDirection(preset, point);
 
-  let alpha = PRESET.alphaBase;
-  alpha += PRESET.alphaLatewood * ring.latewood;
-  alpha += PRESET.alphaRingNoise * ring.ringNoise;
-  alpha += PRESET.alphaDetailNoise * anisotropicNoise(distorted.x * 0.85, distorted.z * 0.42, SEED + 71, 3);
-  alpha += pore.weight * PRESET.poreDarkening;
+  let alpha = preset.alphaBase;
+  alpha += preset.alphaLatewood * ring.latewood;
+  alpha += preset.alphaRingNoise * ring.ringNoise;
+  alpha += preset.alphaDetailNoise * anisotropicNoise(distorted.x * 0.85, distorted.z * 0.42, SEED + 71, 3);
+  alpha += pore.weight * preset.poreDarkening;
   alpha = Math.max(0.35, alpha);
 
-  const beerColor = beerShade(PRESET.beerBase, alpha);
+  const beerColor = beerShade(preset.beerBase, alpha);
   const figure = sampleFigureHighlight(fiber, ray.weight, ring.earlywood);
 
   let color = [
@@ -118,8 +270,8 @@ function sampleBoard(u, v) {
 
   const earlywoodSink = 0.05 * ring.earlywood;
   color = darken(color, earlywoodSink + pore.weight * 0.30);
-  color = lighten(color, ray.weight * PRESET.rayStrength * 0.8);
-  color = lighten(color, figure * PRESET.finishHighlight);
+  color = lighten(color, ray.weight * preset.rayStrength * 0.8);
+  color = lighten(color, figure * preset.finishHighlight);
 
   const topLight = 0.03 * (1 - v);
   const sideFalloff = 0.04 * Math.pow(Math.abs(u - 0.5) / 0.5, 2);
@@ -132,17 +284,17 @@ function sampleBoard(u, v) {
   ];
 }
 
-function boardToTree(u, v) {
+function boardToTree(preset, u, v) {
   return {
-    x: (u - 0.5) * PRESET.boardWidthCm,
-    y: PRESET.tangentOffsetCm,
-    z: (0.5 - v) * PRESET.boardHeightCm,
+    x: (u - 0.5) * preset.boardWidthCm,
+    y: preset.tangentOffsetCm,
+    z: (0.5 - v) * preset.boardHeightCm,
   };
 }
 
-function distortPoint(point) {
+function distortPoint(preset, point) {
   const polar = toPolar(point.x, point.y);
-  const distortion = distortionField(polar.r, polar.theta, point.z);
+  const distortion = distortionField(preset, polar.r, polar.theta, point.z);
   return {
     x: point.x + distortion.mr * polar.rx + distortion.mt * polar.tx,
     y: point.y + distortion.mr * polar.ry + distortion.mt * polar.ty,
@@ -150,28 +302,28 @@ function distortPoint(point) {
   };
 }
 
-function distortionField(r, theta, z) {
+function distortionField(preset, r, theta, z) {
   const circum = r * theta;
-  const phase1 = z * PRESET.rippleFreqZ + circum * PRESET.rippleFreqCirc;
-  const phase2 = z * PRESET.ripple2FreqZ - circum * PRESET.ripple2FreqCirc;
+  const phase1 = z * preset.rippleFreqZ + circum * preset.rippleFreqCirc;
+  const phase2 = z * preset.ripple2FreqZ - circum * preset.ripple2FreqCirc;
 
-  const mr = PRESET.rippleAmpCm * Math.sin(phase1 + 0.55 * lowFreqNoise(circum * 0.18, z * 0.24, SEED + 101))
-    + PRESET.ripple2AmpCm * Math.sin(phase2 + 0.25 * lowFreqNoise(circum * 0.33, z * 0.17, SEED + 103))
+  const mr = preset.rippleAmpCm * Math.sin(phase1 + 0.55 * lowFreqNoise(circum * 0.18, z * 0.24, SEED + 101))
+    + preset.ripple2AmpCm * Math.sin(phase2 + 0.25 * lowFreqNoise(circum * 0.33, z * 0.17, SEED + 103))
     + 0.03 * lowFreqNoise(theta * 3.4, z * 0.8, SEED + 107);
 
-  const mt = PRESET.tangentialAmpCm * Math.sin(z * PRESET.tangentialFreqZ + circum * PRESET.tangentialFreqCirc)
+  const mt = preset.tangentialAmpCm * Math.sin(z * preset.tangentialFreqZ + circum * preset.tangentialFreqCirc)
     + 0.02 * lowFreqNoise(circum * 0.27 + 13.7, z * 0.31 - 2.1, SEED + 109);
 
-  const dmrDz = PRESET.rippleAmpCm * PRESET.rippleFreqZ * Math.cos(phase1)
-    + PRESET.ripple2AmpCm * PRESET.ripple2FreqZ * Math.cos(phase2);
-  const dmtDz = PRESET.tangentialAmpCm * PRESET.tangentialFreqZ
-    * Math.cos(z * PRESET.tangentialFreqZ + circum * PRESET.tangentialFreqCirc);
+  const dmrDz = preset.rippleAmpCm * preset.rippleFreqZ * Math.cos(phase1)
+    + preset.ripple2AmpCm * preset.ripple2FreqZ * Math.cos(phase2);
+  const dmtDz = preset.tangentialAmpCm * preset.tangentialFreqZ
+    * Math.cos(z * preset.tangentialFreqZ + circum * preset.tangentialFreqCirc);
 
   return { mr, mt, dmrDz, dmtDz };
 }
 
-function sampleGrowthRing(point) {
-  const season = sampleSeason(point.x, point.y);
+function sampleGrowthRing(preset, point) {
+  const season = sampleSeason(preset, point.x, point.y);
   const detail = anisotropicNoise(point.x * 0.7, point.z * 1.9, SEED + 167, 3);
 
   return {
@@ -182,8 +334,8 @@ function sampleGrowthRing(point) {
   };
 }
 
-function samplePores(point) {
-  const cell = PRESET.poreCellCm;
+function samplePores(preset, point) {
+  const cell = preset.poreCellCm;
   const cellX = Math.floor(point.x / cell);
   const cellY = Math.floor(point.y / cell);
   let weight = 0;
@@ -192,14 +344,14 @@ function samplePores(point) {
     for (let ox = -1; ox <= 1; ox += 1) {
       const ix = cellX + ox;
       const iy = cellY + oy;
-      if (hash2(ix, iy, SEED + 201) > PRESET.poreDensity) {
+      if (hash2(ix, iy, SEED + 201) > preset.poreDensity) {
         continue;
       }
 
       const centerX = (ix + 0.18 + 0.64 * hash2(ix, iy, SEED + 203)) * cell;
       const centerY = (iy + 0.18 + 0.64 * hash2(ix, iy, SEED + 205)) * cell;
-      const season = sampleSeason(centerX, centerY);
-      const poreRadius = lerp(PRESET.poreRadiusLateCm, PRESET.poreRadiusEarlyCm, season.earlywood);
+      const season = sampleSeason(preset, centerX, centerY);
+      const poreRadius = lerp(preset.poreRadiusLateCm, preset.poreRadiusEarlyCm, season.earlywood);
       const dx = point.x - centerX;
       const dy = point.y - centerY;
       const radius = Math.hypot(dx, dy);
@@ -214,10 +366,10 @@ function samplePores(point) {
   return { weight: Math.min(1, weight) };
 }
 
-function sampleRays(point) {
+function sampleRays(preset, point) {
   const polar = toPolar(point.x, point.y);
-  const thetaCell = PRESET.rayThetaCell;
-  const zCell = PRESET.rayHeightCm;
+  const thetaCell = preset.rayThetaCell;
+  const zCell = preset.rayHeightCm;
   const thetaIndex = Math.floor(polar.theta / thetaCell);
   const zIndex = Math.floor(point.z / zCell);
   let weight = 0;
@@ -234,7 +386,7 @@ function sampleRays(point) {
       const z0 = (iz + 0.2 + 0.6 * hash2(it, iz, SEED + 257)) * zCell;
       const radialDist = Math.abs(point.x * Math.sin(theta0) - point.y * Math.cos(theta0));
       const longDist = Math.abs(point.z - z0);
-      const q = Math.hypot(radialDist / PRESET.rayWidthCm, longDist / PRESET.rayLengthCm);
+      const q = Math.hypot(radialDist / preset.rayWidthCm, longDist / preset.rayLengthCm);
       if (q >= 1) {
         continue;
       }
@@ -246,10 +398,9 @@ function sampleRays(point) {
   return { weight: Math.min(1, weight) };
 }
 
-function sampleFiberDirection(point) {
+function sampleFiberDirection(preset, point) {
   const polar = toPolar(point.x, point.y);
-  const distortion = distortionField(polar.r, polar.theta, point.z);
-
+  const distortion = distortionField(preset, polar.r, polar.theta, point.z);
   const fx = -(distortion.dmrDz * polar.rx + distortion.dmtDz * polar.tx);
   const fy = -(distortion.dmrDz * polar.ry + distortion.dmtDz * polar.ty);
   return normalize3([fx, fy, 1]);
@@ -302,15 +453,15 @@ function lowFreqNoise(x, y, seed) {
   return fbm(x, y, seed, 2);
 }
 
-function sampleSeason(x, y) {
+function sampleSeason(preset, x, y) {
   const polar = toPolar(x, y);
-  const widthNoise = 1 + PRESET.ringWidthJitter * ringNoise(polar.r * 0.33, SEED + 151);
-  const growthCoordinate = polar.r / (PRESET.ringSpacingCm * widthNoise)
+  const widthNoise = 1 + preset.ringWidthJitter * ringNoise(polar.r * 0.33, SEED + 151);
+  const growthCoordinate = polar.r / (preset.ringSpacingCm * widthNoise)
     + 0.08 * ringNoise(polar.r * 0.12 + 8.4, SEED + 157);
   const ringPhase = fract(growthCoordinate);
   const latewood = smoothstep(
-    PRESET.latewoodThreshold,
-    PRESET.latewoodThreshold + PRESET.latewoodTransition,
+    preset.latewoodThreshold,
+    preset.latewoodThreshold + preset.latewoodTransition,
     ringPhase,
   );
   return {
