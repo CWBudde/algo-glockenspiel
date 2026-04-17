@@ -63,3 +63,7 @@ ci: check-formatted test lint check-tidy
 # Clean build artifacts
 clean:
     rm -rf bin/ coverage.out coverage.html .tmp/
+
+fix:
+    just lint-fix
+    just fmt
