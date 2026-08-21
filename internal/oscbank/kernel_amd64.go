@@ -13,7 +13,7 @@ import (
 // exactly that wide, so the loop cannot take any other stride.
 const reduceAVX2Frames = 8
 
-// oscbank_avx2_amd64.s reaches into these arrays with hardcoded byte offsets,
+// The two packed kernels reach into these arrays with hardcoded byte offsets,
 // and assembly is not type-checked against Go: change LaneWidth or accLanes and
 // the kernel keeps building while it walks the wrong memory, which sounds like
 // audio right up until it does not. These assertions are the build failure.
@@ -33,9 +33,15 @@ const (
 	_ = sizeofFloat32*2*LaneWidth - 64
 	_ = 64 - sizeofFloat32*2*LaneWidth
 
-	// ADDQ $16, DI: one frame of the partial accumulator.
+	// ADDQ $16, DI: one frame of the partial accumulator. It is also the
+	// half-block stride the SSE2 kernel walks with MOVUPS 16(AX) and 48(AX),
+	// which is the same number for the same reason: four float32 lanes.
 	_ = sizeofFloat32*accLanes - 16
 	_ = 16 - sizeofFloat32*accLanes
+
+	// MOVUPS 48(AX) in oscBankBlocksSSE2: the second block's high half.
+	_ = sizeofFloat32*(LaneWidth+accLanes) - 48
+	_ = 48 - sizeofFloat32*(LaneWidth+accLanes)
 
 	// ADDQ $128, SI in reduceLanesAVX2: eight accumulator frames per pass.
 	_ = sizeofFloat32*accLanes*reduceAVX2Frames - 128
@@ -51,19 +57,46 @@ func processRotorBlocks(re, im, cosCoeff, sinCoeff, amp []float32, blocks int, i
 		return
 	}
 
-	if features := cpufeat.Detect(); !features.HasAVX2 || !features.HasFMA {
-		processRotorBlocksGeneric(re, im, cosCoeff, sinCoeff, amp, blocks, input, acc)
-		return
-	}
+	features := cpufeat.Detect()
 
-	oscBankBlocksAVX2(
-		&re[0], &im[0], &cosCoeff[0], &sinCoeff[0], &amp[0],
-		blocks,
-		&input[0], len(input),
-		&acc[0],
-	)
+	switch {
+	case features.HasAVX2 && features.HasFMA:
+		oscBankBlocksAVX2(
+			&re[0], &im[0], &cosCoeff[0], &sinCoeff[0], &amp[0],
+			blocks,
+			&input[0], len(input),
+			&acc[0],
+		)
+
+	case features.HasSSE2:
+		oscBankBlocksSSE2(
+			&re[0], &im[0], &cosCoeff[0], &sinCoeff[0], &amp[0],
+			blocks,
+			&input[0], len(input),
+			&acc[0],
+		)
+
+	default:
+		// SSE2 is architecturally guaranteed on amd64, so this arm is
+		// unreachable on hardware: the only way to get here is a test that
+		// forces the flag off. That is deliberate. The portable kernel is the
+		// numeric reference the other two are measured against, and a reference
+		// nothing ever runs is a reference nobody trusts.
+		processRotorBlocksGeneric(re, im, cosCoeff, sinCoeff, amp, blocks, input, acc)
+	}
 }
 
+// reduceLanes deliberately has no SSE2 path, unlike processRotorBlocks.
+//
+// The horizontal fold is the one place where SSE2 is not simply a narrower
+// AVX2: VHADDPS is SSE3, so a 4-lane version would have to transpose four
+// frames with UNPCKLPS/UNPCKHPS/MOVLHPS before it could add them. That is
+// roughly four uops per frame, which is what the scalar loop already costs --
+// the reduction is memory-shaped, not arithmetic-shaped, and it is two uops per
+// sample even in the AVX2 version. Adding a third implementation of a fixed
+// summation order for no measurable gain buys one more surface on which rule
+// two of the numeric contract could be broken, so the split stays AVX2 or
+// portable.
 func reduceLanes(acc, output []float32) {
 	if len(output) == 0 {
 		return
@@ -90,6 +123,14 @@ func reduceLanes(acc, output []float32) {
 //
 //go:noescape
 func oscBankBlocksAVX2(re, im, cosCoeff, sinCoeff, amp *float32, blocks int, input *float32, samples int, acc *float32)
+
+// oscBankBlocksSSE2 is the 4-lane form of the same pass, with the same
+// requirements on blocks and acc. It has no FMA, so it associates the recursion
+// exactly as kernel_generic.go does and is bit-identical to it on amd64; see
+// the header of oscbank_sse2_amd64.s.
+//
+//go:noescape
+func oscBankBlocksSSE2(re, im, cosCoeff, sinCoeff, amp *float32, blocks int, input *float32, samples int, acc *float32)
 
 // reduceLanesAVX2 collapses samples frames of LaneWidth lanes into samples
 // scalars. samples must be a positive multiple of 8.
