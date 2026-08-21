@@ -2,10 +2,28 @@
 
 package model
 
-import "github.com/cwbudde/glockenspiel/internal/cpufeat"
+import (
+	"unsafe"
+
+	"github.com/cwbudde/glockenspiel/internal/cpufeat"
+)
 
 // chebyAVX2Block is the kernel's vector width in float32 samples.
 const chebyAVX2Block = 8
+
+// The kernel broadcasts its four gains from the fixed byte offsets 0, 4, 8 and
+// 12 of the gain array, and walks input and output in 32-byte steps of eight
+// samples. Assembly is not type-checked against Go, so a change to either
+// layout would corrupt audio silently instead of failing to build. These
+// assertions are the build failure: uintptr is unsigned, so a mismatch in
+// either direction makes the constant expression overflow.
+const (
+	_ = unsafe.Sizeof([chebyshevFastGains]float32{}) - 16
+	_ = 16 - unsafe.Sizeof([chebyshevFastGains]float32{})
+
+	_ = unsafe.Sizeof(float32(0))*chebyAVX2Block - 32
+	_ = 32 - unsafe.Sizeof(float32(0))*chebyAVX2Block
+)
 
 // processChebyshev4AVX2 shapes the chebyAVX2Block-aligned body of input and
 // reports how many samples it wrote. Zero means the caller has to shape all of
