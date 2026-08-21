@@ -294,7 +294,11 @@ func TestMayflyOptimizerImprovesLegacyReference(t *testing.T) {
 	legacyPreset := loadDefaultPreset(t)
 	reference, sampleRate := loadLegacyReferenceWAV(t)
 
+	// Clone the parameters: BarParams.Modes is a slice, so a plain struct copy
+	// would let the perturbations below rewrite the shipped preset that
+	// legacyPreset is reused as the reference for.
 	initial := *legacyPreset
+	initial.Parameters = legacyPreset.Parameters.Clone()
 	initial.Parameters.InputMix = clampToRange(initial.Parameters.InputMix+0.18, model.InputMixMin, model.InputMixMax)
 	initial.Parameters.FilterFrequency = clampToRange(initial.Parameters.FilterFrequency*1.18, model.FilterFrequencyMinHz, model.FilterFrequencyMaxHz)
 	initial.Parameters.Modes[0].Amplitude = clampToRange(initial.Parameters.Modes[0].Amplitude*legacyAmplitudePerturbation, model.AmplitudeMin, model.AmplitudeMax)

@@ -17,7 +17,14 @@ func TestOptimizationImprovesFitAgainstLegacyReference(t *testing.T) {
 	legacyPreset := loadDefaultPreset(t)
 	reference, sampleRate := loadLegacyReferenceWAV(t)
 
+	// Clone the parameters rather than relying on the struct copy. BarParams
+	// carries Modes as a slice, so a plain copy leaves both presets sharing one
+	// backing array and the perturbations below would rewrite the shipped
+	// values they are meant to be perturbed away from -- which would leave the
+	// recovery assertions comparing the result against the perturbed target
+	// instead of the shipped one, i.e. asserting nothing.
 	initial := *legacyPreset
+	initial.Parameters = legacyPreset.Parameters.Clone()
 	initial.Parameters.InputMix = clampToRange(initial.Parameters.InputMix+0.18, model.InputMixMin, model.InputMixMax)
 	initial.Parameters.FilterFrequency = clampToRange(initial.Parameters.FilterFrequency*1.18, model.FilterFrequencyMinHz, model.FilterFrequencyMaxHz)
 	initial.Parameters.Modes[0].Amplitude = clampToRange(initial.Parameters.Modes[0].Amplitude*legacyAmplitudePerturbation, model.AmplitudeMin, model.AmplitudeMax)
