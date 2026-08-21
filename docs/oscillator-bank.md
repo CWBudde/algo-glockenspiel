@@ -88,6 +88,39 @@ way, and is written so that it cannot fuse its multiply-adds on any target — s
 given half a chance. The next section says exactly how far apart that leaves the
 two.
 
+## The NEON kernel
+
+`oscbank_arm64.s` is the same program on 128-bit registers. A NEON vector holds
+four float32, so one AoSoA block is two registers and the kernel still consumes
+a block pair — sixteen rotors, four vectors — per pass. Taking a whole pair
+rather than a half block at a time is not an efficiency choice: it is what keeps
+the lane fold in `(A.lo + B.lo) + (A.hi + B.hi)` order, and rule two of the
+contract has no tolerance.
+
+`FMLA` and `FMLS` do the work `VFMADD231PS` and `VFNMADD231PS` do on amd64, in
+the same places and in the same order, so the two kernels are bit-identical.
+`golden_test.go` pins that with a vector of expected float32 words: it is the
+only way to check rule one across architectures, since no process can run both
+kernels.
+
+There is no runtime gate. Advanced SIMD is mandatory in ARMv8-A, so there is no
+arm64 machine that can run the binary and not run the kernel; `cpufeat` reports
+`HasASIMD` unconditionally and a kernel must not consult it, because the OS
+capability word it would otherwise be derived from comes back empty under
+emulation.
+
+The reduction is where the two architectures differ in shape rather than in
+arithmetic. `FADDP` adds adjacent pairs of the concatenation of its two source
+vectors, so two instructions halve four frames and a third finishes them —
+`(a0+a1) + (a2+a3)` per frame, with no permute needed to repair the order,
+because `FADDP` keeps the frames in place where `VHADDPS` interleaves them.
+
+One practical note for anyone editing the file: Go's arm64 assembler has no
+mnemonic for floating-point vector multiply, add, subtract or pairwise-add. Only
+`VFMLA` and `VFMLS` exist. The kernel encodes the other four itself through
+`WORD` macros, whose encodings `go tool objdump` decodes back to the expected
+instruction names.
+
 ## The numeric contract
 
 Three rules, and every future backend is judged by them.
@@ -399,6 +432,14 @@ they share a thermal state:
 | `oscbank` 4 oscillators x 4 harmonics   | 16     | 1128–1154 | 70–72              |
 | `oscbank` 4 x 4, SSE2 kernel            | 16     | 2850–3400 | 178–212            |
 | `oscbank` 4 x 4, portable kernel        | 16     | ~8000     | ~500               |
+| `oscbank` 4 x 4, NEON kernel            | 16     | TODO      | TODO               |
+
+The NEON row is deliberately empty. The kernel is exercised under qemu-user,
+which is a translation layer: trustworthy for correctness and instruction
+validity, worthless for timing. Fill it in from `go test -bench Bank` on a
+native arm64 host — an Apple silicon MacBook is the intended source — and take
+`BenchmarkBank4x4Portable` in the same run, because the interesting number is
+the ratio and it will not be the amd64 ratio.
 
 The SSE2 row lands where a 4-lane unfused kernel should: about 2.1x the AVX2
 kernel and about 3x faster than the portable one. Half the lanes accounts for
@@ -451,8 +492,8 @@ note. It clones now, and `TestRenderingIsIndependentOfPresetState` guards it.
   voice's oscillators; the realtime engine still renders voices serially. Packing
   `voices x oscillators` needs per-lane excitation and per-voice output
   separation, which belongs with the audio-path work in Phase 2.
-- AVX2 and SSE2 are packed. Everything else runs the portable kernel, which is
-  about 7x slower. NEON is Phase 2.3; AVX-512 is deferred, because CI cannot
+- AVX2, SSE2 and NEON are packed. Everything else runs the portable kernel,
+  which is about 7x slower. AVX-512 is deferred, because CI cannot
   prove it correct on a runner pool that only sometimes has the instructions.
 - Denormals are not flushed. A bank left running with no excitation decays into
   denormal state and slows down sharply; Phase 2.4 sets MXCSR FTZ/DAZ once per
