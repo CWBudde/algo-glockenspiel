@@ -314,16 +314,35 @@ Goal: this repo builds cleanly from a fresh clone.
 
 Tasks:
 
+- Promote the parameter and voice types the plugin needs out of `internal/model` into a public
+  package. This is the blocker, not a nicety: Go enforces `internal/` against the module path,
+  so a separate module cannot import `internal/model` even with a `replace` directive pointing
+  at a sibling checkout. The plugin uses `Bar`, `NewBar`, `BarParams`, `ModeParams`,
+  `ChebyshevParams`, `NumModes`, and the twelve `*Min`/`*Max` range constants.
+  Design the public surface against Phase 1's runtime-configurable bank rather than freezing
+  today's four-mode shape — in particular `NumModes` must not become part of the public API.
 - Move `plugin/vst3/`, `cmd/glockenspiel-vst3/`, and `docs/vst3*.md` to their own repository
   depending on this module normally.
 - Remove `replace github.com/cwbudde/vst3go => ../vst3go`, which is unresolvable without a
   sibling checkout and breaks every documented `-tags=vst3go` command as well as
   `go mod tidy`.
-- Clean the stale `justyntemme/vst3go` entries out of `go.sum`.
+- Repair `processor_vst3go_linux.go` against the current `vst3go` MIDI API. This is a second,
+  independent blocker and it predates the split: `go build -tags=vst3go ./plugin/...` already
+  fails on `main` with four errors, because `midi.Event` became a struct and
+  `midi.NoteOnEvent`, `midi.ControlChangeEvent` and `event.SampleOffset()` no longer exist. No
+  CI job builds with `-tags=vst3go`, which is why this went unnoticed; the split-out repo's
+  build job covers it from now on.
+- Restore the `go mod tidy` check in CI. It was dropped in Phase 0 precisely because the
+  `replace` directive makes it unrunnable on a runner, and removing the directive is what
+  earns it back.
+- ~~Clean the stale `justyntemme/vst3go` entries out of `go.sum`.~~ Already done: the Phase 0
+  `go mod tidy` removed them.
 
 Acceptance criteria:
 
+- [ ] The types the plugin needs are reachable from outside the module.
 - [ ] No `replace` directive; `go mod tidy` is a no-op.
+- [ ] CI checks module tidiness again.
 - [ ] The split-out repo builds against a published version of this module.
 
 ## Phase 7: Documentation
@@ -360,14 +379,14 @@ Phases 0 and 3 are closed. Phases 1, 2, 4, 5, 6 and 7 are open.
 Phase 1 (the configurable oscillator bank) is the natural next step: Phase 2's SIMD work
 targets the bank's layout, and Phase 4's `serve` builds on the now-context-aware optimizer.
 
-Two findings from Phase 3 that belong to later phases:
+One finding from Phase 3 still belongs to a later phase:
 
 - The shipped `assets/presets/default.json` renders at a peak of about 6.17, roughly
   +15.8 dBFS. Any fit against a normalized recording has to travel ~16 dB of amplitude before
   modal structure starts to matter, and writing that render to a 16-bit WAV clips it beyond
   recognition. Either the preset amplitudes need rescaling or `fit` should default to
   `--normalize-gain`.
-- `fit` computes its resumed budget as `max-iter - checkpoint.Iteration`, but those are
-  different units: `Progress.Iteration` counts progress reports while `max-iter` bounds
-  optimizer iterations. It warns when the subtraction exhausts the budget, but making it
-  exact needs a report count on `Result`.
+
+The resumed-budget unit mismatch recorded here previously is fixed. `Progress` and
+`Checkpoint` now carry `OptimizerIterations` alongside the report count, backends populate it
+from their own iteration counters, and `fit` charges only that value against `--max-iter`.

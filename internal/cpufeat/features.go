@@ -8,6 +8,7 @@ import (
 // Features reports CPU capabilities used for optional SIMD dispatch.
 type Features struct {
 	HasAVX2 bool
+	HasFMA  bool
 }
 
 // Detect is called from the audio path on every processed block, so the common
