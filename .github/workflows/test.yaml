@@ -1,0 +1,30 @@
+name: tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-can-build:
+    uses: ./.github/workflows/test-can-build.yaml
+
+  test-lint:
+    uses: ./.github/workflows/test-lint.yaml
+
+  test-format:
+    uses: ./.github/workflows/test-format.yaml
+
+  test-unit:
+    uses: ./.github/workflows/test-unit.yaml
+
+  test-wasm:
+    uses: ./.github/workflows/test-wasm.yaml

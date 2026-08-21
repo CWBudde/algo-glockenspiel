@@ -1,0 +1,26 @@
+name: test-lint
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Go-Version
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run linter
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          args: --timeout=5m
