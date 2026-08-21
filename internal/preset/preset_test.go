@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/model"
+	"github.com/cwbudde/glockenspiel/model"
 )
 
 func TestLoadDefaultPreset(t *testing.T) {
@@ -96,7 +96,7 @@ func validPreset() *Preset {
 			InputMix:        0.472433640370972,
 			FilterFrequency: 522.935295651445,
 			BaseFrequency:   440.0,
-			Modes: [model.NumModes]model.ModeParams{
+			Modes: []model.ModeParams{
 				{Amplitude: 0.885860562324524, Frequency: 1756.64123535156, DecayMs: 188.223281860352},
 				{Amplitude: 1.99459731578827, Frequency: 4768.10693359375, DecayMs: 1.60327112674713},
 				{Amplitude: -0.464719623327255, Frequency: 38.241283416748, DecayMs: 5.55945539474487},

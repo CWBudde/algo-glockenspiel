@@ -6,14 +6,15 @@ import (
 
 	"github.com/cwbudde/algo-dsp/dsp/filter/biquad"
 	"github.com/cwbudde/algo-dsp/dsp/filter/design/pass"
+	"github.com/cwbudde/glockenspiel/internal/oscbank"
 )
 
 const velocityScale = 1.0 / 128.0
 
 // Bar integrates excitation shaping and modal resonance.
 type Bar struct {
-	oscillator *QuadDecayOscillator
-	lowpass    *biquad.Section
+	bank    *oscbank.Bank
+	lowpass *biquad.Section
 
 	params     BarParams
 	sampleRate int
@@ -25,6 +26,8 @@ type Bar struct {
 	filterBlock   []float64
 	chebyGains4   [4]float32
 	hasCheby4     bool
+
+	oscillators []oscbank.Oscillator
 }
 
 // NewBar creates a new bar model instance.
@@ -38,7 +41,7 @@ func NewBar(params *BarParams, sampleRate int) (*Bar, error) {
 	}
 
 	bar := &Bar{
-		oscillator: NewQuadDecayOscillator(float64(sampleRate)),
+		bank:       oscbank.New(float64(sampleRate)),
 		sampleRate: sampleRate,
 	}
 	if err := bar.UpdateParams(params); err != nil {
@@ -55,7 +58,7 @@ func (b *Bar) SetSampleRate(sampleRate int) error {
 	}
 
 	b.sampleRate = sampleRate
-	b.oscillator.SetSampleRate(float64(sampleRate))
+	b.bank.SetSampleRate(float64(sampleRate))
 	b.lowpass = newLowpassSection(b.params.FilterFrequency, float64(sampleRate))
 
 	return nil
@@ -63,7 +66,7 @@ func (b *Bar) SetSampleRate(sampleRate int) error {
 
 // Reset clears filter and oscillator state.
 func (b *Bar) Reset() {
-	b.oscillator.Reset()
+	b.bank.Reset()
 
 	if b.lowpass != nil {
 		b.lowpass.Reset()
@@ -106,12 +109,17 @@ func (b *Bar) ProcessExcitation(excitation []float32) []float32 {
 	}
 
 	out := b.outputBuf[:sampleCount]
+	shaping := b.params.Chebyshev.Enabled && len(b.params.Chebyshev.HarmonicGains) > 0
 
-	if b.params.Chebyshev.Enabled && len(b.params.Chebyshev.HarmonicGains) > 0 {
+	switch {
+	case shaping && b.params.Chebyshev.ResolvedStage() == ChebyshevStageExcitation:
 		processChebyshevBlock(b.filteredBuf[:sampleCount], b.distortedBuf[:sampleCount], b.params.Chebyshev.HarmonicGains, &b.chebyGains4, b.hasCheby4)
-		b.oscillator.ProcessBlock32(b.distortedBuf[:sampleCount], out)
-	} else {
-		b.oscillator.ProcessBlock32(b.filteredBuf[:sampleCount], out)
+		b.bank.ProcessBlock(b.distortedBuf[:sampleCount], out)
+	case shaping:
+		b.bank.ProcessBlock(b.filteredBuf[:sampleCount], b.distortedBuf[:sampleCount])
+		processChebyshevBlock(b.distortedBuf[:sampleCount], out, b.params.Chebyshev.HarmonicGains, &b.chebyGains4, b.hasCheby4)
+	default:
+		b.bank.ProcessBlock(b.filteredBuf[:sampleCount], out)
 	}
 
 	if b.params.InputMix != 0 {
@@ -130,7 +138,7 @@ func (b *Bar) UpdateParams(params *BarParams) error {
 		return err
 	}
 
-	b.params = *params
+	b.params = params.Clone()
 	b.lowpass = newLowpassSection(params.FilterFrequency, float64(b.sampleRate))
 
 	b.hasCheby4 = len(params.Chebyshev.HarmonicGains) == 4
@@ -140,11 +148,32 @@ func (b *Bar) UpdateParams(params *BarParams) error {
 		}
 	}
 
-	for i, mode := range params.Modes {
-		b.oscillator.SetMode(i, mode.Amplitude, mode.Frequency, mode.DecayMs)
+	if cap(b.oscillators) >= len(params.Modes) {
+		b.oscillators = b.oscillators[:len(params.Modes)]
+	} else {
+		b.oscillators = make([]oscbank.Oscillator, len(params.Modes))
 	}
 
-	return nil
+	for i, mode := range params.Modes {
+		b.oscillators[i] = oscbank.Oscillator{
+			Amplitude: mode.Amplitude,
+			Frequency: mode.Frequency,
+			DecayMs:   mode.DecayMs,
+			Harmonics: mode.Harmonics,
+		}
+	}
+
+	return b.bank.SetOscillators(b.oscillators)
+}
+
+// NumModes returns how many modes this bar currently renders.
+func (b *Bar) NumModes() int {
+	return b.bank.NumOscillators()
+}
+
+// NumHarmonics returns the largest partial count any of this bar's modes carries.
+func (b *Bar) NumHarmonics() int {
+	return b.bank.NumHarmonics()
 }
 
 func (b *Bar) ensureBuffers(numSamples int) {

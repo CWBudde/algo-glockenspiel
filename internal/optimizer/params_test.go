@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/model"
+	"github.com/cwbudde/glockenspiel/model"
 )
 
 func TestParamCodecEncodeDecodeRoundTrip(t *testing.T) {
@@ -33,7 +33,7 @@ func TestParamCodecEncodeDecodeRoundTrip(t *testing.T) {
 		t.Fatalf("chebyshev enabled mismatch: got %v want %v", decoded.Chebyshev.Enabled, params.Chebyshev.Enabled)
 	}
 
-	for i := range model.NumModes {
+	for i := range params.Modes {
 		assertClose(t, decoded.Modes[i].Amplitude, params.Modes[i].Amplitude, 1e-12, "mode amplitude")
 		assertClose(t, decoded.Modes[i].Frequency, params.Modes[i].Frequency, 1e-9, "mode frequency")
 		assertClose(t, decoded.Modes[i].DecayMs, params.Modes[i].DecayMs, 1e-9, "mode decay")
@@ -193,7 +193,7 @@ func validBarParams() model.BarParams {
 		InputMix:        0.472433640370972,
 		FilterFrequency: 522.935295651445,
 		BaseFrequency:   440.0,
-		Modes: [model.NumModes]model.ModeParams{
+		Modes: []model.ModeParams{
 			{Amplitude: 0.885860562324524, Frequency: 1756.64123535156, DecayMs: 188.223281860352},
 			{Amplitude: 1.99459731578827, Frequency: 4768.10693359375, DecayMs: 1.60327112674713},
 			{Amplitude: -0.464719623327255, Frequency: 38.241283416748, DecayMs: 5.55945539474487},
@@ -238,5 +238,27 @@ func TestNewParamCodecWithStrictBoundsDoesNotWiden(t *testing.T) {
 
 	if lenient.EncodedBounds().Ranges[3].Max <= 1 {
 		t.Fatal("expected the default constructor to keep widening bounds")
+	}
+}
+
+// TestDecodeParamsPreservesChebyshevStage guards the shaper placement: it is
+// template metadata, not a search dimension, so dropping it would render every
+// evaluation of an output-stage preset through the excitation-stage chain.
+func TestDecodeParamsPreservesChebyshevStage(t *testing.T) {
+	params := validBarParams()
+	params.Chebyshev.Stage = model.ChebyshevStageOutput
+
+	codec, err := NewParamCodec(&params)
+	if err != nil {
+		t.Fatalf("NewParamCodec failed: %v", err)
+	}
+
+	decoded, err := codec.DecodeParams(mustEncode(t, codec, &params))
+	if err != nil {
+		t.Fatalf("DecodeParams failed: %v", err)
+	}
+
+	if decoded.Chebyshev.Stage != model.ChebyshevStageOutput {
+		t.Fatalf("chebyshev stage = %q, want %q", decoded.Chebyshev.Stage, model.ChebyshevStageOutput)
 	}
 }

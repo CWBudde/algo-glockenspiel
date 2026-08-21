@@ -13,17 +13,17 @@ const (
 
 // QuadDecayOscillator models 4 decaying quadrature modes in parallel.
 type QuadDecayOscillator struct {
-	realState [NumModes]float64
-	imagState [NumModes]float64
+	realState [numModes]float64
+	imagState [numModes]float64
 
-	amplitude [NumModes]float64
-	frequency [NumModes]float64
-	decayMs   [NumModes]float64
+	amplitude [numModes]float64
+	frequency [numModes]float64
+	decayMs   [numModes]float64
 
-	decayFactor [NumModes]float64
-	cosCoeff    [NumModes]float64
-	sinCoeff    [NumModes]float64
-	block4Coeff [NumModes]modeBlock4Coeff
+	decayFactor [numModes]float64
+	cosCoeff    [numModes]float64
+	sinCoeff    [numModes]float64
+	block4Coeff [numModes]modeBlock4Coeff
 
 	sampleRate float64
 }
@@ -50,9 +50,9 @@ func NewQuadDecayOscillator(sampleRate float64) *QuadDecayOscillator {
 
 	oscillator := &QuadDecayOscillator{
 		sampleRate: sampleRate,
-		frequency:  [NumModes]float64{1000, 2000, 3000, 4000},
-		decayMs:    [NumModes]float64{100, 50, 20, 10},
-		amplitude:  [NumModes]float64{1, 0, 0, 0},
+		frequency:  [numModes]float64{1000, 2000, 3000, 4000},
+		decayMs:    [numModes]float64{100, 50, 20, 10},
+		amplitude:  [numModes]float64{1, 0, 0, 0},
 	}
 	oscillator.calculateCoefficients()
 
@@ -61,8 +61,8 @@ func NewQuadDecayOscillator(sampleRate float64) *QuadDecayOscillator {
 
 // Reset clears all oscillator state.
 func (o *QuadDecayOscillator) Reset() {
-	o.realState = [NumModes]float64{}
-	o.imagState = [NumModes]float64{}
+	o.realState = [numModes]float64{}
+	o.imagState = [numModes]float64{}
 }
 
 // SetSampleRate changes sample rate and recomputes coefficients.
@@ -119,7 +119,7 @@ func (o *QuadDecayOscillator) SetDecay(mode int, decayMs float64) {
 // MaxDecayFactor returns the largest per-sample decay factor among all modes.
 func (o *QuadDecayOscillator) MaxDecayFactor() float64 {
 	maxVal := o.decayFactor[0]
-	for i := 1; i < NumModes; i++ {
+	for i := 1; i < numModes; i++ {
 		if o.decayFactor[i] > maxVal {
 			maxVal = o.decayFactor[i]
 		}
@@ -244,7 +244,7 @@ func processModeBlock4(realState, imagState, amplitude, cosCoeff, sinCoeff float
 }
 
 func (o *QuadDecayOscillator) calculateCoefficients() {
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		o.calculateCoefficient(i)
 	}
 }
@@ -290,7 +290,7 @@ func (o *QuadDecayOscillator) calculateCoefficient(mode int) {
 }
 
 func validMode(mode int) bool {
-	return mode >= 0 && mode < NumModes
+	return mode >= 0 && mode < numModes
 }
 
 func (o *QuadDecayOscillator) flushDenormals() {

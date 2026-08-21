@@ -7,7 +7,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/cwbudde/glockenspiel/internal/model"
+	"github.com/cwbudde/glockenspiel/model"
 	frameworkbus "github.com/cwbudde/vst3go/pkg/framework/bus"
 	frameworkparam "github.com/cwbudde/vst3go/pkg/framework/param"
 	frameworkplugin "github.com/cwbudde/vst3go/pkg/framework/plugin"
@@ -384,7 +384,7 @@ func (p *Processor) rebuildVoices() error {
 func scaledParamsForNote(params model.BarParams, note, baseNote int) model.BarParams {
 	ratio := math.Pow(2, float64(note-baseNote)/12)
 	params.BaseFrequency *= ratio
-	for i := 0; i < model.NumModes; i++ {
+	for i := range params.Modes {
 		params.Modes[i].Frequency *= ratio
 		if ratio > 0 {
 			params.Modes[i].DecayMs /= ratio

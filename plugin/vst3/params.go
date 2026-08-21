@@ -1,6 +1,16 @@
 package vst3
 
-import "github.com/cwbudde/glockenspiel/internal/model"
+import "github.com/cwbudde/glockenspiel/model"
+
+const (
+	// numModes and numChebyshevGains are the fixed sizes of this plugin's
+	// parameter grid. The model no longer exports a fixed mode count -- the
+	// oscillator bank sizes itself at runtime -- so the VST3 layer declares the
+	// counts its automation IDs are frozen at. The two are independent: a bar
+	// may carry any number of modes and any number of Chebyshev gains.
+	numModes          = 4
+	numChebyshevGains = 4
+)
 
 // ParameterID is the stable host-facing identifier for one automatable plugin parameter.
 type ParameterID uint32
@@ -46,10 +56,10 @@ type Snapshot struct {
 	FilterFrequency  float64
 	BaseFrequency    float64
 	ChebyshevEnabled bool
-	ChebyshevGains   [model.NumModes]float64
-	ModeAmplitude    [model.NumModes]float64
-	ModeFrequency    [model.NumModes]float64
-	ModeDecayMs      [model.NumModes]float64
+	ChebyshevGains   [numChebyshevGains]float64
+	ModeAmplitude    [numModes]float64
+	ModeFrequency    [numModes]float64
+	ModeDecayMs      [numModes]float64
 }
 
 var parameterSpecs = []ParameterSpec{
@@ -80,10 +90,10 @@ var defaultSnapshot = Snapshot{
 	FilterFrequency:  522.935295651445,
 	BaseFrequency:    440.0,
 	ChebyshevEnabled: true,
-	ChebyshevGains:   [model.NumModes]float64{1.0, 0.5, 0.3, 0.2},
-	ModeAmplitude:    [model.NumModes]float64{0.885860562324524, 1.99459731578827, -0.464719623327255, 0.363913357257843},
-	ModeFrequency:    [model.NumModes]float64{1756.64123535156, 4768.10693359375, 38.241283416748, 32.6347961425781},
-	ModeDecayMs:      [model.NumModes]float64{188.223281860352, 1.60327112674713, 5.55945539474487, 8.6815824508667},
+	ChebyshevGains:   [numChebyshevGains]float64{1.0, 0.5, 0.3, 0.2},
+	ModeAmplitude:    [numModes]float64{0.885860562324524, 1.99459731578827, -0.464719623327255, 0.363913357257843},
+	ModeFrequency:    [numModes]float64{1756.64123535156, 4768.10693359375, 38.241283416748, 32.6347961425781},
+	ModeDecayMs:      [numModes]float64{188.223281860352, 1.60327112674713, 5.55945539474487, 8.6815824508667},
 }
 
 // ParameterSpecs returns the stable parameter definitions for the first VST3 spike.
@@ -109,14 +119,15 @@ func SnapshotFromBarParams(params *model.BarParams) Snapshot {
 		ChebyshevEnabled: params.Chebyshev.Enabled,
 	}
 
-	for i := 0; i < model.NumModes; i++ {
+	for i := 0; i < numModes && i < len(params.Modes); i++ {
 		snapshot.ModeAmplitude[i] = params.Modes[i].Amplitude
 		snapshot.ModeFrequency[i] = params.Modes[i].Frequency
-
 		snapshot.ModeDecayMs[i] = params.Modes[i].DecayMs
-		if i < len(params.Chebyshev.HarmonicGains) {
-			snapshot.ChebyshevGains[i] = params.Chebyshev.HarmonicGains[i]
-		}
+	}
+
+	// The gain count is unrelated to the mode count, so it gets its own bound.
+	for i := 0; i < numChebyshevGains && i < len(params.Chebyshev.HarmonicGains); i++ {
+		snapshot.ChebyshevGains[i] = params.Chebyshev.HarmonicGains[i]
 	}
 
 	return snapshot
@@ -130,10 +141,14 @@ func (s Snapshot) ToBarParams() model.BarParams {
 	params.FilterFrequency = s.FilterFrequency
 	params.BaseFrequency = s.BaseFrequency
 	params.Chebyshev.Enabled = s.ChebyshevEnabled
-	params.Chebyshev.HarmonicGains = make([]float64, model.NumModes)
+	params.Chebyshev.HarmonicGains = make([]float64, numChebyshevGains)
+	params.Modes = make([]model.ModeParams, numModes)
 
-	for i := 0; i < model.NumModes; i++ {
+	for i := range numChebyshevGains {
 		params.Chebyshev.HarmonicGains[i] = s.ChebyshevGains[i]
+	}
+
+	for i := range numModes {
 		params.Modes[i] = model.ModeParams{
 			Amplitude: s.ModeAmplitude[i],
 			Frequency: s.ModeFrequency[i],

@@ -1,9 +1,10 @@
 package vst3
 
 import (
+	"reflect"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/model"
+	"github.com/cwbudde/glockenspiel/model"
 )
 
 func TestParameterSpecsHaveStableUniqueIDs(t *testing.T) {
@@ -43,7 +44,7 @@ func TestSnapshotRoundTripBarParams(t *testing.T) {
 		InputMix:        0.25,
 		FilterFrequency: 5400,
 		BaseFrequency:   440,
-		Modes: [model.NumModes]model.ModeParams{
+		Modes: []model.ModeParams{
 			{Amplitude: 1.0, Frequency: 440, DecayMs: 120},
 			{Amplitude: 0.7, Frequency: 1180, DecayMs: 90},
 			{Amplitude: 0.3, Frequency: 2010, DecayMs: 70},
@@ -74,13 +75,36 @@ func TestSnapshotRoundTripBarParams(t *testing.T) {
 		t.Fatalf("chebyshev enabled mismatch: got %v want %v", output.Chebyshev.Enabled, input.Chebyshev.Enabled)
 	}
 
-	for i := 0; i < model.NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		if output.Chebyshev.HarmonicGains[i] != input.Chebyshev.HarmonicGains[i] {
 			t.Fatalf("harmonic gain mismatch at %d: got %f want %f", i, output.Chebyshev.HarmonicGains[i], input.Chebyshev.HarmonicGains[i])
 		}
 
-		if output.Modes[i] != input.Modes[i] {
+		if !reflect.DeepEqual(output.Modes[i], input.Modes[i]) {
 			t.Fatalf("mode mismatch at %d: got %+v want %+v", i, output.Modes[i], input.Modes[i])
+		}
+	}
+}
+
+// TestSnapshotCopiesChebyshevGainsIndependentlyOfModeCount pins that the two
+// counts are unrelated: a single-mode bar still carries all four gains.
+func TestSnapshotCopiesChebyshevGainsIndependentlyOfModeCount(t *testing.T) {
+	params := model.BarParams{
+		InputMix:        0.5,
+		FilterFrequency: 8000,
+		BaseFrequency:   440,
+		Modes:           []model.ModeParams{{Amplitude: 1, Frequency: 1000, DecayMs: 100}},
+		Chebyshev: model.ChebyshevParams{
+			Enabled:       true,
+			HarmonicGains: []float64{1, 0.5, 0.3, 0.2},
+		},
+	}
+
+	snapshot := SnapshotFromBarParams(&params)
+
+	for i, want := range params.Chebyshev.HarmonicGains {
+		if snapshot.ChebyshevGains[i] != want {
+			t.Fatalf("gain %d = %v, want %v", i, snapshot.ChebyshevGains[i], want)
 		}
 	}
 }
