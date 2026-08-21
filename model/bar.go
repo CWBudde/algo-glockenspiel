@@ -13,8 +13,12 @@ const velocityScale = 1.0 / 128.0
 
 // Bar integrates excitation shaping and modal resonance.
 type Bar struct {
-	bank    *oscbank.Bank
-	lowpass *biquad.Section
+	bank *oscbank.Bank
+
+	// lowpass is held by value, not by pointer: reconfiguring a bar must not
+	// allocate, and biquad.Section exposes its Coefficients as an embedded
+	// field, so a retune is a plain assignment onto the existing section.
+	lowpass biquad.Section
 
 	params     BarParams
 	sampleRate int
@@ -61,7 +65,7 @@ func (b *Bar) SetSampleRate(sampleRate int) error {
 
 	b.sampleRate = sampleRate
 	b.bank.SetSampleRate(float64(sampleRate))
-	b.lowpass = newLowpassSection(b.params.FilterFrequency, float64(sampleRate))
+	b.setLowpass(b.params.FilterFrequency, float64(sampleRate))
 
 	return nil
 }
@@ -69,10 +73,7 @@ func (b *Bar) SetSampleRate(sampleRate int) error {
 // Reset clears filter and oscillator state.
 func (b *Bar) Reset() {
 	b.bank.Reset()
-
-	if b.lowpass != nil {
-		b.lowpass.Reset()
-	}
+	b.lowpass.Reset()
 }
 
 // Synthesize renders numSamples from a single impulse-like strike.
@@ -140,21 +141,29 @@ func (b *Bar) UpdateParams(params *BarParams) error {
 		return err
 	}
 
-	b.params = params.Clone()
-	b.lowpass = newLowpassSection(params.FilterFrequency, float64(b.sampleRate))
+	params.CopyInto(&b.params)
+	b.setLowpass(b.params.FilterFrequency, float64(b.sampleRate))
 
-	b.chebyGains = make([]float32, len(params.Chebyshev.HarmonicGains))
-	for i, gain := range params.Chebyshev.HarmonicGains {
+	// Everything below reads b.params rather than params, so the bar only ever
+	// keeps references into memory it owns.
+	gains := b.params.Chebyshev.HarmonicGains
+	if cap(b.chebyGains) >= len(gains) {
+		b.chebyGains = b.chebyGains[:len(gains)]
+	} else {
+		b.chebyGains = make([]float32, len(gains))
+	}
+
+	for i, gain := range gains {
 		b.chebyGains[i] = float32(gain)
 	}
 
-	if cap(b.oscillators) >= len(params.Modes) {
-		b.oscillators = b.oscillators[:len(params.Modes)]
+	if cap(b.oscillators) >= len(b.params.Modes) {
+		b.oscillators = b.oscillators[:len(b.params.Modes)]
 	} else {
-		b.oscillators = make([]oscbank.Oscillator, len(params.Modes))
+		b.oscillators = make([]oscbank.Oscillator, len(b.params.Modes))
 	}
 
-	for i, mode := range params.Modes {
+	for i, mode := range b.params.Modes {
 		b.oscillators[i] = oscbank.Oscillator{
 			Amplitude: mode.Amplitude,
 			Frequency: mode.Frequency,
@@ -186,7 +195,20 @@ func (b *Bar) ensureBuffers(numSamples int) {
 	}
 }
 
-func newLowpassSection(freq, sampleRate float64) *biquad.Section {
+// setLowpass redesigns the excitation lowpass in place.
+//
+// Only the coefficients are replaced; the delay line is deliberately left
+// alone. A parameter change is not a discontinuity in the signal, so zeroing
+// the state mid-note would put a click into the output where the old and new
+// responses ought to cross-fade through the filter's own memory. That holds for
+// a bar being retuned for a fresh note too: there the caller wants a clean
+// slate and asks for it explicitly via Reset, which is cheaper and clearer than
+// having every parameter write silently imply one.
+func (b *Bar) setLowpass(freq, sampleRate float64) {
+	b.lowpass.Coefficients = lowpassCoefficients(freq, sampleRate)
+}
+
+func lowpassCoefficients(freq, sampleRate float64) biquad.Coefficients {
 	nyquistLimit := 0.499 * sampleRate
 
 	cutoff := freq
@@ -198,9 +220,7 @@ func newLowpassSection(freq, sampleRate float64) *biquad.Section {
 		cutoff = 1000
 	}
 
-	coeff := pass.LowpassRBJ(cutoff, 1/math.Sqrt2, sampleRate)
-
-	return biquad.NewSection(coeff)
+	return pass.LowpassRBJ(cutoff, 1/math.Sqrt2, sampleRate)
 }
 
 func clearFloat32(buf []float32) {

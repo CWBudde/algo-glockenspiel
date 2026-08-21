@@ -75,6 +75,15 @@ func (m ModeParams) Clone() ModeParams {
 	return m
 }
 
+// CopyInto deep-copies the mode into dst, reusing dst's harmonics slice when
+// its capacity allows. See [BarParams.CopyInto] for why this exists.
+func (m *ModeParams) CopyInto(dst *ModeParams) {
+	dst.Amplitude = m.Amplitude
+	dst.Frequency = m.Frequency
+	dst.DecayMs = m.DecayMs
+	dst.Harmonics = copyFloat64s(dst.Harmonics, m.Harmonics)
+}
+
 // ChebyshevStage selects where the Chebyshev waveshaper sits in the chain.
 type ChebyshevStage string
 
@@ -114,6 +123,14 @@ func (c ChebyshevParams) Clone() ChebyshevParams {
 	return c
 }
 
+// CopyInto deep-copies the Chebyshev parameters into dst, reusing dst's gain
+// slice when its capacity allows.
+func (c *ChebyshevParams) CopyInto(dst *ChebyshevParams) {
+	dst.Enabled = c.Enabled
+	dst.Stage = c.Stage
+	dst.HarmonicGains = copyFloat64s(dst.HarmonicGains, c.HarmonicGains)
+}
+
 // BarParams are the top-level model parameters for one bar.
 //
 // Modes is a slice: the mode count is runtime configuration. Copy BarParams
@@ -127,19 +144,71 @@ type BarParams struct {
 }
 
 // Clone returns a deep copy, safe to mutate independently of the original.
+//
+// Clone is the convenient form and always allocates. Code on the audio path
+// that already owns a destination should use [BarParams.CopyInto] instead.
 func (p BarParams) Clone() BarParams {
-	if len(p.Modes) > 0 {
-		modes := make([]ModeParams, len(p.Modes))
-		for i, mode := range p.Modes {
-			modes[i] = mode.Clone()
+	var dst BarParams
+	p.CopyInto(&dst)
+
+	return dst
+}
+
+// CopyInto deep-copies p into dst, reusing dst's slices wherever their capacity
+// already suffices and only allocating when it does not.
+//
+// This exists so that a Bar which is retuned rather than rebuilt — the pooled
+// voice case, where a note-on must not allocate — can absorb a new parameter
+// set without touching the allocator. A plain Clone cannot serve that role: it
+// allocates the Modes slice, every non-empty Harmonics slice and the Chebyshev
+// gains on every single call, however little the shape actually changed.
+//
+// The copy is deep, so dst never aliases p's backing arrays and the two can be
+// mutated independently, exactly as with Clone. Nil-ness is preserved rather
+// than normalized to an empty slice, because BarParams round-trips through JSON
+// and a nil slice and an empty one do not encode alike. That costs nothing: a
+// nil source needs no buffer to copy into either.
+func (p *BarParams) CopyInto(dst *BarParams) {
+	dst.InputMix = p.InputMix
+	dst.FilterFrequency = p.FilterFrequency
+	dst.BaseFrequency = p.BaseFrequency
+
+	if p.Modes == nil {
+		dst.Modes = nil
+	} else {
+		if dst.Modes != nil && cap(dst.Modes) >= len(p.Modes) {
+			dst.Modes = dst.Modes[:len(p.Modes)]
+		} else {
+			dst.Modes = make([]ModeParams, len(p.Modes))
 		}
 
-		p.Modes = modes
+		for i := range p.Modes {
+			p.Modes[i].CopyInto(&dst.Modes[i])
+		}
 	}
 
-	p.Chebyshev = p.Chebyshev.Clone()
+	p.Chebyshev.CopyInto(&dst.Chebyshev)
+}
 
-	return p
+// copyFloat64s copies src into dst, reusing dst's backing array when it is
+// large enough. A nil src yields a nil result, so callers that care about the
+// nil/empty distinction keep it.
+func copyFloat64s(dst, src []float64) []float64 {
+	if src == nil {
+		return nil
+	}
+
+	// dst != nil matters for the empty-but-not-nil source: reslicing a nil dst
+	// to length zero would hand back a nil slice and silently turn [] into null.
+	if dst != nil && cap(dst) >= len(src) {
+		dst = dst[:len(src)]
+	} else {
+		dst = make([]float64, len(src))
+	}
+
+	copy(dst, src)
+
+	return dst
 }
 
 // Validate checks whether BarParams are well-formed and in supported ranges.

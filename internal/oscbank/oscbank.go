@@ -152,10 +152,7 @@ func (b *Bank) SetOscillators(oscillators []Oscillator) error {
 		}
 	}
 
-	b.oscillators = make([]Oscillator, len(oscillators))
-	for i, osc := range oscillators {
-		b.oscillators[i] = osc.Clone()
-	}
+	b.storeOscillators(oscillators)
 
 	b.numOsc = len(oscillators)
 	b.numHarm = numHarm
@@ -173,6 +170,53 @@ func (b *Bank) SetOscillators(oscillators []Oscillator) error {
 	b.calculateCoefficients()
 
 	return nil
+}
+
+// storeOscillators takes a private deep copy of the configuration, reusing the
+// slices already held wherever their capacity allows.
+//
+// Reconfiguring a bank whose shape has not changed must not allocate: it sits
+// on the path a pooled voice takes when it is retuned for a new note, and the
+// audio thread has no budget for the allocator. Copying the configuration with
+// Clone, which is what this used to do, cost one allocation for the oscillator
+// slice plus one per oscillator carrying harmonics, on every single call.
+func (b *Bank) storeOscillators(oscillators []Oscillator) {
+	if b.oscillators != nil && cap(b.oscillators) >= len(oscillators) {
+		b.oscillators = b.oscillators[:len(oscillators)]
+	} else {
+		b.oscillators = make([]Oscillator, len(oscillators))
+	}
+
+	for i := range oscillators {
+		src := &oscillators[i]
+		dst := &b.oscillators[i]
+
+		dst.Amplitude = src.Amplitude
+		dst.Frequency = src.Frequency
+		dst.DecayMs = src.DecayMs
+		dst.Harmonics = copyFloat64s(dst.Harmonics, src.Harmonics)
+	}
+}
+
+// copyFloat64s copies src into dst, reusing dst's backing array when it is
+// large enough. A nil src yields a nil result, so the distinction between an
+// absent and an empty harmonics slice survives the copy.
+func copyFloat64s(dst, src []float64) []float64 {
+	if src == nil {
+		return nil
+	}
+
+	// dst != nil matters for the empty-but-not-nil source: reslicing a nil dst
+	// to length zero would hand back a nil slice and silently turn [] into null.
+	if dst != nil && cap(dst) >= len(src) {
+		dst = dst[:len(src)]
+	} else {
+		dst = make([]float64, len(src))
+	}
+
+	copy(dst, src)
+
+	return dst
 }
 
 func (b *Bank) allocate(size int) {
