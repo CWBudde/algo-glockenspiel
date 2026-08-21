@@ -20,7 +20,7 @@ func TestOptimizationImprovesFitAgainstLegacyReference(t *testing.T) {
 	initial := *legacyPreset
 	initial.Parameters.InputMix = clampToRange(initial.Parameters.InputMix+0.18, model.InputMixMin, model.InputMixMax)
 	initial.Parameters.FilterFrequency = clampToRange(initial.Parameters.FilterFrequency*1.18, model.FilterFrequencyMinHz, model.FilterFrequencyMaxHz)
-	initial.Parameters.Modes[0].Amplitude = clampToRange(initial.Parameters.Modes[0].Amplitude-0.22, model.AmplitudeMin, model.AmplitudeMax)
+	initial.Parameters.Modes[0].Amplitude = clampToRange(initial.Parameters.Modes[0].Amplitude*legacyAmplitudePerturbation, model.AmplitudeMin, model.AmplitudeMax)
 	initial.Parameters.Modes[0].Frequency = clampToRange(initial.Parameters.Modes[0].Frequency*0.93, model.FrequencyMinHz, model.FrequencyMaxHz)
 	initial.Parameters.Modes[0].DecayMs = clampToRange(initial.Parameters.Modes[0].DecayMs*0.8, model.DecayMsMin, model.DecayMsMax)
 
@@ -62,7 +62,11 @@ func TestOptimizationImprovesFitAgainstLegacyReference(t *testing.T) {
 
 	assertCloseWithin(t, recovered.InputMix, legacyPreset.Parameters.InputMix, 0.22, "legacy input_mix")
 	assertCloseWithin(t, recovered.FilterFrequency, legacyPreset.Parameters.FilterFrequency, 180, "legacy filter_frequency")
-	assertCloseWithin(t, recovered.Modes[0].Amplitude, legacyPreset.Parameters.Modes[0].Amplitude, 0.3, "legacy mode0 amplitude")
+	// The amplitude tolerance is an absolute one, so it was rescaled alongside
+	// the preset: 0.3 against the old amplitude of 0.886 is the same relative
+	// slack as 0.0344 against the rescaled 0.102. Leaving it at 0.3 would have
+	// left an assertion that no plausible result could fail.
+	assertCloseWithin(t, recovered.Modes[0].Amplitude, legacyPreset.Parameters.Modes[0].Amplitude, 0.0344, "legacy mode0 amplitude")
 	// The legacy WAV fit is not uniquely identifiable with the current time-domain
 	// objective, so mode 0 can settle into a different but still plausible local
 	// minimum while the waveform error improves materially.
@@ -82,6 +86,19 @@ func TestOptimizationImprovesFitAgainstLegacyReference(t *testing.T) {
 		t.Fatalf("expected rendered RMS to improve: initial=%g final=%g", initialRMS, finalRMS)
 	}
 }
+
+// legacyAmplitudePerturbation is how far mode 0's amplitude is pushed off the
+// shipped value before the optimizer is asked to walk it back.
+//
+// It is a ratio rather than an absolute offset on purpose: a perturbation has
+// to stay a perturbation when the preset's absolute level changes. The shipped
+// preset used to render at +15.8 dBFS and was rescaled to -3 dBFS, which
+// divided every mode amplitude by about 8.7. The previous absolute -0.22 was a
+// 25% nudge against mode 0's old amplitude of 0.886; against the rescaled 0.102
+// the same offset would have flipped the sign and landed further from the
+// target than the search space is wide, which tests a completely different
+// thing. This factor reproduces the original 25% nudge at any level.
+const legacyAmplitudePerturbation = 0.75
 
 func loadDefaultPreset(t *testing.T) *preset.Preset {
 	t.Helper()
