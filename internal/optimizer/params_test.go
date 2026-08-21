@@ -213,3 +213,30 @@ func assertClose(t *testing.T, got, want, tol float64, label string) {
 		t.Fatalf("%s mismatch: got %.12f want %.12f", label, got, want)
 	}
 }
+
+func TestNewParamCodecWithStrictBoundsDoesNotWiden(t *testing.T) {
+	params := validBarParams()
+	params.Modes[0].Amplitude = 1.99
+
+	bounds := DefaultParamBounds
+	bounds.Amplitude = Range{Min: -1, Max: 1}
+
+	strict, err := NewParamCodecWithStrictBounds(&params, bounds)
+	if err != nil {
+		t.Fatalf("NewParamCodecWithStrictBounds failed: %v", err)
+	}
+
+	amplitude := strict.EncodedBounds().Ranges[3]
+	if amplitude.Min != -1 || amplitude.Max != 1 {
+		t.Fatalf("strict bounds were widened to %+v", amplitude)
+	}
+
+	lenient, err := NewParamCodecWithBounds(&params, bounds)
+	if err != nil {
+		t.Fatalf("NewParamCodecWithBounds failed: %v", err)
+	}
+
+	if lenient.EncodedBounds().Ranges[3].Max <= 1 {
+		t.Fatal("expected the default constructor to keep widening bounds")
+	}
+}

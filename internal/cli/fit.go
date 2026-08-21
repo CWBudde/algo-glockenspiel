@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/pprof"
+	"slices"
 	"strconv"
 	"syscall"
 	"time"
@@ -157,6 +158,28 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return fmt.Errorf("checkpoint-interval must be >= 0, got %d", options.checkpointEvery)
 	}
 
+	if err := os.MkdirAll(options.workDir, 0o755); err != nil {
+		return fmt.Errorf("create work dir: %w", err)
+	}
+
+	// A checkpoint can carry the optimizer and the metric it was written with,
+	// and both decide how the objective is built. Load it before anything is
+	// derived from those options, otherwise a resumed spectral run would be
+	// optimized with the default RMS objective while reporting "spectral".
+	var (
+		checkpoint     *optimizer.Checkpoint
+		checkpointPath string
+	)
+
+	if options.resume {
+		loaded, path, err := loadResumeCheckpoint(cmd, &options)
+		if err != nil {
+			return err
+		}
+
+		checkpoint, checkpointPath = loaded, path
+	}
+
 	if options.optimizerName != "simple" && options.optimizerName != "mayfly" {
 		return fmt.Errorf("unsupported optimizer %q", options.optimizerName)
 	}
@@ -172,10 +195,6 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 
 	if options.optimizerName == "mayfly" && options.mayflyPop < 2 {
 		return fmt.Errorf("mayfly-pop must be >= 2, got %d", options.mayflyPop)
-	}
-
-	if err := os.MkdirAll(options.workDir, 0o755); err != nil {
-		return fmt.Errorf("create work dir: %w", err)
 	}
 
 	stopCPUProfile, err := startCPUProfile(options.cpuProfilePath)
@@ -199,7 +218,9 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	}
 
 	bounds := optimizer.DefaultParamBounds
-	if options.boundsPath != "" {
+
+	explicitBounds := options.boundsPath != ""
+	if explicitBounds {
 		bounds, err = loadParamBounds(options.boundsPath)
 		if err != nil {
 			return err
@@ -208,6 +229,10 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 
 	objectiveConfig := optimizer.DefaultObjectiveConfig(metric)
 	objectiveConfig.Bounds = bounds
+	// Bounds the user wrote down are a hard constraint: they must not be
+	// widened to fit whatever the starting preset happens to contain, or the
+	// fitted preset can violate the limits that were asked for.
+	objectiveConfig.StrictBounds = explicitBounds
 	objectiveConfig.Alignment = optimizer.AlignNone
 
 	if options.align {
@@ -230,8 +255,8 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return err
 	}
 
-	if options.resume {
-		initialEncoded, err = resumeFromCheckpoint(cmd, &options, initialEncoded)
+	if checkpoint != nil {
+		initialEncoded, err = applyResumeCheckpoint(cmd, &options, checkpoint, checkpointPath, initialEncoded)
 		if err != nil {
 			return err
 		}
@@ -239,23 +264,31 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 
 	optBounds := objective.Codec().EncodedBounds()
 
+	// With strict bounds the starting preset can sit outside the box, so pull
+	// it in rather than handing the backend an infeasible initial point.
+	initialEncoded, err = clampInitialPoint(cmd, optBounds, initialEncoded, explicitBounds)
+	if err != nil {
+		return err
+	}
+
 	bestCheckpointPath := func(iter int) string {
 		return filepath.Join(options.workDir, fmt.Sprintf("checkpoint_%04d.json", iter))
 	}
 	lastCheckpointIteration := 0
-	saveCheckpoint := func(iteration int, params []float64, cost float64) error {
+	saveCheckpoint := func(index, optimizerIterations int, params []float64, cost float64) error {
 		if len(params) == 0 {
 			return nil
 		}
 
-		return optimizer.SaveCheckpoint(bestCheckpointPath(iteration), &optimizer.Checkpoint{
-			Version:    optimizer.CheckpointVersion,
-			Iteration:  iteration,
-			BestCost:   cost,
-			BestParams: append([]float64(nil), params...),
-			Optimizer:  options.optimizerName,
-			Metric:     options.metric,
-			State:      checkpointStateForOptions(options),
+		return optimizer.SaveCheckpoint(bestCheckpointPath(index), &optimizer.Checkpoint{
+			Version:             optimizer.CheckpointVersion,
+			Iteration:           index,
+			OptimizerIterations: optimizerIterations,
+			BestCost:            cost,
+			BestParams:          append([]float64(nil), params...),
+			Optimizer:           options.optimizerName,
+			Metric:              options.metric,
+			State:               checkpointStateForOptions(options),
 		})
 	}
 
@@ -291,7 +324,7 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 				"iteration %d: current=%0.6g best=%0.6g evals=%d elapsed=%s\n",
 				progress.Iteration, progress.CurrentCost, progress.BestCost, progress.Evaluations, progress.Elapsed.Round(time.Millisecond))
 			if shouldCheckpoint(progress.Iteration, options.checkpointEvery) {
-				if saveCheckpoint(progress.Iteration, progress.BestParams, progress.BestCost) == nil {
+				if saveCheckpoint(progress.Iteration, progress.OptimizerIterations, progress.BestParams, progress.BestCost) == nil {
 					lastCheckpointIteration = progress.Iteration
 				}
 			}
@@ -316,10 +349,11 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	// The final result is usually better than the last periodic checkpoint, so
 	// record it too -- but only when checkpointing is enabled at all. Its index
 	// stays above the last periodic one so FindLatestCheckpoint still picks the
-	// newest file.
+	// newest file. The index is a file ordering key, not an iteration count;
+	// the resumable budget lives in OptimizerIterations.
 	if options.checkpointEvery > 0 {
-		finalIteration := maxInt(result.Iterations, lastCheckpointIteration+1)
-		if err := saveCheckpoint(finalIteration, result.BestParams, result.BestCost); err != nil {
+		finalIndex := maxInt(result.Iterations, lastCheckpointIteration+1)
+		if err := saveCheckpoint(finalIndex, result.Iterations, result.BestParams, result.BestCost); err != nil {
 			return err
 		}
 	}
@@ -403,27 +437,44 @@ func (d durationFlag) Type() string {
 	return "duration"
 }
 
-// resumeFromCheckpoint folds the latest checkpoint in the work dir into options
-// and returns the encoded parameter vector the search should start from.
-func resumeFromCheckpoint(cmd *cobra.Command, options *fitOptions, initialEncoded []float64) ([]float64, error) {
+// loadResumeCheckpoint reads the latest checkpoint in the work dir and folds
+// the options it carries -- optimizer, metric, Mayfly environment -- back into
+// options. It runs before the objective is built because those options decide
+// how the objective is built. A missing checkpoint is not an error: --resume on
+// a fresh work dir simply starts from the initial preset.
+func loadResumeCheckpoint(cmd *cobra.Command, options *fitOptions) (*optimizer.Checkpoint, string, error) {
 	latestPath, err := optimizer.FindLatestCheckpoint(options.workDir)
 
 	if errors.Is(err, os.ErrNotExist) {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 			"warning: --resume found no checkpoint in %s, starting from the initial preset\n", options.workDir)
 
-		return initialEncoded, nil
+		return nil, "", nil
 	}
 
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	cp, err := optimizer.LoadCheckpoint(latestPath)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
+	applyCheckpointResume(cmd, options, cp)
+
+	return cp, latestPath, nil
+}
+
+// applyResumeCheckpoint folds the already loaded checkpoint into the encoded
+// starting point and the remaining iteration budget.
+func applyResumeCheckpoint(
+	cmd *cobra.Command,
+	options *fitOptions,
+	cp *optimizer.Checkpoint,
+	latestPath string,
+	initialEncoded []float64,
+) ([]float64, error) {
 	// A checkpoint from a differently shaped preset (Chebyshev toggled, other
 	// harmonic count) cannot be decoded by this codec. Resuming was requested
 	// explicitly, so fail loudly instead of quietly starting from scratch.
@@ -434,28 +485,55 @@ func resumeFromCheckpoint(cmd *cobra.Command, options *fitOptions, initialEncode
 		)
 	}
 
-	applyCheckpointResume(cmd, options, cp)
-
-	if cp.Iteration > 0 {
-		// Progress.Iteration counts progress reports while max-iter bounds
-		// optimizer iterations, so the subtraction is an approximation. Warn
-		// rather than silently handing a resumed run a one-iteration budget.
-		remaining := options.maxIter - cp.Iteration
+	// Only OptimizerIterations is in the same unit as --max-iter.
+	// Checkpoint.Iteration is a file index derived from the progress report
+	// count, so subtracting it would charge a run with --report-every 10 a
+	// tenth of the work it actually did.
+	switch {
+	case cp.OptimizerIterations > 0:
+		remaining := options.maxIter - cp.OptimizerIterations
 		if remaining < 1 {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
-				"warning: checkpoint %s already reports %d iterations, which exhausts --max-iter %d; continuing with 1 iteration, raise --max-iter to search further\n",
-				latestPath, cp.Iteration, options.maxIter)
+				"warning: checkpoint %s already completed %d optimizer iterations, which exhausts --max-iter %d; continuing with 1 iteration, raise --max-iter to search further\n",
+				latestPath, cp.OptimizerIterations, options.maxIter)
 		}
 
 		options.maxIter = maxInt(1, remaining)
+	case cp.Iteration > 0:
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+			"warning: checkpoint %s records no optimizer iteration count, so --max-iter %d is granted in full\n",
+			latestPath, options.maxIter)
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"Resuming from %s written %s (iteration=%d best=%0.6g optimizer=%s metric=%s remaining-iter=%d)\n",
-		latestPath, cp.Timestamp.UTC().Format(time.RFC3339), cp.Iteration, cp.BestCost,
+		"Resuming from %s written %s (iteration=%d optimizer-iterations=%d best=%0.6g optimizer=%s metric=%s remaining-iter=%d)\n",
+		latestPath, cp.Timestamp.UTC().Format(time.RFC3339), cp.Iteration, cp.OptimizerIterations, cp.BestCost,
 		options.optimizerName, options.metric, options.maxIter)
 
 	return append(initialEncoded[:0], cp.BestParams...), nil
+}
+
+// clampInitialPoint pulls the encoded starting point into the search box. With
+// explicit --bounds the box is no longer widened to contain the starting
+// preset, so a preset outside the requested range would otherwise be handed to
+// the backend as an infeasible initial point.
+func clampInitialPoint(
+	cmd *cobra.Command,
+	bounds optimizer.Bounds,
+	initialEncoded []float64,
+	warn bool,
+) ([]float64, error) {
+	clamped, err := bounds.Clamp(initialEncoded)
+	if err != nil {
+		return nil, err
+	}
+
+	if warn && !slices.Equal(clamped, initialEncoded) {
+		_, _ = fmt.Fprint(cmd.ErrOrStderr(),
+			"warning: the starting preset lies outside the --bounds box and was clamped into it\n")
+	}
+
+	return clamped, nil
 }
 
 func checkpointStateForOptions(options fitOptions) *optimizer.OptimizerState {

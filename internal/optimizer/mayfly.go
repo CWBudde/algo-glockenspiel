@@ -267,12 +267,13 @@ func (t *mayflyTracker) observe(progress mayfly.Progress) {
 
 	t.reports++
 	update := Progress{
-		Iteration:   t.reports,
-		CurrentCost: progress.Best.Cost,
-		BestCost:    t.bestCost,
-		BestParams:  append([]float64(nil), t.bestParams...),
-		Elapsed:     time.Since(t.start),
-		Evaluations: t.evals,
+		Iteration:           t.reports,
+		OptimizerIterations: progress.Iteration,
+		CurrentCost:         progress.Best.Cost,
+		BestCost:            t.bestCost,
+		BestParams:          append([]float64(nil), t.bestParams...),
+		Elapsed:             time.Since(t.start),
+		Evaluations:         t.evals,
 	}
 
 	t.mu.Unlock()

@@ -46,6 +46,12 @@ type ObjectiveConfig struct {
 	// MaxLagSamples bounds the time shift alignment may apply. Zero selects a
 	// sample-rate derived default.
 	MaxLagSamples int
+
+	// StrictBounds keeps Bounds as a hard constraint. By default the codec
+	// widens the box until it contains the template parameters, which is
+	// convenient for the built-in defaults but silently discards a range the
+	// caller asked for. Set this whenever the bounds came from the user.
+	StrictBounds bool
 }
 
 // DefaultObjectiveConfig returns the configuration used by the plain
@@ -130,7 +136,12 @@ func NewObjectiveFunctionWithConfig(reference []float32, template *preset.Preset
 		return nil, err
 	}
 
-	codec, err := NewParamCodecWithBounds(&template.Parameters, config.Bounds)
+	newCodec := NewParamCodecWithBounds
+	if config.StrictBounds {
+		newCodec = NewParamCodecWithStrictBounds
+	}
+
+	codec, err := newCodec(&template.Parameters, config.Bounds)
 	if err != nil {
 		return nil, err
 	}

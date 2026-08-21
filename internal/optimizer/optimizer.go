@@ -60,7 +60,15 @@ type Progress struct {
 	// objective evaluations. Backends differ in how often they can report, so
 	// this is the only value callers can use for checkpoint cadence and for
 	// subtracting resumed work from a budget.
-	Iteration   int
+	Iteration int
+
+	// OptimizerIterations is the backend's own iteration count at the time of
+	// the report, in the same unit as Result.Iterations and
+	// OptimizeOptions.MaxIterations. Checkpoints persist this so a resumed run
+	// can subtract the work already done from its budget; Iteration cannot
+	// serve that purpose because it counts reports, not iterations.
+	OptimizerIterations int
+
 	CurrentCost float64
 	BestCost    float64
 	BestParams  []float64

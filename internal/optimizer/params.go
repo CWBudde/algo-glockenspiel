@@ -190,8 +190,21 @@ func NewParamCodec(params *model.BarParams) (*ParamCodec, error) {
 	return NewParamCodecWithBounds(params, DefaultParamBounds)
 }
 
-// NewParamCodecWithBounds builds a codec using explicit model-space bounds.
+// NewParamCodecWithBounds builds a codec using explicit model-space bounds,
+// widening them where the template parameters fall outside.
 func NewParamCodecWithBounds(params *model.BarParams, bounds ParamBounds) (*ParamCodec, error) {
+	return newParamCodec(params, bounds, false)
+}
+
+// NewParamCodecWithStrictBounds builds a codec that treats the bounds as a hard
+// constraint. Template parameters outside the box are not allowed to widen it;
+// the encoded starting point is clamped into it instead, so the search -- and
+// the decoded result -- stay within the range the caller asked for.
+func NewParamCodecWithStrictBounds(params *model.BarParams, bounds ParamBounds) (*ParamCodec, error) {
+	return newParamCodec(params, bounds, true)
+}
+
+func newParamCodec(params *model.BarParams, bounds ParamBounds, strict bool) (*ParamCodec, error) {
 	if err := model.ValidateBarParams(params); err != nil {
 		return nil, err
 	}
@@ -200,7 +213,9 @@ func NewParamCodecWithBounds(params *model.BarParams, bounds ParamBounds) (*Para
 		return nil, err
 	}
 
-	bounds = bounds.expandToInclude(params)
+	if !strict {
+		bounds = bounds.expandToInclude(params)
+	}
 
 	return &ParamCodec{
 		harmonicCount:    len(params.Chebyshev.HarmonicGains),

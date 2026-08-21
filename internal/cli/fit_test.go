@@ -216,12 +216,13 @@ func TestRunFitResumesFromCheckpoint(t *testing.T) {
 	}
 
 	if err := optimizer.SaveCheckpoint(filepath.Join(workDir, "checkpoint_0007.json"), &optimizer.Checkpoint{
-		Version:    optimizer.CheckpointVersion,
-		Iteration:  7,
-		BestCost:   0.123,
-		BestParams: encoded,
-		Optimizer:  "simple",
-		Metric:     "rms",
+		Version:             optimizer.CheckpointVersion,
+		Iteration:           7,
+		OptimizerIterations: 7,
+		BestCost:            0.123,
+		BestParams:          encoded,
+		Optimizer:           "simple",
+		Metric:              "rms",
 		State: &optimizer.OptimizerState{
 			Kind: "simple",
 		},
@@ -291,12 +292,13 @@ func TestRunFitResumeRestoresMayflySettingsFromCheckpoint(t *testing.T) {
 	}
 
 	if err := optimizer.SaveCheckpoint(filepath.Join(workDir, "checkpoint_0007.json"), &optimizer.Checkpoint{
-		Version:    optimizer.CheckpointVersion,
-		Iteration:  7,
-		BestCost:   0.123,
-		BestParams: encoded,
-		Optimizer:  "mayfly",
-		Metric:     "spectral",
+		Version:             optimizer.CheckpointVersion,
+		Iteration:           7,
+		OptimizerIterations: 7,
+		BestCost:            0.123,
+		BestParams:          encoded,
+		Optimizer:           "mayfly",
+		Metric:              "spectral",
 		State: &optimizer.OptimizerState{
 			Kind: "mayfly",
 			Mayfly: &optimizer.MayflyCheckpointEnv{
@@ -579,12 +581,13 @@ func TestRunFitResumeRejectsMismatchedCheckpoint(t *testing.T) {
 	workDir := filepath.Join(dir, "work")
 
 	if err := optimizer.SaveCheckpoint(filepath.Join(workDir, "checkpoint_0007.json"), &optimizer.Checkpoint{
-		Version:    optimizer.CheckpointVersion,
-		Iteration:  7,
-		BestCost:   0.5,
-		BestParams: []float64{0.1, 0.2},
-		Optimizer:  "simple",
-		Metric:     "rms",
+		Version:             optimizer.CheckpointVersion,
+		Iteration:           7,
+		OptimizerIterations: 7,
+		BestCost:            0.5,
+		BestParams:          []float64{0.1, 0.2},
+		Optimizer:           "simple",
+		Metric:              "rms",
 	}); err != nil {
 		t.Fatalf("SaveCheckpoint failed: %v", err)
 	}
@@ -645,12 +648,13 @@ func TestRunFitResumeWarnsWhenBudgetIsExhausted(t *testing.T) {
 	}
 
 	if err := optimizer.SaveCheckpoint(filepath.Join(workDir, "checkpoint_0020.json"), &optimizer.Checkpoint{
-		Version:    optimizer.CheckpointVersion,
-		Iteration:  20,
-		BestCost:   0.5,
-		BestParams: encoded,
-		Optimizer:  "simple",
-		Metric:     "rms",
+		Version:             optimizer.CheckpointVersion,
+		Iteration:           20,
+		OptimizerIterations: 20,
+		BestCost:            0.5,
+		BestParams:          encoded,
+		Optimizer:           "simple",
+		Metric:              "rms",
 	}); err != nil {
 		t.Fatalf("SaveCheckpoint failed: %v", err)
 	}
@@ -696,12 +700,13 @@ func TestRunFitResumeDoesNotWriteCheckpointsWhenDisabled(t *testing.T) {
 
 	existing := filepath.Join(workDir, "checkpoint_0007.json")
 	if err := optimizer.SaveCheckpoint(existing, &optimizer.Checkpoint{
-		Version:    optimizer.CheckpointVersion,
-		Iteration:  7,
-		BestCost:   0.5,
-		BestParams: encoded,
-		Optimizer:  "simple",
-		Metric:     "rms",
+		Version:             optimizer.CheckpointVersion,
+		Iteration:           7,
+		OptimizerIterations: 7,
+		BestCost:            0.5,
+		BestParams:          encoded,
+		Optimizer:           "simple",
+		Metric:              "rms",
 	}); err != nil {
 		t.Fatalf("SaveCheckpoint failed: %v", err)
 	}
@@ -726,5 +731,201 @@ func TestRunFitResumeDoesNotWriteCheckpointsWhenDisabled(t *testing.T) {
 
 	if len(matches) != 1 || matches[0] != existing {
 		t.Fatalf("expected --checkpoint-interval 0 to write no checkpoint, got %v", matches)
+	}
+}
+
+func TestRunFitKeepsExplicitBoundsAsHardConstraint(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+	outputPath := filepath.Join(dir, "fitted.json")
+	boundsPath := filepath.Join(dir, "bounds.json")
+
+	// The starting preset's first mode has amplitude 1.0, well outside this
+	// range. The box used to be widened to contain it, which let the fitted
+	// preset violate the amplitude the caller asked for.
+	if err := os.WriteFile(boundsPath, []byte(`{"amplitude": [-0.5, 0.5]}`), 0o600); err != nil {
+		t.Fatalf("write bounds: %v", err)
+	}
+
+	options := baseFitOptions(referencePath, outputPath, filepath.Join(dir, "work"))
+	options.boundsPath = boundsPath
+
+	cmd := &cobra.Command{}
+
+	var errOut bytes.Buffer
+
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(&errOut)
+
+	if err := runFit(cmd, options); err != nil {
+		t.Fatalf("runFit with strict bounds failed: %v", err)
+	}
+
+	if !strings.Contains(errOut.String(), "clamped") {
+		t.Fatalf("expected a warning that the starting preset was clamped, got %q", errOut.String())
+	}
+
+	fitted, err := preset.Load(outputPath)
+	if err != nil {
+		t.Fatalf("load fitted preset: %v", err)
+	}
+
+	for i, mode := range fitted.Parameters.Modes {
+		if mode.Amplitude < -0.5 || mode.Amplitude > 0.5 {
+			t.Fatalf("mode %d amplitude %g escaped the requested bounds", i, mode.Amplitude)
+		}
+	}
+}
+
+func TestRunFitResumeRestoresMetricBeforeBuildingObjective(t *testing.T) {
+	dir := t.TempDir()
+	workDir := filepath.Join(dir, "work")
+
+	p, err := preset.Load(filepath.FromSlash("../../testdata/presets/minimal.json"))
+	if err != nil {
+		t.Fatalf("load preset: %v", err)
+	}
+
+	engine, err := synth.NewSynthesizer(p, 44100)
+	if err != nil {
+		t.Fatalf("new synthesizer: %v", err)
+	}
+
+	// Too short for the spectral metric, which needs a full analysis frame.
+	reference := engine.RenderNote(69, 100, 0.01)
+
+	referencePath := filepath.Join(dir, "reference.wav")
+	if err := writeWAV(referencePath, 44100, reference); err != nil {
+		t.Fatalf("write reference wav: %v", err)
+	}
+
+	objective, err := optimizer.NewObjectiveFunction(reference, p, 44100, 69, 100, optimizer.MetricRMS)
+	if err != nil {
+		t.Fatalf("NewObjectiveFunction failed: %v", err)
+	}
+
+	encoded, err := objective.Codec().EncodeParams(&p.Parameters)
+	if err != nil {
+		t.Fatalf("EncodeParams failed: %v", err)
+	}
+
+	if err := optimizer.SaveCheckpoint(filepath.Join(workDir, "checkpoint_0007.json"), &optimizer.Checkpoint{
+		Version:             optimizer.CheckpointVersion,
+		Iteration:           7,
+		OptimizerIterations: 7,
+		BestCost:            0.123,
+		BestParams:          encoded,
+		Optimizer:           "simple",
+		Metric:              "spectral",
+	}); err != nil {
+		t.Fatalf("SaveCheckpoint failed: %v", err)
+	}
+
+	options := baseFitOptions(referencePath, filepath.Join(dir, "fitted.json"), workDir)
+	options.maxIter = 8
+	options.resume = true
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	// The checkpoint's metric has to be restored before the objective is built,
+	// otherwise the run silently optimizes RMS while reporting "spectral" and
+	// skips the spectral input validation entirely.
+	err = runFit(cmd, options)
+	if err == nil {
+		t.Fatal("expected the restored spectral metric to reject the short reference")
+	}
+
+	if !strings.Contains(err.Error(), "spectral metric needs at least") {
+		t.Fatalf("expected a spectral input error, got %v", err)
+	}
+}
+
+func TestRunFitCheckpointRecordsOptimizerIterations(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+	workDir := filepath.Join(dir, "work")
+
+	options := baseFitOptions(referencePath, filepath.Join(dir, "fitted.json"), workDir)
+	options.maxIter = 20
+	// One progress report per five optimizer iterations: the report count and
+	// the iteration count must not be confused for one another.
+	options.reportEvery = 5
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	if err := runFit(cmd, options); err != nil {
+		t.Fatalf("runFit failed: %v", err)
+	}
+
+	latest, err := optimizer.FindLatestCheckpoint(workDir)
+	if err != nil {
+		t.Fatalf("FindLatestCheckpoint failed: %v", err)
+	}
+
+	cp, err := optimizer.LoadCheckpoint(latest)
+	if err != nil {
+		t.Fatalf("LoadCheckpoint failed: %v", err)
+	}
+
+	if cp.OptimizerIterations <= 0 {
+		t.Fatalf("expected the checkpoint to record optimizer iterations, got %d", cp.OptimizerIterations)
+	}
+}
+
+func TestRunFitResumeIgnoresReportCountForBudget(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, p, reference := writeFitReference(t, dir)
+	workDir := filepath.Join(dir, "work")
+
+	objective, err := optimizer.NewObjectiveFunction(reference, p, 44100, 69, 100, optimizer.MetricRMS)
+	if err != nil {
+		t.Fatalf("NewObjectiveFunction failed: %v", err)
+	}
+
+	encoded, err := objective.Codec().EncodeParams(&p.Parameters)
+	if err != nil {
+		t.Fatalf("EncodeParams failed: %v", err)
+	}
+
+	// A checkpoint written after 100 optimizer iterations with --report-every 10
+	// carries Iteration=10. Charging that against --max-iter would hand the
+	// resumed run 90 more iterations on an exhausted budget.
+	if err := optimizer.SaveCheckpoint(filepath.Join(workDir, "checkpoint_0010.json"), &optimizer.Checkpoint{
+		Version:             optimizer.CheckpointVersion,
+		Iteration:           10,
+		OptimizerIterations: 100,
+		BestCost:            0.5,
+		BestParams:          encoded,
+		Optimizer:           "simple",
+		Metric:              "rms",
+	}); err != nil {
+		t.Fatalf("SaveCheckpoint failed: %v", err)
+	}
+
+	options := baseFitOptions(referencePath, filepath.Join(dir, "fitted.json"), workDir)
+	options.resume = true
+	options.maxIter = 100
+
+	cmd := &cobra.Command{}
+
+	var out, errOut bytes.Buffer
+
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+
+	if err := runFit(cmd, options); err != nil {
+		t.Fatalf("runFit failed: %v", err)
+	}
+
+	if !strings.Contains(errOut.String(), "exhausts --max-iter") {
+		t.Fatalf("expected the exhausted budget warning, got %q", errOut.String())
+	}
+
+	if !strings.Contains(out.String(), "remaining-iter=1") {
+		t.Fatalf("expected the resumed budget to stay at one iteration, got %q", out.String())
 	}
 }

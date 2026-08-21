@@ -25,18 +25,25 @@ const CheckpointVersion = "2.0"
 // Checkpoint stores resumable optimizer state at a coarse granularity.
 //
 // Iteration follows Progress.Iteration: it is a count of progress reports, not
-// of optimizer iterations or objective evaluations.
+// of optimizer iterations or objective evaluations. It orders the checkpoint
+// files and must never be subtracted from an iteration budget -- use
+// OptimizerIterations for that.
 type Checkpoint struct {
 	Version string `json:"version"`
 	// Timestamp records when the checkpoint was written; the fit command shows
 	// it when resuming so a stale work directory is easy to spot.
-	Timestamp  time.Time       `json:"timestamp"`
-	Iteration  int             `json:"iteration"`
-	BestCost   float64         `json:"best_cost"`
-	BestParams []float64       `json:"best_params"`
-	Optimizer  string          `json:"optimizer"`
-	Metric     string          `json:"metric"`
-	State      *OptimizerState `json:"state,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+	Iteration int       `json:"iteration"`
+	// OptimizerIterations is the backend's own iteration count when the
+	// checkpoint was written, in the same unit as OptimizeOptions.MaxIterations.
+	// It is the only value a resumed run may charge against its budget. Zero
+	// means the writer did not record it.
+	OptimizerIterations int             `json:"optimizer_iterations,omitempty"`
+	BestCost            float64         `json:"best_cost"`
+	BestParams          []float64       `json:"best_params"`
+	Optimizer           string          `json:"optimizer"`
+	Metric              string          `json:"metric"`
+	State               *OptimizerState `json:"state,omitempty"`
 }
 
 // OptimizerState stores coarse optimizer-specific resume metadata.

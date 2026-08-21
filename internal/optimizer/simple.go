@@ -220,12 +220,13 @@ func (t *progressTracker) Record(loc *gonumoptimize.Location, op gonumoptimize.O
 	t.reports++
 
 	t.report(Progress{
-		Iteration:   t.reports,
-		CurrentCost: currentCost,
-		BestCost:    t.bestCost,
-		BestParams:  append([]float64(nil), t.bestParams...),
-		Elapsed:     stats.Runtime,
-		Evaluations: stats.FuncEvaluations,
+		Iteration:           t.reports,
+		OptimizerIterations: stats.MajorIterations,
+		CurrentCost:         currentCost,
+		BestCost:            t.bestCost,
+		BestParams:          append([]float64(nil), t.bestParams...),
+		Elapsed:             stats.Runtime,
+		Evaluations:         stats.FuncEvaluations,
 	})
 
 	return nil
