@@ -1,6 +1,6 @@
 package vst3
 
-import "github.com/cwbudde/glockenspiel/internal/model"
+import "github.com/cwbudde/glockenspiel/model"
 
 // ParameterID is the stable host-facing identifier for one automatable plugin parameter.
 type ParameterID uint32
@@ -109,7 +109,7 @@ func SnapshotFromBarParams(params *model.BarParams) Snapshot {
 		ChebyshevEnabled: params.Chebyshev.Enabled,
 	}
 
-	for i := 0; i < model.NumModes; i++ {
+	for i := 0; i < model.NumModes && i < len(params.Modes); i++ {
 		snapshot.ModeAmplitude[i] = params.Modes[i].Amplitude
 		snapshot.ModeFrequency[i] = params.Modes[i].Frequency
 
@@ -131,6 +131,7 @@ func (s Snapshot) ToBarParams() model.BarParams {
 	params.BaseFrequency = s.BaseFrequency
 	params.Chebyshev.Enabled = s.ChebyshevEnabled
 	params.Chebyshev.HarmonicGains = make([]float64, model.NumModes)
+	params.Modes = model.DefaultModes()
 
 	for i := 0; i < model.NumModes; i++ {
 		params.Chebyshev.HarmonicGains[i] = s.ChebyshevGains[i]

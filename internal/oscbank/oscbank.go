@@ -13,6 +13,11 @@ const (
 	// blocks.
 	LaneWidth = 8
 
+	// accLanes is the width of the per-sample output accumulator. The kernels
+	// fold a block's two 128-bit halves together before storing, because they
+	// have issue slots to spare while the reduction pass does not.
+	accLanes = LaneWidth / 2
+
 	// blockSamples bounds the per-lane accumulator so it stays in L1 while the
 	// bank walks the rotor blocks. 256 samples x 8 lanes x 4 bytes = 8 KiB.
 	blockSamples = 256
@@ -78,7 +83,7 @@ type Bank struct {
 
 	decayFactor []float64
 
-	// acc is the per-lane output accumulator, [blockSamples][LaneWidth].
+	// acc is the partial output accumulator, [blockSamples][accLanes].
 	acc []float32
 
 	// scratchIn holds one chunk of excitation with a zero sample appended. The
@@ -95,7 +100,7 @@ func New(sampleRate float64) *Bank {
 
 	return &Bank{
 		sampleRate: sampleRate,
-		acc:        make([]float32, blockSamples*LaneWidth),
+		acc:        make([]float32, blockSamples*accLanes),
 		scratchIn:  make([]float32, blockSamples+1),
 	}
 }
@@ -241,7 +246,7 @@ func (b *Bank) ProcessBlock(input, output []float32) {
 }
 
 func (b *Bank) processChunk(input, output []float32) {
-	acc := b.acc[:len(input)*LaneWidth]
+	acc := b.acc[:len(input)*accLanes]
 
 	copy(b.scratchIn, input)
 	b.scratchIn[len(input)] = 0

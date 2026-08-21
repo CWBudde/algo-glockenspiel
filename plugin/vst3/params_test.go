@@ -1,9 +1,10 @@
 package vst3
 
 import (
+	"reflect"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/model"
+	"github.com/cwbudde/glockenspiel/model"
 )
 
 func TestParameterSpecsHaveStableUniqueIDs(t *testing.T) {
@@ -43,7 +44,7 @@ func TestSnapshotRoundTripBarParams(t *testing.T) {
 		InputMix:        0.25,
 		FilterFrequency: 5400,
 		BaseFrequency:   440,
-		Modes: [model.NumModes]model.ModeParams{
+		Modes: []model.ModeParams{
 			{Amplitude: 1.0, Frequency: 440, DecayMs: 120},
 			{Amplitude: 0.7, Frequency: 1180, DecayMs: 90},
 			{Amplitude: 0.3, Frequency: 2010, DecayMs: 70},
@@ -79,7 +80,7 @@ func TestSnapshotRoundTripBarParams(t *testing.T) {
 			t.Fatalf("harmonic gain mismatch at %d: got %f want %f", i, output.Chebyshev.HarmonicGains[i], input.Chebyshev.HarmonicGains[i])
 		}
 
-		if output.Modes[i] != input.Modes[i] {
+		if !reflect.DeepEqual(output.Modes[i], input.Modes[i]) {
 			t.Fatalf("mode mismatch at %d: got %+v want %+v", i, output.Modes[i], input.Modes[i])
 		}
 	}

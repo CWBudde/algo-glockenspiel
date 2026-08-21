@@ -399,3 +399,36 @@ func BenchmarkBank8x4(b *testing.B)  { benchmarkBank(b, 8, 4) }
 func BenchmarkBank16x4(b *testing.B) { benchmarkBank(b, 16, 4) }
 func BenchmarkBank64x1(b *testing.B) { benchmarkBank(b, 64, 1) }
 func BenchmarkBank64x4(b *testing.B) { benchmarkBank(b, 64, 4) }
+
+// TestBankPacksRotorsIntoLanes is the structural side of the scaling claim:
+// cost follows the rotor count divided by the lane width, not the oscillator
+// count. Sixty-four oscillators are eight packed blocks, not sixty-four serial
+// units, and four oscillators cost the same as sixteen because they share one
+// block pair.
+func TestBankPacksRotorsIntoLanes(t *testing.T) {
+	cases := []struct {
+		numOsc, numHarm int
+		wantBlocks      int
+	}{
+		{1, 1, 2},
+		{4, 1, 2},
+		{8, 1, 2},
+		{16, 1, 2},
+		{17, 1, 4},
+		{64, 1, 8},
+		{4, 4, 2},
+		{64, 4, 32},
+	}
+
+	bank := New(48000)
+
+	for _, tc := range cases {
+		if err := bank.SetOscillators(testOscillators(tc.numOsc, tc.numHarm)); err != nil {
+			t.Fatalf("SetOscillators(%d,%d): %v", tc.numOsc, tc.numHarm, err)
+		}
+
+		if bank.numBlocks != tc.wantBlocks {
+			t.Fatalf("%dx%d: %d blocks, want %d", tc.numOsc, tc.numHarm, bank.numBlocks, tc.wantBlocks)
+		}
+	}
+}

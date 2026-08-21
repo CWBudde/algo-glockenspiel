@@ -16,6 +16,7 @@ func renderWithFeatures(t *testing.T, features cpufeat.Features, oscillators []O
 	t.Helper()
 
 	cpufeat.SetForcedFeatures(features)
+
 	defer cpufeat.ResetDetection()
 
 	bank := New(48000)
@@ -96,6 +97,7 @@ func TestPortableKernelHandlesEveryChunkLength(t *testing.T) {
 
 func BenchmarkBank4x4Portable(b *testing.B) {
 	cpufeat.SetForcedFeatures(cpufeat.Features{})
+
 	defer cpufeat.ResetDetection()
 
 	benchmarkBank(b, 4, 4)

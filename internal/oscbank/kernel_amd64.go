@@ -38,13 +38,13 @@ func reduceLanes(acc, output []float32) {
 	}
 
 	if vectorized < len(output) {
-		reduceLanesGeneric(acc[vectorized*LaneWidth:], output[vectorized:])
+		reduceLanesGeneric(acc[vectorized*accLanes:], output[vectorized:])
 	}
 }
 
 // oscBankBlocksAVX2 advances blocks rotor blocks over samples input frames,
-// accumulating into acc ([samples][LaneWidth]). blocks must be even and acc
-// must hold samples*LaneWidth float32s.
+// accumulating into acc ([samples][accLanes]). blocks must be even and acc must
+// hold samples*accLanes float32s.
 //
 //go:noescape
 func oscBankBlocksAVX2(re, im, cosCoeff, sinCoeff, amp *float32, blocks int, input *float32, samples int, acc *float32)

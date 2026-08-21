@@ -27,7 +27,11 @@
 // it; that lookahead is why the kernel reads input[samples], and why the caller
 // passes a padded scratch buffer.
 //
-// acc is [samples][8]float32. The first block pair writes it and every later
+// The eight lanes fold to four on the way out: the loop is latency-bound, so
+// the extract and add that halve the accumulator cost nothing here while they
+// would cost real time in the reduction pass.
+//
+// acc is [samples][4]float32. The first block pair writes it and every later
 // pair adds into it, so a bank wider than 16 rotors is just more passes and the
 // caller never has to zero the buffer.
 TEXT ·oscBankBlocksAVX2(SB), NOSPLIT, $0-72
@@ -91,11 +95,13 @@ firstloop:
 	VMULPS       Y10, Y4, Y11
 	VMULPS       Y10, Y9, Y12
 
-	VADDPS  Y14, Y15, Y15
-	VMOVUPS Y15, (DI)
+	VADDPS       Y14, Y15, Y15
+	VEXTRACTF128 $1, Y15, X13
+	VADDPS       X13, X15, X15
+	VMOVUPS      X15, (DI)
 
 	ADDQ $4, SI
-	ADDQ $32, DI
+	ADDQ $16, DI
 	DECQ R13
 	JNZ  firstloop
 
@@ -155,12 +161,14 @@ sampleloop:
 	VMULPS       Y10, Y4, Y11
 	VMULPS       Y10, Y9, Y12
 
-	VADDPS  Y14, Y15, Y15
-	VADDPS  (DI), Y15, Y15
-	VMOVUPS Y15, (DI)
+	VADDPS       Y14, Y15, Y15
+	VEXTRACTF128 $1, Y15, X13
+	VADDPS       X13, X15, X15
+	VADDPS       (DI), X15, X15
+	VMOVUPS      X15, (DI)
 
 	ADDQ $4, SI
-	ADDQ $32, DI
+	ADDQ $16, DI
 	DECQ R13
 	JNZ  sampleloop
 
@@ -183,9 +191,9 @@ done:
 
 // func reduceLanesAVX2(acc, output *float32, samples int)
 //
-// Collapses [samples][8]float32 to samples scalars, eight frames per pass. The
-// horizontal add tree matches reduceLanesGeneric exactly: ((l0+l1)+(l2+l3)) +
-// ((l4+l5)+(l6+l7)). samples must be a positive multiple of 8.
+// Collapses [samples][4]float32 to samples scalars, eight frames per pass. The
+// horizontal add tree matches reduceLanesGeneric exactly: (a0+a1)+(a2+a3).
+// samples must be a positive multiple of 8.
 TEXT ·reduceLanesAVX2(SB), NOSPLIT, $0-24
 	MOVQ acc+0(FP), SI
 	MOVQ output+8(FP), DI
@@ -195,38 +203,24 @@ TEXT ·reduceLanesAVX2(SB), NOSPLIT, $0-24
 	TESTQ CX, CX
 	JLE   reducedone
 
+	VMOVDQU ·reduceFrameOrder(SB), Y7
+
 reduceloop:
-	VMOVUPS (SI), Y0
-	VMOVUPS 32(SI), Y1
-	VMOVUPS 64(SI), Y2
-	VMOVUPS 96(SI), Y3
-	VMOVUPS 128(SI), Y4
-	VMOVUPS 160(SI), Y5
-	VMOVUPS 192(SI), Y6
-	VMOVUPS 224(SI), Y7
+	VMOVUPS (SI), Y0  // frames 0,1
+	VMOVUPS 32(SI), Y1 // frames 2,3
+	VMOVUPS 64(SI), Y2 // frames 4,5
+	VMOVUPS 96(SI), Y3 // frames 6,7
 
-	// Pairwise sums within each frame. VHADDPS works per 128-bit half, so the
-	// low half of each result carries the (l0+l1),(l2+l3) terms of two frames
-	// and the high half their (l4+l5),(l6+l7) terms.
-	VHADDPS Y1, Y0, Y8
-	VHADDPS Y3, Y2, Y9
-	VHADDPS Y9, Y8, Y10
+	// Two rounds of pairwise adds leave one total per frame, but VHADDPS works
+	// per 128-bit half, so they come out interleaved as f0,f2,f4,f6,f1,f3,f5,f7.
+	VHADDPS Y1, Y0, Y4
+	VHADDPS Y3, Y2, Y5
+	VHADDPS Y5, Y4, Y6
 
-	VHADDPS Y5, Y4, Y8
-	VHADDPS Y7, Y6, Y9
-	VHADDPS Y9, Y8, Y11
+	VPERMPS Y6, Y7, Y6
+	VMOVUPS Y6, (DI)
 
-	// Y10 low = (l0+l1)+(l2+l3) for frames 0..3, high = (l4+l5)+(l6+l7).
-	VEXTRACTF128 $1, Y10, X12
-	VADDPS       X12, X10, X12
-
-	VEXTRACTF128 $1, Y11, X13
-	VADDPS       X13, X11, X13
-
-	VINSERTF128 $1, X13, Y12, Y12
-	VMOVUPS     Y12, (DI)
-
-	ADDQ $256, SI
+	ADDQ $128, SI
 	ADDQ $32, DI
 	DECQ CX
 	JNZ  reduceloop
@@ -234,3 +228,14 @@ reduceloop:
 reducedone:
 	VZEROUPPER
 	RET
+
+// reduceFrameOrder undoes VHADDPS's per-half interleaving.
+DATA ·reduceFrameOrder+0(SB)/4, $0
+DATA ·reduceFrameOrder+4(SB)/4, $4
+DATA ·reduceFrameOrder+8(SB)/4, $1
+DATA ·reduceFrameOrder+12(SB)/4, $5
+DATA ·reduceFrameOrder+16(SB)/4, $2
+DATA ·reduceFrameOrder+20(SB)/4, $6
+DATA ·reduceFrameOrder+24(SB)/4, $3
+DATA ·reduceFrameOrder+28(SB)/4, $7
+GLOBL ·reduceFrameOrder(SB), RODATA|NOPTR, $32

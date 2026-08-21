@@ -100,7 +100,7 @@ Notes:
 - `.trunk/` is deleted and gitignored; golangci-lint and the prettier job cover its useful
   overlap and actually run.
 
-## Phase 1: Configurable Oscillator Bank
+## Phase 1: Configurable Oscillator Bank — DONE (2026-08-21)
 
 Goal: replace the fixed 4-mode bar model with a bank whose oscillator and harmonic counts are
 runtime configuration, laid out for SIMD, without losing performance.
@@ -124,10 +124,56 @@ Tasks:
 
 Acceptance criteria:
 
-- [ ] Oscillator and harmonic counts are configurable at runtime.
-- [ ] The 4x4 case benchmarks at or below 1392 ns per 512-sample block.
-- [ ] Scaling to 64 oscillators is close to linear in total work, not in voice count.
-- [ ] Every existing preset round-trips through the v1 loader and renders identically.
+- [x] Oscillator and harmonic counts are configurable at runtime. `Bank.SetOscillators`
+      takes any `N` and any per-oscillator harmonic count; `BarParams.Modes` is a slice and
+      `ModeParams.Harmonics` is optional. `NumModes` survives only as the default count and
+      as what a v1 preset must carry.
+- [x] The 4x4 case benchmarks at or below 1392 ns per 512-sample block. 16 rotors in
+      1128-1154 ns against 1314-1384 ns for the four-rotor kernel it replaces, read off one
+      benchmark binary (`go test ./model -bench 'ProcessBlock32$|OscBank4x4'`) so both share
+      a thermal state. Four times the oscillator work, 15% less time.
+- [x] Scaling to 64 oscillators is close to linear in total work, not in voice count.
+      Cost per rotor-block is 71 ns at 16 rotors, 66 ns at 64, 63 ns at 256 — flat to within
+      10%, drifting down as the per-pass overhead amortizes. 64 oscillators cost 3.6x four
+      oscillators rather than 16x, because four leave twelve of sixteen lanes empty.
+      `TestBankPacksRotorsIntoLanes` pins the structural claim.
+- [x] Every existing preset round-trips through the v1 loader and renders identically.
+      `TestShippedPresetsRenderIdenticallyAfterRoundTrip` renders every file in
+      `assets/presets` and `testdata/presets` as loaded, after a save/load cycle, and after
+      an upgrade to v2, and requires bit-identical samples.
+
+Notes:
+
+- Harmonics are integer-multiple rotors sharing their oscillator's decay, so partials are
+  computed on top of the oscillators. The Chebyshev shaper stays as an optional stage on
+  either side of the bank (`chebyshev.stage`), defaulting to the v1 excitation placement —
+  that default is what makes the round-trip criterion hold.
+- The per-sample horizontal reduction is gone. Each block pair accumulates into a per-frame
+  partial buffer; the kernel folds eight lanes to four as it stores (free — the loop is
+  latency-bound and the shuffle port is idle) and `reduceLanes` collapses the last four once
+  per chunk.
+- The AVX2 kernel's win is not FMA, it is association. The natural ordering puts a multiply
+  and two adds between one sample's `im` and the next, twelve cycles. Folding the excitation
+  into the accumulator seed (`im' = amp*x + re*sin + im*cos`, then `t = im' - amp*x`) leaves
+  both state updates eight cycles from their inputs and takes `t` off the critical path.
+  Adding FMA alone bought nothing on the single-pair case; this bought 20%.
+- Preset schema v2 exists alongside v1 rather than replacing it. `Load` holds a `"1.0"`
+  document to the v1 rules — exactly four modes, no per-mode harmonics, no explicit shaper
+  stage — so a file that quietly grew v2 fields is reported instead of rendering differently
+  than its version claims. `preset.Upgrade` converts. `Save` preserves the version.
+- `BarParams.Modes` being a slice made plain struct assignment a bug:
+  `scaledParamsForNote` was transposing the synthesizer's own preset on every note. It clones
+  now, and `TestRenderingIsIndependentOfPresetState` guards it.
+- Deferred, deliberately: **cross-voice lane packing**. A bank fills its lanes from one
+  voice's oscillators and the realtime engine still renders voices serially. Packing
+  `voices x oscillators` needs per-lane excitation and per-voice output separation, which is
+  a redesign of the voice engine and belongs with the audio-path work in Phase 2.
+- Deferred: the optimizer does not search per-mode harmonic gains. `ParamCodec` sizes itself
+  from the template's mode count, but carries per-mode harmonics through unchanged.
+- `internal/model`'s `QuadDecayOscillator` and its five `.s` files are no longer on any
+  rendering path — `Bar` drives the bank. They stay for now as the differential reference;
+  Phase 2 deletes what is dead.
+- Design notes and the full benchmark tables are in `docs/oscillator-bank.md`.
 
 ## Phase 2: Real SIMD On Four Targets
 
@@ -374,10 +420,20 @@ Acceptance criteria:
 
 ## Resume Point
 
-Phases 0 and 3 are closed. Phases 1, 2, 4, 5, 6 and 7 are open.
+Phases 0, 1 and 3 are closed. Phases 2, 4, 5, 6 and 7 are open.
 
-Phase 1 (the configurable oscillator bank) is the natural next step: Phase 2's SIMD work
-targets the bank's layout, and Phase 4's `serve` builds on the now-context-aware optimizer.
+Phase 2 is the natural next step: the bank's AoSoA layout is exactly what the NEON, SSE2 and
+AVX-512 kernels need, and three items that surfaced during Phase 1 belong to it —
+
+- Bit-identity across backends is not yet reachable. The packed kernel fuses its
+  multiply-adds and the portable one cannot, so they agree to float32 rounding, not to the
+  bit. Phase 2 has to pick one contract: no FMA anywhere, or an FMA reference.
+- Denormals are unhandled in the bank. A bank left running with no excitation decays into
+  denormal state and slows down sharply; the MXCSR FTZ/DAZ work already scheduled for Phase 2
+  covers it.
+- The recursion still costs eight cycles per sample per block pair. Stepping two samples at a
+  time through the squared rotation matrix would halve that, at the cost of a second
+  coefficient set and a sample-count tail.
 
 One finding from Phase 3 still belongs to a later phase:
 

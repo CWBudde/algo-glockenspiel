@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/cwbudde/glockenspiel/internal/model"
+	"github.com/cwbudde/glockenspiel/model"
 )
 
-const fixedParameterCount = 3 + model.NumModes*3
+// scalarParameterCount covers input mix, filter frequency and base frequency;
+// every mode adds three more and every Chebyshev gain one.
+const scalarParameterCount = 3
 
 // Range describes an inclusive scalar bound.
 type Range struct {
@@ -179,9 +181,17 @@ var DefaultParamBounds = ParamBounds{
 }
 
 // ParamCodec encodes BarParams into a flat optimization vector.
+//
+// The mode count comes from the template rather than a constant, so a codec
+// built from a nine-mode preset searches a nine-mode space.
+//
+// Per-mode harmonic gains are carried through from the template unchanged: the
+// bank supports them, but they are not part of the search space yet.
 type ParamCodec struct {
+	modeCount        int
 	harmonicCount    int
 	chebyshevEnabled bool
+	modeHarmonics    [][]float64
 	bounds           ParamBounds
 }
 
@@ -217,11 +227,25 @@ func newParamCodec(params *model.BarParams, bounds ParamBounds, strict bool) (*P
 		bounds = bounds.expandToInclude(params)
 	}
 
+	modeHarmonics := make([][]float64, len(params.Modes))
+	for i, mode := range params.Modes {
+		if len(mode.Harmonics) > 0 {
+			modeHarmonics[i] = append([]float64(nil), mode.Harmonics...)
+		}
+	}
+
 	return &ParamCodec{
+		modeCount:        len(params.Modes),
 		harmonicCount:    len(params.Chebyshev.HarmonicGains),
 		chebyshevEnabled: params.Chebyshev.Enabled,
+		modeHarmonics:    modeHarmonics,
 		bounds:           bounds,
 	}, nil
+}
+
+// ModeCount returns the mode count this codec encodes.
+func (c *ParamCodec) ModeCount() int {
+	return c.modeCount
 }
 
 // Validate checks that the bounds are well-formed.
@@ -275,7 +299,7 @@ func (b ParamBounds) expandToInclude(params *model.BarParams) ParamBounds {
 
 // Dimension returns the encoded vector dimensionality.
 func (c *ParamCodec) Dimension() int {
-	return fixedParameterCount + c.harmonicCount
+	return scalarParameterCount + c.modeCount*3 + c.harmonicCount
 }
 
 // EncodedBounds returns the bounds for encoded vectors.
@@ -288,7 +312,7 @@ func (c *ParamCodec) EncodedBounds() Bounds {
 		logRange(c.bounds.FilterFreq),
 		logRange(c.bounds.BaseFrequency),
 	)
-	for range model.NumModes {
+	for range c.modeCount {
 		ranges = append(
 			ranges,
 			c.bounds.Amplitude,
@@ -308,6 +332,10 @@ func (c *ParamCodec) EncodedBounds() Bounds {
 func (c *ParamCodec) EncodeParams(params *model.BarParams) ([]float64, error) {
 	if err := model.ValidateBarParams(params); err != nil {
 		return nil, err
+	}
+
+	if len(params.Modes) != c.modeCount {
+		return nil, fmt.Errorf("expected %d modes, got %d", c.modeCount, len(params.Modes))
 	}
 
 	if len(params.Chebyshev.HarmonicGains) != c.harmonicCount {
@@ -359,19 +387,26 @@ func (c *ParamCodec) DecodeParams(encoded []float64) (*model.BarParams, error) {
 		InputMix:        bounded[0],
 		FilterFrequency: math.Pow(10, bounded[1]),
 		BaseFrequency:   baseFrequency,
+		Modes:           make([]model.ModeParams, c.modeCount),
 		Chebyshev: model.ChebyshevParams{
 			Enabled:       c.chebyshevEnabled,
 			HarmonicGains: make([]float64, c.harmonicCount),
 		},
 	}
 
-	index := 3
-	for i := range model.NumModes {
+	index := scalarParameterCount
+
+	for i := range c.modeCount {
 		params.Modes[i] = model.ModeParams{
 			Amplitude: bounded[index],
 			Frequency: baseFrequency * math.Pow(10, bounded[index+1]),
 			DecayMs:   math.Pow(10, bounded[index+2]),
 		}
+
+		if len(c.modeHarmonics[i]) > 0 {
+			params.Modes[i].Harmonics = append([]float64(nil), c.modeHarmonics[i]...)
+		}
+
 		index += 3
 	}
 

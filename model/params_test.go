@@ -96,7 +96,7 @@ func validTestParams() BarParams {
 		InputMix:        0.472,
 		FilterFrequency: 522.9,
 		BaseFrequency:   440.0,
-		Modes: [NumModes]ModeParams{
+		Modes: []ModeParams{
 			{Amplitude: 0.886, Frequency: 1756.6, DecayMs: 188.2},
 			{Amplitude: 1.995, Frequency: 4768.1, DecayMs: 1.603},
 			{Amplitude: -0.465, Frequency: 38.24, DecayMs: 5.559},

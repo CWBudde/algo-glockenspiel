@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cwbudde/glockenspiel/internal/model"
 	"github.com/cwbudde/glockenspiel/internal/preset"
+	"github.com/cwbudde/glockenspiel/model"
 	"github.com/cwbudde/mayfly"
 )
 

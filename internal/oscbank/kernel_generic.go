@@ -1,11 +1,12 @@
 package oscbank
 
 // processRotorBlocksGeneric is the portable reference kernel. It advances every
-// rotor block over the whole sample chunk and accumulates each lane's
-// contribution into acc, which is laid out as [len(input)][LaneWidth].
+// rotor block over the whole sample chunk and accumulates into acc, which is
+// laid out as [len(input)][accLanes].
 //
-// Nothing is reduced across lanes here: the horizontal sum happens once per
-// chunk in reduceLanes rather than once per sample.
+// The eight lanes of a block fold down to four on the way into acc -- that much
+// the kernel gets for free -- but no further: the rest of the horizontal sum
+// happens once per chunk in reduceLanes rather than once per sample.
 //
 // Blocks are walked in pairs, matching the packed kernels, which keep two
 // blocks in flight to hide the recursion's multiply-then-add latency. The first
@@ -22,16 +23,20 @@ func processRotorBlocksGeneric(re, im, cosCoeff, sinCoeff, amp []float32, blocks
 		ampBlock := amp[lo:hi:hi]
 
 		for i, x := range input {
-			out := acc[i*LaneWidth : i*LaneWidth+LaneWidth : i*LaneWidth+LaneWidth]
+			out := acc[i*accLanes : i*accLanes+accLanes : i*accLanes+accLanes]
 
-			for lane := range LaneWidth {
-				first := stepRotor(reBlock, imBlock, cosBlock, sinBlock, ampBlock, lane, x)
-				second := stepRotor(reBlock, imBlock, cosBlock, sinBlock, ampBlock, LaneWidth+lane, x)
+			for lane := range accLanes {
+				lowA := stepRotor(reBlock, imBlock, cosBlock, sinBlock, ampBlock, lane, x)
+				lowB := stepRotor(reBlock, imBlock, cosBlock, sinBlock, ampBlock, LaneWidth+lane, x)
+				highA := stepRotor(reBlock, imBlock, cosBlock, sinBlock, ampBlock, accLanes+lane, x)
+				highB := stepRotor(reBlock, imBlock, cosBlock, sinBlock, ampBlock, LaneWidth+accLanes+lane, x)
+
+				folded := (lowA + lowB) + (highA + highB)
 
 				if block == 0 {
-					out[lane] = first + second
+					out[lane] = folded
 				} else {
-					out[lane] += first + second
+					out[lane] += folded
 				}
 			}
 		}
@@ -58,18 +63,12 @@ func stepRotor(re, im, cosCoeff, sinCoeff, amp []float32, lane int, x float32) f
 	return next - ampx
 }
 
-// reduceLanesGeneric collapses the per-lane accumulator into one sample per
-// frame. The pairwise tree order is fixed so every backend sums in the same
-// order.
+// reduceLanesGeneric collapses the accumulator into one sample per frame. The
+// pairwise tree order is fixed so every backend sums in the same order.
 func reduceLanesGeneric(acc, output []float32) {
 	for i := range output {
-		lane := acc[i*LaneWidth : i*LaneWidth+LaneWidth : i*LaneWidth+LaneWidth]
+		lane := acc[i*accLanes : i*accLanes+accLanes : i*accLanes+accLanes]
 
-		a := lane[0] + lane[1]
-		b := lane[2] + lane[3]
-		c := lane[4] + lane[5]
-		d := lane[6] + lane[7]
-
-		output[i] = (a + b) + (c + d)
+		output[i] = (lane[0] + lane[1]) + (lane[2] + lane[3])
 	}
 }

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/cwbudde/glockenspiel/internal/model"
 	"github.com/cwbudde/glockenspiel/internal/preset"
+	"github.com/cwbudde/glockenspiel/model"
 )
 
 const (
@@ -125,12 +125,16 @@ func (s *Synthesizer) NewVoice(note, velocity int, duration float64, options Ren
 	}, nil
 }
 
+// scaledParamsForNote transposes the preset to another note. The clone is not
+// optional: BarParams.Modes is a slice, so a plain struct copy would scale the
+// preset's own modes on every note.
 func (s *Synthesizer) scaledParamsForNote(note int) model.BarParams {
-	scaled := s.preset.Parameters
+	scaled := s.preset.Parameters.Clone()
 	ratio := math.Pow(2, float64(note-s.preset.Note)/12)
 
 	scaled.BaseFrequency *= ratio
-	for i := 0; i < model.NumModes; i++ {
+
+	for i := range scaled.Modes {
 		scaled.Modes[i].Frequency *= ratio
 		if ratio > 0 {
 			scaled.Modes[i].DecayMs /= ratio

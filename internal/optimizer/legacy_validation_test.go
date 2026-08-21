@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/model"
 	"github.com/cwbudde/glockenspiel/internal/preset"
+	"github.com/cwbudde/glockenspiel/model"
 	"github.com/go-audio/wav"
 )
 

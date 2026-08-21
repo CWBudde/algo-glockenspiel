@@ -7,7 +7,21 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cwbudde/glockenspiel/internal/model"
+	"github.com/cwbudde/glockenspiel/model"
+)
+
+const (
+	// VersionV1 is the original schema: exactly model.NumModes modes, no
+	// per-mode harmonics, and a Chebyshev shaper that always sits on the
+	// excitation.
+	VersionV1 = "1.0"
+
+	// VersionV2 adds a variable-length mode array, per-mode harmonic partials
+	// and an explicit Chebyshev stage.
+	VersionV2 = "2.0"
+
+	// CurrentVersion is the schema new presets are written in.
+	CurrentVersion = VersionV2
 )
 
 // Preset describes a stored parameter configuration.
@@ -18,6 +32,18 @@ type Preset struct {
 	Parameters model.BarParams `json:"parameters"`
 }
 
+// Clone returns a deep copy of the preset.
+func (p *Preset) Clone() *Preset {
+	if p == nil {
+		return nil
+	}
+
+	clone := *p
+	clone.Parameters = p.Parameters.Clone()
+
+	return &clone
+}
+
 // Load parses and validates a preset from JSON.
 func Load(path string) (*Preset, error) {
 	data, err := os.ReadFile(path)
@@ -25,19 +51,48 @@ func Load(path string) (*Preset, error) {
 		return nil, fmt.Errorf("read preset %q: %w", path, err)
 	}
 
+	return Decode(data, path)
+}
+
+// Decode parses and validates preset JSON. source names the origin for error
+// messages. Both schema versions are accepted; a v1 document is held to the v1
+// rules so a file that quietly grew v2 fields is reported instead of rendering
+// differently than its version claims.
+func Decode(data []byte, source string) (*Preset, error) {
 	var preset Preset
+
 	if err := json.Unmarshal(data, &preset); err != nil {
-		return nil, fmt.Errorf("decode preset %q: %w", path, err)
+		return nil, fmt.Errorf("decode preset %q: %w", source, err)
 	}
 
 	if err := Validate(&preset); err != nil {
-		return nil, fmt.Errorf("validate preset %q: %w", path, err)
+		return nil, fmt.Errorf("validate preset %q: %w", source, err)
 	}
 
 	return &preset, nil
 }
 
-// Save validates and writes a preset to JSON.
+// Upgrade returns an equivalent preset in the current schema version. The v1
+// defaults it makes explicit -- the excitation-stage shaper, no per-mode
+// harmonics -- are exactly the ones the v1 loader applies, so the upgraded
+// preset renders identically to the original.
+func Upgrade(preset *Preset) (*Preset, error) {
+	if err := Validate(preset); err != nil {
+		return nil, err
+	}
+
+	upgraded := preset.Clone()
+	upgraded.Version = CurrentVersion
+
+	if upgraded.Parameters.Chebyshev.Stage == "" {
+		upgraded.Parameters.Chebyshev.Stage = model.ChebyshevStageExcitation
+	}
+
+	return upgraded, nil
+}
+
+// Save validates and writes a preset to JSON, keeping the preset's own schema
+// version so a round trip through Load and Save is lossless.
 func Save(p *Preset, path string) error {
 	if err := Validate(p); err != nil {
 		return fmt.Errorf("validate preset before save: %w", err)
@@ -79,8 +134,50 @@ func Validate(preset *Preset) error {
 		return fmt.Errorf("note out of MIDI range [0,127]: %d", preset.Note)
 	}
 
+	if err := validateSchema(preset); err != nil {
+		return err
+	}
+
 	if err := preset.Parameters.Validate(); err != nil {
 		return fmt.Errorf("parameters: %w", err)
+	}
+
+	return nil
+}
+
+func validateSchema(preset *Preset) error {
+	switch preset.Version {
+	case VersionV1:
+		return validateV1(&preset.Parameters)
+	case VersionV2:
+		return validateV2(&preset.Parameters)
+	default:
+		return fmt.Errorf("unsupported version %q, want %q or %q", preset.Version, VersionV1, VersionV2)
+	}
+}
+
+func validateV1(params *model.BarParams) error {
+	if len(params.Modes) != model.NumModes {
+		return fmt.Errorf("version %s requires exactly %d modes, got %d; use version %s for a variable mode count",
+			VersionV1, model.NumModes, len(params.Modes), VersionV2)
+	}
+
+	for i, mode := range params.Modes {
+		if len(mode.Harmonics) > 0 {
+			return fmt.Errorf("modes[%d].harmonics needs version %s", i, VersionV2)
+		}
+	}
+
+	if params.Chebyshev.Stage != "" {
+		return fmt.Errorf("chebyshev.stage needs version %s", VersionV2)
+	}
+
+	return nil
+}
+
+func validateV2(params *model.BarParams) error {
+	if len(params.Modes) == 0 {
+		return errors.New("at least one mode is required")
 	}
 
 	return nil
