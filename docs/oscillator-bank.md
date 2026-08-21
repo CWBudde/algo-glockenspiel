@@ -83,8 +83,10 @@ sample is computed one iteration ahead, which is why the kernel reads one sample
 past the end of its input and why the bank hands it a padded scratch buffer.
 
 The portable kernel in `kernel_generic.go` associates the arithmetic the same
-way, and cannot fuse its multiply-adds. The next section says exactly how far
-apart that is allowed to put them.
+way, and is written so that it cannot fuse its multiply-adds on any target — see
+"The portable kernel is one program" below, because the compiler will fuse them
+given half a chance. The next section says exactly how far apart that leaves the
+two.
 
 ## The NEON kernel
 
@@ -99,7 +101,38 @@ contract has no tolerance.
 the same places and in the same order, so the two kernels are bit-identical.
 `golden_test.go` pins that with a vector of expected float32 words: it is the
 only way to check rule one across architectures, since no process can run both
-kernels.
+kernels. Measured against the reference on the same generated case, NEON on
+arm64 and AVX2 on amd64 diverge in the same samples by the same amount, to the
+last digit — which is the same claim arrived at from the other side.
+
+### The rounding barrier this kernel is the reason for
+
+`advanceRotor` binds every product to its own `float32`, and the line most
+easily mistaken for decoration is the last one, `newIm - ampx`. It is not
+decoration, and this kernel is how that was found out.
+
+Before the barriers existed, gc on arm64 compiled the reference's rotor step to
+`FMADDS` twice for the accumulator seed and `FMULS`/`FMSUBS` for the real part —
+the same arithmetic the kernel does, in the same places. But it also contracted
+`t = next - ampx` into a single `FMSUBS next, amp, x`, because `ampx` is a
+product and a subtract following a product fuses exactly as readily as an add
+does. So the reference recovered `t` with one rounding where a packed kernel
+needs two, having already materialised `amp*x` in a register and being unable to
+un-round it.
+
+That one instruction was the entire difference between this kernel and the
+reference on arm64: put a rounding back into `amp*x` and the two agreed to the
+bit. Which sounds harmless, and is exactly the problem. It made the reference a
+poor oracle — nearly bit-identical to a fused backend on one architecture and
+five roundings away from it on another, so "how far apart are these two" had a
+different answer depending on where you asked. The same contraction on amd64 at
+`GOAMD64=v3` is what broke the SSE2 kernel's bit-identity assertion outright.
+
+The barriers close it. `TestPortableKernelDoesNotFuse` asserts the arithmetic
+from inside, and `TestPortableKernelMatchesTheGoldenVector` pins the number
+every target has to arrive at. **Anyone tempted to remove those `float32`
+conversions as noise should read this paragraph first**: the last one in
+`advanceRotor` looks the most redundant and is the one that actually moved.
 
 There is no runtime gate. Advanced SIMD is mandatory in ARMv8-A, so there is no
 arm64 machine that can run the binary and not run the kernel; `cpufeat` reports
@@ -285,28 +318,105 @@ harness. Only its lane fold has to be exact — the accumulation order is rule
 two, and rule two has no tolerance.
 
 What SSE2 _is_ required to be bit-identical to is the portable kernel on the
-same machine, if and only if it makes the same rounding choices. It does not
-have to be, and pinning that would over-constrain the kernel for nothing.
+same machine, if and only if it makes the same rounding choices. It turns out to
+make them, and deliberately: see "The SSE2 kernel" below. A packed kernel with
+no FMA rounds `im'` four times however it is written, so associating exactly as
+`kernel_generic.go` does costs it nothing — same instruction count, same
+dependency chain, same register pressure — and it upgrades the portable kernel
+from an approximate oracle for SSE2 into an exact one.
+`TestSSE2IsBitIdenticalToPortable` and the fuzz harness assert it, so the
+kernel's association cannot quietly drift away from the reference's.
 
-There is a matching wrinkle on arm64 that is easy to trip over. The Go
-specification permits the compiler to fuse `a + b*c` into a single rounded
-operation, and the arm64 backend does exactly that, while the amd64 backend
-cannot because FMA is not part of the amd64 baseline. So `kernel_generic.go` is
-not one program: on arm64 it already emits `FMADD`/`FMSUB` in the same places
-the AVX2 kernel emits `VFMADD231PS`/`VFNMADD231PS`, so the divergence this
-section bounds is almost entirely an amd64 phenomenon. The bound holds on both;
-it is very nearly vacuous on arm64. Never write a test that requires the
-portable kernel to be bit-identical to itself across architectures.
+The claim is unconditional, and it took work to make it so. It rests on the
+portable kernel being one program, which for a while it was not.
 
-Almost, not entirely, and the exception is instructive. The compiler also fuses
-the _last_ line of `stepRotor`, `t = next - ampx`, into `FMSUBS next, amp, x` —
-so the portable kernel on arm64 recovers `t` with one rounding where a packed
-kernel needs two, because a packed kernel has already materialised `amp*x` in a
-register and cannot un-round it. That is the only difference between
-`oscbank_arm64.s` and `kernel_generic.go`, and it costs at most `u*|amp*x|` per
-step, comfortably inside the `6u` budget above; put that one product back
-through a rounding and the two agree to the bit, which
-`TestNEONKernelReproducesTheAssociation` asserts.
+### The portable kernel is one program
+
+The Go specification permits an implementation to contract `a + b*c` into a
+single operation that rounds once instead of twice, and gc takes the permission
+whenever the target has FMA. That is arm64 at every optimization level, and
+amd64 from `GOAMD64=v3` upwards, where FMA stops being an optional extension and
+becomes part of the assumed instruction set. Written the obvious way,
+`kernel_generic.go` was therefore not one program but three, and which one it
+was depended on a build flag nobody had passed yet.
+
+It is tempting to file that under "the bound covers it", and for the bound it is
+true — a rounding either way is a rounding either way. It is not true for
+anything sharper. The SSE2 kernel is bit-identical to the unfused reference by
+construction, so at `GOAMD64=v3` it stopped matching by one to two ULPs. Worse,
+the reference every other backend is measured against was itself moving: the
+same test at v1 and at v3 was not the same test.
+
+So `advanceRotor` now binds every product to its own `float32` before it is added
+or subtracted. An explicit `float32` conversion is a rounding point the
+specification does not let fusion cross, which is the same technique
+`model.chebyshevScalar` uses to keep its own seam closed. `t = im' - amp*x`
+needs the barrier too, and is the one most easily missed: `amp*x` is a product,
+so a subtract following it contracts to an `FMSUB` exactly as readily as an add
+would.
+
+There is a trap in doing this, and it cost a 3x regression before it was
+noticed. Each conversion costs gc's inliner five points. The obvious version --
+one function that indexes the five rotor arrays and does the arithmetic -- came
+to 98 against a budget of 80, stopped being inlined, and started paying a real
+call with five slice headers on the stack for every lane of every sample. The
+arithmetic is therefore in `advanceRotor`, which takes scalars, costs 58, and
+inlines; the indexing stayed in the loop. Anyone editing either should re-check
+`go build -gcflags=-m`, because the failure mode here is a silent 3x, not a
+compile error.
+
+Three consequences worth stating plainly.
+
+The portable kernel is now a genuine oracle. It performs identical arithmetic at
+`GOAMD64=v1`, `v3` and `v4` and on arm64, so a test that pins a backend against
+it pins the same thing everywhere. `TestPortableKernelDoesNotFuse` asserts the
+arithmetic directly and proves its own inputs discriminate; `go build
+-gcflags=-S` shows zero `VFMADD` at every amd64 level and zero `FMADD`/`FMSUB`
+on arm64. Use the compiler's own listing for that check and not `go tool
+objdump`, which does not know the `VFMADD` mnemonics and decodes them as `MOVL`.
+
+The portable kernel is slower on arm64 than it was, because it has given up FMA
+there. That is the right trade: it is the roughly 7x-slower reference, NEON is
+ungated on arm64, and nothing ships the portable path on a machine that has a
+packed one.
+
+And the fused/unfused split in the table above is now a property of the backend
+rather than of the toolchain. Every packed kernel that has FMA fuses; the
+reference never does; the six-rounding gap between them is the same number on
+every target. Note that this cuts against an older instinct: it is now correct
+to require the portable kernel to be bit-identical to itself across
+architectures, and any prose or test still saying otherwise is stale.
+
+## The SSE2 kernel
+
+`oscbank_sse2_amd64.s` takes the same block pair as the AVX2 kernel and splits
+it four ways: XMM is four lanes, so sixteen rotors are four half-blocks — block
+A low, A high, B low, B high — advanced together. This is the case the even
+block count in "Layout" was rounded for, and it needs no tail path.
+
+Its one real design decision is the association, and the SSE2 corollary above is
+the answer: it evaluates `(amp*x + re*sin) + im*cos` strictly left to right,
+which is what `kernel_generic.go` compiles to on amd64, rather than seeding an
+accumulator the way the AVX2 kernel's FMA chain does. Both cost four roundings
+and one dependency chain of two adds. Only one of them is bit-identical to the
+reference. Every operand order in the kernel is load-bearing for that: `ADDPS`
+returns its destination when both operands are NaN and `SUBPS` is not
+commutative at all, so the accumulator is always the destination.
+
+Sixteen XMM registers cannot hold `re`, `im`, `cos`, `sin` and `amp` for four
+half-blocks — that is twenty — so `cos`, `sin` and `amp` are reloaded from L1
+every sample. Twelve loads at two per cycle fit comfortably inside a loop that
+is latency-bound on two dependent adds per half-block, so the reloads are free.
+The `amp*x` register for each half-block is dead the moment its half-block has
+consumed it and is reused in place to carry that half-block's `t` to the fold,
+which is what makes the whole pass fit in sixteen registers at all.
+
+`reduceLanes` has no SSE2 path and should not grow one. `VHADDPS` is SSE3, so a
+4-lane fold would have to transpose four frames with `UNPCKLPS`/`UNPCKHPS`
+first — about four uops per frame, which is what the scalar loop already costs.
+The reduction is memory-shaped, not arithmetic-shaped. A third implementation of
+a summation order that rule two pins exactly would be one more place to get rule
+two wrong, for nothing.
 
 ## Measured performance
 
@@ -318,6 +428,7 @@ they share a thermal state:
 | --------------------------------------- | ------ | --------- | ------------------ |
 | retired four-mode kernel (float64 AVX2) | 4      | 1314–1384 | 329–346            |
 | `oscbank` 4 oscillators x 4 harmonics   | 16     | 1128–1154 | 70–72              |
+| `oscbank` 4 x 4, SSE2 kernel            | 16     | 2850–3400 | 178–212            |
 | `oscbank` 4 x 4, portable kernel        | 16     | ~8000     | ~500               |
 | `oscbank` 4 x 4, NEON kernel            | 16     | TODO      | TODO               |
 
@@ -326,7 +437,20 @@ which is a translation layer: trustworthy for correctness and instruction
 validity, worthless for timing. Fill it in from `go test -bench Bank` on a
 native arm64 host — an Apple silicon MacBook is the intended source — and take
 `BenchmarkBank4x4Portable` in the same run, because the interesting number is
-the ratio and it will not be the amd64 ratio.
+the ratio and it will not be the amd64 ratio. Expect it to be wider than it
+would have been a month ago: the reference gave up FMA on arm64 when it grew its
+rounding barriers, so the portable side of that ratio got slower there.
+
+The SSE2 row lands where a 4-lane unfused kernel should: about 2.1x the AVX2
+kernel and about 3x faster than the portable one. Half the lanes accounts for
+most of the gap and the missing FMA for the rest — two multiplies and two adds
+per rotor and sample where AVX2 issues two FMAs.
+
+That row was measured on a loaded machine, and the honest way to read it is as a
+ratio. The same binary in the same run reported 1336–1372 ns/block for AVX2 and
+8755–11608 for the portable kernel, both around 15% above their own rows above,
+so the absolute SSE2 figure is inflated by roughly the same amount and the
+ratios are what survive.
 
 The first row is history, not something to re-run: `QuadDecayOscillator` and its
 five `.s` files were deleted in Phase 2.1 once nothing rendered through them. It
@@ -368,8 +492,8 @@ note. It clones now, and `TestRenderingIsIndependentOfPresetState` guards it.
   voice's oscillators; the realtime engine still renders voices serially. Packing
   `voices x oscillators` needs per-lane excitation and per-voice output
   separation, which belongs with the audio-path work in Phase 2.
-- AVX2 and NEON are packed. Everything else runs the portable kernel, which is
-  about 7x slower. SSE2 is Phase 2.3; AVX-512 is deferred, because CI cannot
+- AVX2, SSE2 and NEON are packed. Everything else runs the portable kernel,
+  which is about 7x slower. AVX-512 is deferred, because CI cannot
   prove it correct on a runner pool that only sometimes has the instructions.
 - The recursion still costs eight cycles per sample per block pair. Stepping two
   samples at a time through the squared rotation matrix would halve that, at the

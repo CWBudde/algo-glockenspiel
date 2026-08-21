@@ -107,6 +107,14 @@ func FuzzOscBankMatchesGeneric(f *testing.F) {
 
 			if reference != nil {
 				requireWithinContract(t, current.name, got, reference, tolerance)
+
+				if current.bitExactWithPortable {
+					// Stronger than the contract demands, and the reason to
+					// demand it is that it is free: a packed kernel with no FMA
+					// has to round four times either way, so associating as the
+					// reference does costs nothing and buys an exact oracle.
+					requireBitIdentical(t, current.name+" vs portable", got, reference)
+				}
 			}
 		}
 

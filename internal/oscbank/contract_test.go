@@ -45,6 +45,14 @@ type backend struct {
 	// and has FMA. Those are the reference: they must agree with each other to
 	// the bit, and everything else is measured against them.
 	packedFused bool
+
+	// bitExactWithPortable marks a backend that is packed but cannot fuse, and
+	// that therefore chose to associate its arithmetic exactly as
+	// kernel_generic.go does. The contract only holds such a backend to the
+	// bound, but a backend that makes the same rounding choices as the portable
+	// kernel on the same machine has to reproduce it to the bit, and saying so
+	// turns the reference into an exact oracle instead of an approximate one.
+	bitExactWithPortable bool
 }
 
 // availableBackends lists the dispatch paths reachable on the running machine.
@@ -59,6 +67,17 @@ func availableBackends() []backend {
 				HasSSE2: true, HasSSE3: true, HasAVX: true, HasAVX2: true, HasFMA: true,
 			},
 			packedFused: true,
+		})
+	}
+
+	// SSE2 is baseline on amd64, so this entry exists on every amd64 runner and
+	// on no other architecture. Forcing AVX2 and FMA off is the only way to
+	// reach the kernel, since the dispatcher prefers AVX2 whenever it can.
+	if hostFeatures.HasSSE2 {
+		backends = append(backends, backend{
+			name:                 "sse2",
+			features:             cpufeat.Features{HasSSE2: true, HasSSE3: true},
+			bitExactWithPortable: true,
 		})
 	}
 
