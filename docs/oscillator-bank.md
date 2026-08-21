@@ -86,6 +86,39 @@ The portable kernel in `kernel_generic.go` associates the arithmetic the same
 way, and cannot fuse its multiply-adds. The next section says exactly how far
 apart that is allowed to put them.
 
+## The NEON kernel
+
+`oscbank_arm64.s` is the same program on 128-bit registers. A NEON vector holds
+four float32, so one AoSoA block is two registers and the kernel still consumes
+a block pair — sixteen rotors, four vectors — per pass. Taking a whole pair
+rather than a half block at a time is not an efficiency choice: it is what keeps
+the lane fold in `(A.lo + B.lo) + (A.hi + B.hi)` order, and rule two of the
+contract has no tolerance.
+
+`FMLA` and `FMLS` do the work `VFMADD231PS` and `VFNMADD231PS` do on amd64, in
+the same places and in the same order, so the two kernels are bit-identical.
+`golden_test.go` pins that with a vector of expected float32 words: it is the
+only way to check rule one across architectures, since no process can run both
+kernels.
+
+There is no runtime gate. Advanced SIMD is mandatory in ARMv8-A, so there is no
+arm64 machine that can run the binary and not run the kernel; `cpufeat` reports
+`HasASIMD` unconditionally and a kernel must not consult it, because the OS
+capability word it would otherwise be derived from comes back empty under
+emulation.
+
+The reduction is where the two architectures differ in shape rather than in
+arithmetic. `FADDP` adds adjacent pairs of the concatenation of its two source
+vectors, so two instructions halve four frames and a third finishes them —
+`(a0+a1) + (a2+a3)` per frame, with no permute needed to repair the order,
+because `FADDP` keeps the frames in place where `VHADDPS` interleaves them.
+
+One practical note for anyone editing the file: Go's arm64 assembler has no
+mnemonic for floating-point vector multiply, add, subtract or pairwise-add. Only
+`VFMLA` and `VFMLS` exist. The kernel encodes the other four itself through
+`WORD` macros, whose encodings `go tool objdump` decodes back to the expected
+instruction names.
+
 ## The numeric contract
 
 Three rules, and every future backend is judged by them.
@@ -260,10 +293,20 @@ specification permits the compiler to fuse `a + b*c` into a single rounded
 operation, and the arm64 backend does exactly that, while the amd64 backend
 cannot because FMA is not part of the amd64 baseline. So `kernel_generic.go` is
 not one program: on arm64 it already emits `FMADD`/`FMSUB` in the same places
-the AVX2 kernel emits `VFMADD231PS`/`VFNMADD231PS`, and the divergence this
-section bounds is an amd64-only phenomenon. The bound holds on both; it is
-simply slack on arm64. Never write a test that requires the portable kernel to
-be bit-identical to itself across architectures.
+the AVX2 kernel emits `VFMADD231PS`/`VFNMADD231PS`, so the divergence this
+section bounds is almost entirely an amd64 phenomenon. The bound holds on both;
+it is very nearly vacuous on arm64. Never write a test that requires the
+portable kernel to be bit-identical to itself across architectures.
+
+Almost, not entirely, and the exception is instructive. The compiler also fuses
+the _last_ line of `stepRotor`, `t = next - ampx`, into `FMSUBS next, amp, x` —
+so the portable kernel on arm64 recovers `t` with one rounding where a packed
+kernel needs two, because a packed kernel has already materialised `amp*x` in a
+register and cannot un-round it. That is the only difference between
+`oscbank_arm64.s` and `kernel_generic.go`, and it costs at most `u*|amp*x|` per
+step, comfortably inside the `6u` budget above; put that one product back
+through a rounding and the two agree to the bit, which
+`TestNEONKernelReproducesTheAssociation` asserts.
 
 ## Measured performance
 
@@ -276,6 +319,14 @@ they share a thermal state:
 | retired four-mode kernel (float64 AVX2) | 4      | 1314–1384 | 329–346            |
 | `oscbank` 4 oscillators x 4 harmonics   | 16     | 1128–1154 | 70–72              |
 | `oscbank` 4 x 4, portable kernel        | 16     | ~8000     | ~500               |
+| `oscbank` 4 x 4, NEON kernel            | 16     | TODO      | TODO               |
+
+The NEON row is deliberately empty. The kernel is exercised under qemu-user,
+which is a translation layer: trustworthy for correctness and instruction
+validity, worthless for timing. Fill it in from `go test -bench Bank` on a
+native arm64 host — an Apple silicon MacBook is the intended source — and take
+`BenchmarkBank4x4Portable` in the same run, because the interesting number is
+the ratio and it will not be the amd64 ratio.
 
 The first row is history, not something to re-run: `QuadDecayOscillator` and its
 five `.s` files were deleted in Phase 2.1 once nothing rendered through them. It
@@ -317,8 +368,8 @@ note. It clones now, and `TestRenderingIsIndependentOfPresetState` guards it.
   voice's oscillators; the realtime engine still renders voices serially. Packing
   `voices x oscillators` needs per-lane excitation and per-voice output
   separation, which belongs with the audio-path work in Phase 2.
-- Only AVX2 is packed. Everything else runs the portable kernel, which is about
-  7x slower. NEON and SSE2 are Phase 2.3; AVX-512 is deferred, because CI cannot
+- AVX2 and NEON are packed. Everything else runs the portable kernel, which is
+  about 7x slower. SSE2 is Phase 2.3; AVX-512 is deferred, because CI cannot
   prove it correct on a runner pool that only sometimes has the instructions.
 - The recursion still costs eight cycles per sample per block pair. Stepping two
   samples at a time through the squared rotation matrix would halve that, at the
