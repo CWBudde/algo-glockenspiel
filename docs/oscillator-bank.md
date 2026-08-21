@@ -116,6 +116,18 @@ oscillators leave twelve of sixteen lanes empty; past one block pair the cost pe
 rotor is flat to within 10% out to 256 rotors, and drifts slightly _down_ as the
 fixed per-pass overhead amortizes.
 
+## Preset compatibility
+
+Schema v2 exists alongside v1 rather than replacing it. `Load` holds a `"1.0"`
+document to the v1 rules — exactly four modes, no per-mode harmonics, no
+explicit shaper stage — so a file that quietly grew v2 fields is reported
+instead of rendering differently than its version claims. `preset.Upgrade`
+converts, and `Save` preserves the version it was given.
+
+`BarParams.Modes` being a slice made plain struct assignment a bug:
+`scaledParamsForNote` was transposing the synthesizer's own preset on every
+note. It clones now, and `TestRenderingIsIndependentOfPresetState` guards it.
+
 ## Known limits
 
 - Cross-voice lane packing is not implemented. A bank fills its lanes from one
@@ -130,3 +142,9 @@ fixed per-pass overhead amortizes.
 - The recursion still costs eight cycles per sample per block pair. Stepping two
   samples at a time through the squared rotation matrix would halve that, at the
   cost of a second coefficient set and a sample-count tail.
+- The optimizer does not search per-mode harmonic gains. `ParamCodec` sizes
+  itself from the template's mode count but carries per-mode harmonics through
+  unchanged.
+- `model`'s `QuadDecayOscillator` and its five `.s` files are no longer on any
+  rendering path — `Bar` drives the bank. They stay for now as the differential
+  reference; Phase 2.1 decides whether to keep or delete them.
