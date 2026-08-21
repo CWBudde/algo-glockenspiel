@@ -83,8 +83,10 @@ sample is computed one iteration ahead, which is why the kernel reads one sample
 past the end of its input and why the bank hands it a padded scratch buffer.
 
 The portable kernel in `kernel_generic.go` associates the arithmetic the same
-way, and cannot fuse its multiply-adds. The next section says exactly how far
-apart that is allowed to put them.
+way, and is written so that it cannot fuse its multiply-adds on any target — see
+"The portable kernel is one program" below, because the compiler will fuse them
+given half a chance. The next section says exactly how far apart that leaves the
+two.
 
 ## The numeric contract
 
@@ -261,20 +263,65 @@ from an approximate oracle for SSE2 into an exact one.
 `TestSSE2IsBitIdenticalToPortable` and the fuzz harness assert it, so the
 kernel's association cannot quietly drift away from the reference's.
 
-That is a claim about amd64 only, and it is the same wrinkle as the one below:
-it holds because the Go compiler cannot fuse `a + b*c` on a target where FMA is
-not baseline. The bound remains the contract; the bit-identity is a stronger
-property this particular backend happens to be able to offer for free.
+The claim is unconditional, and it took work to make it so. It rests on the
+portable kernel being one program, which for a while it was not.
 
-There is a matching wrinkle on arm64 that is easy to trip over. The Go
-specification permits the compiler to fuse `a + b*c` into a single rounded
-operation, and the arm64 backend does exactly that, while the amd64 backend
-cannot because FMA is not part of the amd64 baseline. So `kernel_generic.go` is
-not one program: on arm64 it already emits `FMADD`/`FMSUB` in the same places
-the AVX2 kernel emits `VFMADD231PS`/`VFNMADD231PS`, and the divergence this
-section bounds is an amd64-only phenomenon. The bound holds on both; it is
-simply slack on arm64. Never write a test that requires the portable kernel to
-be bit-identical to itself across architectures.
+### The portable kernel is one program
+
+The Go specification permits an implementation to contract `a + b*c` into a
+single operation that rounds once instead of twice, and gc takes the permission
+whenever the target has FMA. That is arm64 at every optimization level, and
+amd64 from `GOAMD64=v3` upwards, where FMA stops being an optional extension and
+becomes part of the assumed instruction set. Written the obvious way,
+`kernel_generic.go` was therefore not one program but three, and which one it
+was depended on a build flag nobody had passed yet.
+
+It is tempting to file that under "the bound covers it", and for the bound it is
+true — a rounding either way is a rounding either way. It is not true for
+anything sharper. The SSE2 kernel is bit-identical to the unfused reference by
+construction, so at `GOAMD64=v3` it stopped matching by one to two ULPs. Worse,
+the reference every other backend is measured against was itself moving: the
+same test at v1 and at v3 was not the same test.
+
+So `advanceRotor` now binds every product to its own `float32` before it is added
+or subtracted. An explicit `float32` conversion is a rounding point the
+specification does not let fusion cross, which is the same technique
+`model.chebyshevScalar` uses to keep its own seam closed. `t = im' - amp*x`
+needs the barrier too, and is the one most easily missed: `amp*x` is a product,
+so a subtract following it contracts to an `FMSUB` exactly as readily as an add
+would.
+
+There is a trap in doing this, and it cost a 3x regression before it was
+noticed. Each conversion costs gc's inliner five points. The obvious version --
+one function that indexes the five rotor arrays and does the arithmetic -- came
+to 98 against a budget of 80, stopped being inlined, and started paying a real
+call with five slice headers on the stack for every lane of every sample. The
+arithmetic is therefore in `advanceRotor`, which takes scalars, costs 58, and
+inlines; the indexing stayed in the loop. Anyone editing either should re-check
+`go build -gcflags=-m`, because the failure mode here is a silent 3x, not a
+compile error.
+
+Three consequences worth stating plainly.
+
+The portable kernel is now a genuine oracle. It performs identical arithmetic at
+`GOAMD64=v1`, `v3` and `v4` and on arm64, so a test that pins a backend against
+it pins the same thing everywhere. `TestPortableKernelDoesNotFuse` asserts the
+arithmetic directly and proves its own inputs discriminate; `go build
+-gcflags=-S` shows zero `VFMADD` at every amd64 level and zero `FMADD`/`FMSUB`
+on arm64. Use the compiler's own listing for that check and not `go tool
+objdump`, which does not know the `VFMADD` mnemonics and decodes them as `MOVL`.
+
+The portable kernel is slower on arm64 than it was, because it has given up FMA
+there. That is the right trade: it is the roughly 7x-slower reference, NEON is
+ungated on arm64, and nothing ships the portable path on a machine that has a
+packed one.
+
+And the fused/unfused split in the table above is now a property of the backend
+rather than of the toolchain. Every packed kernel that has FMA fuses; the
+reference never does; the six-rounding gap between them is the same number on
+every target. Note that this cuts against an older instinct: it is now correct
+to require the portable kernel to be bit-identical to itself across
+architectures, and any prose or test still saying otherwise is stale.
 
 ## The SSE2 kernel
 
