@@ -1,6 +1,10 @@
 package synth
 
-import "math"
+import (
+	"math"
+
+	"github.com/cwbudde/glockenspiel/internal/oscbank"
+)
 
 const (
 	defaultRealtimeBlockFrames = 128
@@ -18,6 +22,17 @@ type realtimeVoice struct {
 	buffer []float32
 }
 
+// start points a voice slot at a new stream. It deliberately leaves buffer
+// alone: every path that hands a slot a new stream -- retrigger, voice
+// stealing, a freshly claimed slot -- runs on the audio thread, and the block
+// buffer the slot already owns is exactly the buffer the new stream needs.
+func (v *realtimeVoice) start(note int, stream *Voice, left, right float32) {
+	v.note = note
+	v.stream = stream
+	v.left = left
+	v.right = right
+}
+
 // RealtimeEngine streams and mixes active glockenspiel voices.
 type RealtimeEngine struct {
 	synth         *Synthesizer
@@ -29,11 +44,31 @@ type RealtimeEngine struct {
 	maxVoices     int
 }
 
+// newVoiceSlots returns an empty voice list of maxVoices capacity whose slots
+// all carry a block buffer already.
+//
+// The buffers come out of one backing array, so the whole voice bank is a
+// single allocation and neighbouring voices sit next to each other in cache.
+// The full slice expression keeps a slot from ever reaching into the next one:
+// ProcessBlock is allowed to replace a buffer with a wider one, and appending
+// into a neighbour instead would be silent cross-talk.
+func newVoiceSlots(maxVoices, frames int) []realtimeVoice {
+	slots := make([]realtimeVoice, maxVoices)
+	pool := make([]float32, maxVoices*frames)
+
+	for i := range slots {
+		start := i * frames
+		slots[i].buffer = pool[start : start+frames : start+frames]
+	}
+
+	return slots[:0]
+}
+
 // NewRealtimeEngine creates a block-rendering engine for interactive playback.
 func NewRealtimeEngine(s *Synthesizer) *RealtimeEngine {
 	return &RealtimeEngine{
 		synth:        s,
-		voices:       make([]realtimeVoice, 0, 16),
+		voices:       newVoiceSlots(defaultRealtimeMaxVoices, defaultRealtimeBlockFrames),
 		mixBuffer:    make([]float32, defaultRealtimeBlockFrames*2),
 		masterGain:   0.7,
 		noteDuration: defaultVoiceDuration,
@@ -66,27 +101,60 @@ func (e *RealtimeEngine) NoteOn(note, velocity int) {
 	}
 
 	left, right := gainsForNote(note, e.masterGain)
-	next := realtimeVoice{
-		note:   note,
-		stream: stream,
-		left:   left,
-		right:  right,
-		buffer: make([]float32, defaultRealtimeBlockFrames),
-	}
 
 	for i := range e.voices {
 		if e.voices[i].note == note {
-			e.voices[i] = next
+			e.voices[i].start(note, stream, left, right)
 			return
 		}
 	}
 
 	if len(e.voices) >= e.maxVoices {
-		copy(e.voices[0:], e.voices[1:])
-		e.voices = e.voices[:len(e.voices)-1]
+		// Steal the oldest voice. Rotating the slot to the back rather than
+		// dropping it and appending a new one keeps its buffer, which is
+		// already the right size.
+		last := len(e.voices) - 1
+		stolen := e.voices[0]
+
+		copy(e.voices, e.voices[1:])
+
+		e.voices[last] = stolen
+		e.voices[last].start(note, stream, left, right)
+
+		return
 	}
 
-	e.voices = append(e.voices, next)
+	slot := e.claimSlot()
+	e.voices[slot].start(note, stream, left, right)
+}
+
+// claimSlot extends the voice list by one and returns the index of the slot,
+// which already carries a block buffer.
+//
+// The list is built at maxVoices capacity with every slot's buffer allocated up
+// front, and it only ever reslices within that capacity: ProcessBlock retires
+// voices by swapping them past the end rather than overwriting them, so a
+// retired voice leaves its buffer in the slot the next note-on picks up. That
+// is what keeps this path free of any allocation, including for the first note
+// a slot ever sees.
+//
+// The append is unreachable unless a caller raises maxVoices past the capacity
+// the engine was built with. It is left in so that doing so degrades to an
+// allocation rather than to a panic.
+func (e *RealtimeEngine) claimSlot() int {
+	slot := len(e.voices)
+
+	if slot < cap(e.voices) {
+		e.voices = e.voices[:slot+1]
+	} else {
+		e.voices = append(e.voices, realtimeVoice{})
+	}
+
+	if cap(e.voices[slot].buffer) < defaultRealtimeBlockFrames {
+		e.voices[slot].buffer = make([]float32, defaultRealtimeBlockFrames)
+	}
+
+	return slot
 }
 
 // ProcessBlock renders stereo interleaved output for the next block.
@@ -94,6 +162,12 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 	if frames <= 0 {
 		return nil
 	}
+
+	// One mode change per callback covers the whole block, mixing included.
+	// The per-block scopes inside the bank see the bits already set and cost a
+	// register read each.
+	scope := oscbank.FlushDenormals()
+	defer scope.Restore()
 
 	required := frames * 2
 	if len(e.mixBuffer) < required {
@@ -105,22 +179,36 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 
 	writeIndex := 0
 
-	for _, v := range e.voices {
-		if len(v.buffer) < frames {
+	// Indexing rather than ranging by value is load-bearing: over a copy, the
+	// buffer growth below is written to the copy and discarded, so a block
+	// larger than the buffer reallocates on every block instead of once.
+	for i := range e.voices {
+		v := &e.voices[i]
+
+		if cap(v.buffer) < frames {
 			v.buffer = make([]float32, frames)
 		}
 
 		n := v.stream.RenderInto(v.buffer[:frames])
-		for i := 0; i < n; i++ {
-			sample := v.buffer[i]
-			buf[i*2] += sample * v.left
-			buf[i*2+1] += sample * v.right
+		for j := 0; j < n; j++ {
+			sample := v.buffer[j]
+			buf[j*2] += sample * v.left
+			buf[j*2+1] += sample * v.right
 		}
 
-		if v.stream.Active() {
-			e.voices[writeIndex] = v
-			writeIndex++
+		if !v.stream.Active() {
+			continue
 		}
+
+		// Swap rather than assign: an overwrite would drop the retired voice's
+		// buffer and leave two slots pointing at one buffer. Swapping permutes
+		// the slots, so every buffer stays owned by exactly one slot and the
+		// retired ones wait past the end for claimSlot to hand them out again.
+		if writeIndex != i {
+			e.voices[writeIndex], e.voices[i] = e.voices[i], e.voices[writeIndex]
+		}
+
+		writeIndex++
 	}
 
 	e.voices = e.voices[:writeIndex]
