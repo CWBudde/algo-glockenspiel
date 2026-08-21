@@ -38,13 +38,18 @@
 //
 // They are the same instruction count, the same dependency chain and the same
 // register pressure. But the second one is bit-identical to the portable
-// kernel on amd64, because the Go compiler cannot fuse a*b+c into an FMA on a
-// target where FMA is not baseline, so kernel_generic.go really does emit
-// MULSS, ADDSS, MULSS, ADDSS in exactly this order. This kernel therefore takes
-// the second association deliberately: it costs nothing and it upgrades the
-// portable kernel from an approximate oracle to an exact one. See the "SSE2
-// corollary" in docs/oscillator-bank.md; TestSSE2IsBitIdenticalToPortable and
-// the fuzz harness hold this kernel to it.
+// kernel, so this kernel takes it deliberately: it costs nothing and it
+// upgrades the portable kernel from an approximate oracle into an exact one.
+//
+// That bit-identity is not a property of amd64, and it is worth being precise
+// about why, because the obvious reason is wrong. gc contracts a*b+c into an
+// FMA wherever the target has one, which on amd64 means GOAMD64=v3 and up, not
+// never. kernel_generic.go therefore carries explicit float32 rounding barriers
+// so that it really does round MULSS, ADDSS, MULSS, ADDSS in this order at
+// every GOAMD64 level and on every architecture. Without them the claim below
+// would hold at the amd64 baseline and nowhere else. See "The portable kernel
+// is one program" in docs/oscillator-bank.md, TestPortableKernelDoesNotFuse,
+// TestSSE2IsBitIdenticalToPortable and the fuzz harness.
 //
 // Every operand order below is load-bearing for that claim. ADDPS returns its
 // destination operand when both are NaN, and SUBPS is not commutative at all,
@@ -81,6 +86,14 @@
 // ROTORSTEP advances one half-block by one sample. RE and IM are updated in
 // place; AMPX holds amp*x on entry and this half-block's t on exit. OFF is the
 // half-block's byte offset inside the block pair.
+//
+// The continuations carry inline // comments, which is supported and not an
+// accident: the preprocessor strips the comment before it evaluates the
+// backslash, and the standard library leans on the same thing in md5block_s390x.s,
+// p256_asm_ppc64le.s and x/crypto's chacha20 and poly1305. If you doubt it, put
+// a bogus mnemonic on the second-to-last line of this macro: the assembler
+// reports it at all eight ROTORSTEP call sites, which it could only do if the
+// whole body is inside the macro. Recorded here so the question is not reopened.
 #define ROTORSTEP(RE, IM, AMPX, OFF) \
 	MOVUPS OFF(CX), X13  \ // cos
 	MOVUPS OFF(DX), X14  \ // sin

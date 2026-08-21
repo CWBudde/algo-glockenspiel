@@ -125,12 +125,15 @@ func TestSSE2KernelMatchesPortableKernel(t *testing.T) {
 
 // TestSSE2IsBitIdenticalToPortable is the claim the kernel's association was
 // chosen for. SSE2 has no FMA, so it rounds the recursion in exactly the four
-// places kernel_generic.go does, and the Go compiler cannot fuse those on amd64
-// because FMA is not part of the amd64 baseline. The portable kernel is
-// therefore an exact oracle for this backend, not merely a bounded one.
+// places kernel_generic.go does, which makes the portable kernel an exact
+// oracle for this backend rather than merely a bounded one.
 //
-// This is an amd64-only property and must stay one: on arm64 the compiler does
-// fuse a + b*c, so the portable kernel there is a different program.
+// The claim is unconditional, and it is only unconditional because
+// kernel_generic.go carries explicit float32 rounding barriers. Without them gc
+// would contract its multiply-adds wherever the target has FMA -- GOAMD64=v3
+// and up on amd64, arm64 at any level -- and this test would pass at the
+// baseline and fail everywhere else, which is exactly what it did before those
+// barriers went in. TestPortableKernelDoesNotFuse guards that end of it.
 func TestSSE2IsBitIdenticalToPortable(t *testing.T) {
 	for _, numOsc := range []int{1, 4, 17, 64} {
 		for _, numHarm := range []int{1, 3} {
