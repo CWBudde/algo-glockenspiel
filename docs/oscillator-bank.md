@@ -105,6 +105,24 @@ kernels. Measured against the reference on the same generated case, NEON on
 arm64 and AVX2 on amd64 diverge in the same samples by the same amount, to the
 last digit — which is the same claim arrived at from the other side.
 
+There is no runtime gate. Advanced SIMD is mandatory in ARMv8-A, so there is no
+arm64 machine that can run the binary and not run the kernel; `cpufeat` reports
+`HasASIMD` unconditionally and a kernel must not consult it, because the OS
+capability word it would otherwise be derived from comes back empty under
+emulation.
+
+The reduction is where the two architectures differ in shape rather than in
+arithmetic. `FADDP` adds adjacent pairs of the concatenation of its two source
+vectors, so two instructions halve four frames and a third finishes them —
+`(a0+a1) + (a2+a3)` per frame, with no permute needed to repair the order,
+because `FADDP` keeps the frames in place where `VHADDPS` interleaves them.
+
+One practical note for anyone editing the file: Go's arm64 assembler has no
+mnemonic for floating-point vector multiply, add, subtract or pairwise-add. Only
+`VFMLA` and `VFMLS` exist. The kernel encodes the other four itself through
+`WORD` macros, whose encodings `go tool objdump` decodes back to the expected
+instruction names.
+
 ### The rounding barrier this kernel is the reason for
 
 `advanceRotor` binds every product to its own `float32`, and the line most
@@ -124,7 +142,7 @@ That one instruction was the entire difference between this kernel and the
 reference on arm64: put a rounding back into `amp*x` and the two agreed to the
 bit. Which sounds harmless, and is exactly the problem. It made the reference a
 poor oracle — nearly bit-identical to a fused backend on one architecture and
-five roundings away from it on another, so "how far apart are these two" had a
+six roundings away from it on another, so "how far apart are these two" had a
 different answer depending on where you asked. The same contraction on amd64 at
 `GOAMD64=v3` is what broke the SSE2 kernel's bit-identity assertion outright.
 
@@ -133,24 +151,6 @@ from inside, and `TestPortableKernelMatchesTheGoldenVector` pins the number
 every target has to arrive at. **Anyone tempted to remove those `float32`
 conversions as noise should read this paragraph first**: the last one in
 `advanceRotor` looks the most redundant and is the one that actually moved.
-
-There is no runtime gate. Advanced SIMD is mandatory in ARMv8-A, so there is no
-arm64 machine that can run the binary and not run the kernel; `cpufeat` reports
-`HasASIMD` unconditionally and a kernel must not consult it, because the OS
-capability word it would otherwise be derived from comes back empty under
-emulation.
-
-The reduction is where the two architectures differ in shape rather than in
-arithmetic. `FADDP` adds adjacent pairs of the concatenation of its two source
-vectors, so two instructions halve four frames and a third finishes them —
-`(a0+a1) + (a2+a3)` per frame, with no permute needed to repair the order,
-because `FADDP` keeps the frames in place where `VHADDPS` interleaves them.
-
-One practical note for anyone editing the file: Go's arm64 assembler has no
-mnemonic for floating-point vector multiply, add, subtract or pairwise-add. Only
-`VFMLA` and `VFMLS` exist. The kernel encodes the other four itself through
-`WORD` macros, whose encodings `go tool objdump` decodes back to the expected
-instruction names.
 
 ## The numeric contract
 
