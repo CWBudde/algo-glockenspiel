@@ -4,6 +4,7 @@ package oscbank
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"testing"
 
@@ -88,6 +89,113 @@ func TestPortableKernelHandlesEveryChunkLength(t *testing.T) {
 
 		requireWithinContract(t, fmt.Sprintf("chunk of %d", n), packed, portable, tolerance)
 	}
+}
+
+// sse2Only is the forced feature set that reaches oscBankBlocksSSE2. AVX2 and
+// FMA have to be off: the dispatcher prefers the wider kernel whenever it can,
+// which on real amd64 hardware it usually can.
+var sse2Only = cpufeat.Features{HasSSE2: true, HasSSE3: true}
+
+// TestSSE2KernelMatchesPortableKernel runs the differential grid through the
+// SSE2 dispatch path. The bound is what the contract requires of a packed
+// backend that cannot fuse; the bit-identity below is what this one delivers.
+func TestSSE2KernelMatchesPortableKernel(t *testing.T) {
+	rng := rand.New(rand.NewSource(20260823))
+
+	for _, numOsc := range []int{1, 4, 5, 16, 33} {
+		for _, numHarm := range []int{1, 2, 4} {
+			oscillators := testOscillators(numOsc, numHarm)
+
+			input := make([]float32, 777)
+			input[0] = 1
+
+			for i := 1; i < len(input); i++ {
+				input[i] = float32(rng.NormFloat64() * 0.05)
+			}
+
+			const stateSeed = 4242
+
+			packed, tolerance := renderWithFeatures(t, sse2Only, oscillators, input, stateSeed)
+			portable, _ := renderWithFeatures(t, cpufeat.Features{}, oscillators, input, stateSeed)
+
+			requireWithinContract(t, fmt.Sprintf("sse2 %dx%d", numOsc, numHarm), packed, portable, tolerance)
+		}
+	}
+}
+
+// TestSSE2IsBitIdenticalToPortable is the claim the kernel's association was
+// chosen for. SSE2 has no FMA, so it rounds the recursion in exactly the four
+// places kernel_generic.go does, which makes the portable kernel an exact
+// oracle for this backend rather than merely a bounded one.
+//
+// The claim is unconditional, and it is only unconditional because
+// kernel_generic.go carries explicit float32 rounding barriers. Without them gc
+// would contract its multiply-adds wherever the target has FMA -- GOAMD64=v3
+// and up on amd64, arm64 at any level -- and this test would pass at the
+// baseline and fail everywhere else, which is exactly what it did before those
+// barriers went in. TestPortableKernelDoesNotFuse guards that end of it.
+func TestSSE2IsBitIdenticalToPortable(t *testing.T) {
+	for _, numOsc := range []int{1, 4, 17, 64} {
+		for _, numHarm := range []int{1, 3} {
+			oscillators := testOscillators(numOsc, numHarm)
+
+			// Every chunk length that matters: shorter than a chunk, exactly a
+			// chunk, and a ragged tail past one.
+			for _, n := range []int{1, 2, 7, 255, 256, 257, 700} {
+				input := strikeInput(n)
+				for i := 1; i < len(input); i++ {
+					input[i] = float32(math.Sin(float64(i)) * 0.05)
+				}
+
+				const stateSeed = 8181
+
+				packed, _ := renderWithFeatures(t, sse2Only, oscillators, input, stateSeed)
+				portable, _ := renderWithFeatures(t, cpufeat.Features{}, oscillators, input, stateSeed)
+
+				requireBitIdentical(t, fmt.Sprintf("sse2 %dx%d over %d samples", numOsc, numHarm, n), packed, portable)
+			}
+		}
+	}
+}
+
+// TestSSE2LeavesPaddingLanesAlone guards the half-block offsets. A kernel that
+// walked the wrong 16 bytes would still produce plausible audio, but it would
+// disturb the padding lanes a partly filled bank holds at zero forever.
+func TestSSE2LeavesPaddingLanesAlone(t *testing.T) {
+	cpufeat.SetForcedFeatures(sse2Only)
+
+	defer cpufeat.ResetDetection()
+
+	bank := New(48000)
+	if err := bank.SetOscillators(testOscillators(3, 1)); err != nil {
+		t.Fatalf("SetOscillators: %v", err)
+	}
+
+	input := strikeInput(64)
+	out := make([]float32, len(input))
+	bank.ProcessBlock(input, out)
+
+	for lane := bank.numRotors; lane < len(bank.re); lane++ {
+		if bank.re[lane] != 0 || bank.im[lane] != 0 {
+			t.Fatalf("padding lane %d drifted to (%g, %g)", lane, bank.re[lane], bank.im[lane])
+		}
+	}
+}
+
+func BenchmarkBank4x4SSE2(b *testing.B) {
+	cpufeat.SetForcedFeatures(sse2Only)
+
+	defer cpufeat.ResetDetection()
+
+	benchmarkBank(b, 4, 4)
+}
+
+func BenchmarkBank16x4SSE2(b *testing.B) {
+	cpufeat.SetForcedFeatures(sse2Only)
+
+	defer cpufeat.ResetDetection()
+
+	benchmarkBank(b, 16, 4)
 }
 
 func BenchmarkBank4x4Portable(b *testing.B) {
