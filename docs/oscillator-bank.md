@@ -470,7 +470,9 @@ which is a translation layer: trustworthy for correctness and instruction
 validity, worthless for timing. Fill it in from `go test -bench Bank` on a
 native arm64 host — an Apple silicon MacBook is the intended source — and take
 `BenchmarkBank4x4Portable` in the same run, because the interesting number is
-the ratio and it will not be the amd64 ratio.
+the ratio and it will not be the amd64 ratio. Expect it to be wider than it
+would have been a month ago: the reference gave up FMA on arm64 when it grew its
+rounding barriers, so the portable side of that ratio got slower there.
 
 The SSE2 row lands where a 4-lane unfused kernel should: about 2.1x the AVX2
 kernel and about 3x faster than the portable one. Half the lanes accounts for
