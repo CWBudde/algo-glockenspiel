@@ -78,6 +78,10 @@ func (m ModeParams) Clone() ModeParams {
 // CopyInto deep-copies the mode into dst, reusing dst's harmonics slice when
 // its capacity allows. See [BarParams.CopyInto] for why this exists.
 func (m *ModeParams) CopyInto(dst *ModeParams) {
+	if m == dst {
+		return
+	}
+
 	dst.Amplitude = m.Amplitude
 	dst.Frequency = m.Frequency
 	dst.DecayMs = m.DecayMs
@@ -126,6 +130,10 @@ func (c ChebyshevParams) Clone() ChebyshevParams {
 // CopyInto deep-copies the Chebyshev parameters into dst, reusing dst's gain
 // slice when its capacity allows.
 func (c *ChebyshevParams) CopyInto(dst *ChebyshevParams) {
+	if c == dst {
+		return
+	}
+
 	dst.Enabled = c.Enabled
 	dst.Stage = c.Stage
 	dst.HarmonicGains = copyFloat64s(dst.HarmonicGains, c.HarmonicGains)
@@ -145,8 +153,10 @@ type BarParams struct {
 
 // Clone returns a deep copy, safe to mutate independently of the original.
 //
-// Clone is the convenient form and always allocates. Code on the audio path
-// that already owns a destination should use [BarParams.CopyInto] instead.
+// Clone is the convenient form: it starts from an empty destination, so every
+// non-empty slice it copies is freshly allocated. Code on the audio path that
+// already owns a destination should use [BarParams.CopyInto] instead, which
+// reuses the buffers that destination already holds.
 func (p BarParams) Clone() BarParams {
 	var dst BarParams
 	p.CopyInto(&dst)
@@ -164,11 +174,27 @@ func (p BarParams) Clone() BarParams {
 // gains on every single call, however little the shape actually changed.
 //
 // The copy is deep, so dst never aliases p's backing arrays and the two can be
-// mutated independently, exactly as with Clone. Nil-ness is preserved rather
-// than normalized to an empty slice, because BarParams round-trips through JSON
-// and a nil slice and an empty one do not encode alike. That costs nothing: a
-// nil source needs no buffer to copy into either.
+// mutated independently, exactly as with Clone. That holds even when dst starts
+// out already sharing an array with p, as a shallow struct copy such as
+// dst := *p leaves it: reusing that array would turn the copy into a no-op and
+// quietly keep the two views aliased, so a shared array is replaced rather than
+// written into. See [sharesBacking] for what that check does and does not see.
+// Copying a value into itself is a no-op.
+//
+// Nil-ness is preserved rather than normalized to an empty slice, because
+// BarParams round-trips through JSON and a nil slice and an empty one do not
+// encode alike. That costs nothing: a nil source needs no buffer to copy into
+// either.
 func (p *BarParams) CopyInto(dst *BarParams) {
+	// Copying a value into itself is a no-op, and it has to be spelled out
+	// rather than left to fall through: the overlap handling below would see
+	// dst's arrays aliasing p's, replace them with fresh ones, and — dst being
+	// p — leave p pointing at those empty arrays before anything was read out
+	// of the originals.
+	if p == dst {
+		return
+	}
+
 	dst.InputMix = p.InputMix
 	dst.FilterFrequency = p.FilterFrequency
 	dst.BaseFrequency = p.BaseFrequency
@@ -176,7 +202,7 @@ func (p *BarParams) CopyInto(dst *BarParams) {
 	if p.Modes == nil {
 		dst.Modes = nil
 	} else {
-		if dst.Modes != nil && cap(dst.Modes) >= len(p.Modes) {
+		if dst.Modes != nil && cap(dst.Modes) >= len(p.Modes) && !sharesBacking(dst.Modes, p.Modes) {
 			dst.Modes = dst.Modes[:len(p.Modes)]
 		} else {
 			dst.Modes = make([]ModeParams, len(p.Modes))
@@ -200,7 +226,9 @@ func copyFloat64s(dst, src []float64) []float64 {
 
 	// dst != nil matters for the empty-but-not-nil source: reslicing a nil dst
 	// to length zero would hand back a nil slice and silently turn [] into null.
-	if dst != nil && cap(dst) >= len(src) {
+	// sharesBacking matters for a dst that already aliases src, where reusing
+	// the array would leave the two views pointing at the same elements.
+	if dst != nil && cap(dst) >= len(src) && !sharesBacking(dst, src) {
 		dst = dst[:len(src)]
 	} else {
 		dst = make([]float64, len(src))
@@ -209,6 +237,24 @@ func copyFloat64s(dst, src []float64) []float64 {
 	copy(dst, src)
 
 	return dst
+}
+
+// sharesBacking reports whether dst and src are views onto the same backing
+// array. It is the guard that keeps a copy-into from degenerating into an
+// alias when the destination was seeded from the source, which a shallow struct
+// copy does for free: after dst := *p, dst.Modes and p.Modes are the same array.
+//
+// Comparing the first element of each slice expanded to its full capacity
+// catches every alias a shallow copy or a leading reslice can produce. A slice
+// deliberately offset into the middle of the other's array is not detected;
+// ordering two pointers to decide that needs unsafe, and no caller in this
+// codebase constructs one.
+func sharesBacking[T any](dst, src []T) bool {
+	if len(dst) == 0 || len(src) == 0 {
+		return false
+	}
+
+	return &dst[:cap(dst)][0] == &src[:cap(src)][0]
 }
 
 // Validate checks whether BarParams are well-formed and in supported ranges.

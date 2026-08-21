@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -283,6 +284,45 @@ func TestCopyIntoIsDeepAndReusesTheDestination(t *testing.T) {
 
 	if dst.Modes[0].Harmonics != nil {
 		t.Fatalf("stale harmonics survived the shrink: %v", dst.Modes[0].Harmonics)
+	}
+}
+
+// TestCopyIntoBreaksAliasingWithTheSource covers a destination that already
+// shares its backing arrays with the source, which is what a shallow struct
+// copy leaves behind. Reusing those arrays would make CopyInto a no-op that
+// silently keeps the two values aliased, so the deep-copy guarantee would hold
+// on paper and not in fact.
+func TestCopyIntoBreaksAliasingWithTheSource(t *testing.T) {
+	source := fourModeParams()
+
+	// The shallow copy: dst.Modes, dst.Modes[i].Harmonics and the Chebyshev
+	// gains are all the very same arrays the source holds.
+	dst := source
+	source.CopyInto(&dst)
+
+	dst.Modes[0].Frequency = 12345
+	dst.Modes[0].Harmonics[0] = 777
+	dst.Chebyshev.HarmonicGains[0] = 999
+
+	if source.Modes[0].Frequency != 440 {
+		t.Fatalf("CopyInto left the modes slice aliased: source frequency is %v", source.Modes[0].Frequency)
+	}
+
+	if source.Modes[0].Harmonics[0] != 1 {
+		t.Fatalf("CopyInto left the harmonics aliased: source gain is %v", source.Modes[0].Harmonics[0])
+	}
+
+	if source.Chebyshev.HarmonicGains[0] != 1 {
+		t.Fatalf("CopyInto left the Chebyshev gains aliased: source gain is %v", source.Chebyshev.HarmonicGains[0])
+	}
+
+	// Self-copy has to stay a well-behaved no-op rather than corrupting p.
+	selfCopy := fourModeParams()
+	want := selfCopy.Clone()
+	selfCopy.CopyInto(&selfCopy)
+
+	if !reflect.DeepEqual(selfCopy, want) {
+		t.Fatalf("self-copy changed the value:\n want %+v\n  got %+v", want, selfCopy)
 	}
 }
 
