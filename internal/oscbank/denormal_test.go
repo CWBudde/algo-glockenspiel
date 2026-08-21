@@ -68,7 +68,8 @@ func TestFlushDenormalsDrivesDecayedRotorsToZero(t *testing.T) {
 
 	for chunk := 1; chunk <= maxChunks; chunk++ {
 		func() {
-			defer FlushDenormals().Restore()
+			scope := FlushDenormals()
+			defer scope.Restore()
 
 			flushed.processChunk(silence, out)
 		}()
@@ -155,8 +156,20 @@ func TestFlushDenormalsNestsWithoutClobbering(t *testing.T) {
 	outer := FlushDenormals()
 	inner := FlushDenormals()
 
-	if inner.applied {
-		t.Fatal("expected the inner scope to find the flush bits already set and do nothing")
+	// "Wrote nothing" and "did nothing" are different states and the test has
+	// to tell them apart: the inner scope finds the bits already set, so it
+	// writes no register, but it still holds a pin of its own for as long as it
+	// is open.
+	if inner.changed {
+		t.Fatal("expected the inner scope to find the flush bits already set and write nothing")
+	}
+
+	if !inner.pinned {
+		t.Fatal("the inner scope dropped its thread pin, so its goroutine may migrate off the flushing thread")
+	}
+
+	if !outer.changed || !outer.pinned {
+		t.Fatalf("expected the outer scope to set the bits and hold the pin, got changed=%v pinned=%v", outer.changed, outer.pinned)
 	}
 
 	inner.Restore()
@@ -169,6 +182,55 @@ func TestFlushDenormalsNestsWithoutClobbering(t *testing.T) {
 
 	if after := getFPMode(); after != before {
 		t.Fatalf("mode not restored: before %#x after %#x", before, after)
+	}
+}
+
+// TestRestoreTwiceLeavesALaterScopeAlone is the case a value receiver got
+// wrong: a spent scope restored a second time used to write the register and
+// release a pin that by then belonged to the scope opened after it, which left
+// that scope running unflushed and unpinned without any way to notice.
+func TestRestoreTwiceLeavesALaterScopeAlone(t *testing.T) {
+	if !FlushDenormalsSupported() {
+		t.Skip("no floating-point control register on this architecture")
+	}
+
+	before := getFPMode()
+
+	first := FlushDenormals()
+	first.Restore()
+
+	second := FlushDenormals()
+
+	first.Restore()
+
+	if inside := getFPMode(); inside&fpFlushMask != fpFlushMask {
+		t.Fatalf("the second Restore of a spent scope cleared a live scope's bits, mode %#x", inside)
+	}
+
+	if first.pinned || first.changed {
+		t.Fatal("a restored scope still claims to hold the pin or the saved mode")
+	}
+
+	second.Restore()
+
+	if after := getFPMode(); after != before {
+		t.Fatalf("mode not restored: before %#x after %#x", before, after)
+	}
+}
+
+// TestProcessBlockDoesNotAllocate keeps the scope off the heap. A pointer
+// receiver is only free as long as the scope stays on the stack, and this runs
+// on the audio thread.
+func TestProcessBlockDoesNotAllocate(t *testing.T) {
+	bank := denormalTailBank(t)
+
+	input := make([]float32, blockSamples)
+	out := make([]float32, blockSamples)
+
+	bank.ProcessBlock(input, out)
+
+	if allocs := testing.AllocsPerRun(20, func() { bank.ProcessBlock(input, out) }); allocs != 0 {
+		t.Fatalf("ProcessBlock allocated %.1f times per block, want 0", allocs)
 	}
 }
 

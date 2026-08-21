@@ -44,11 +44,31 @@ type RealtimeEngine struct {
 	maxVoices     int
 }
 
+// newVoiceSlots returns an empty voice list of maxVoices capacity whose slots
+// all carry a block buffer already.
+//
+// The buffers come out of one backing array, so the whole voice bank is a
+// single allocation and neighbouring voices sit next to each other in cache.
+// The full slice expression keeps a slot from ever reaching into the next one:
+// ProcessBlock is allowed to replace a buffer with a wider one, and appending
+// into a neighbour instead would be silent cross-talk.
+func newVoiceSlots(maxVoices, frames int) []realtimeVoice {
+	slots := make([]realtimeVoice, maxVoices)
+	pool := make([]float32, maxVoices*frames)
+
+	for i := range slots {
+		start := i * frames
+		slots[i].buffer = pool[start : start+frames : start+frames]
+	}
+
+	return slots[:0]
+}
+
 // NewRealtimeEngine creates a block-rendering engine for interactive playback.
 func NewRealtimeEngine(s *Synthesizer) *RealtimeEngine {
 	return &RealtimeEngine{
 		synth:        s,
-		voices:       make([]realtimeVoice, 0, defaultRealtimeMaxVoices),
+		voices:       newVoiceSlots(defaultRealtimeMaxVoices, defaultRealtimeBlockFrames),
 		mixBuffer:    make([]float32, defaultRealtimeBlockFrames*2),
 		masterGain:   0.7,
 		noteDuration: defaultVoiceDuration,
@@ -109,13 +129,18 @@ func (e *RealtimeEngine) NoteOn(note, velocity int) {
 }
 
 // claimSlot extends the voice list by one and returns the index of the slot,
-// which already carries a block buffer unless this is the first note to use it.
+// which already carries a block buffer.
 //
-// The list is allocated at maxVoices capacity and only ever reslices within it,
-// and ProcessBlock retires voices by swapping them past the end rather than
-// overwriting them, so a retired voice leaves its buffer in the slot the next
-// note-on picks up. The make below therefore runs at most maxVoices times over
-// the engine's life, and never once the keyboard has been played through.
+// The list is built at maxVoices capacity with every slot's buffer allocated up
+// front, and it only ever reslices within that capacity: ProcessBlock retires
+// voices by swapping them past the end rather than overwriting them, so a
+// retired voice leaves its buffer in the slot the next note-on picks up. That
+// is what keeps this path free of any allocation, including for the first note
+// a slot ever sees.
+//
+// The append is unreachable unless a caller raises maxVoices past the capacity
+// the engine was built with. It is left in so that doing so degrades to an
+// allocation rather than to a panic.
 func (e *RealtimeEngine) claimSlot() int {
 	slot := len(e.voices)
 
@@ -141,7 +166,8 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 	// One mode change per callback covers the whole block, mixing included.
 	// The per-block scopes inside the bank see the bits already set and cost a
 	// register read each.
-	defer oscbank.FlushDenormals().Restore()
+	scope := oscbank.FlushDenormals()
+	defer scope.Restore()
 
 	required := frames * 2
 	if len(e.mixBuffer) < required {

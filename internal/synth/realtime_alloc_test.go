@@ -92,8 +92,11 @@ func TestNoteOnAllocatesNothingBeyondTheVoice(t *testing.T) {
 	}
 }
 
-// TestNoteOnKeepsVoiceSlotBuffers walks the three paths that hand a slot a new
-// stream and checks each keeps the buffer the slot already owned.
+// TestNoteOnKeepsVoiceSlotBuffers covers two of the three paths that hand a
+// slot a new stream -- retrigger and voice stealing -- and checks each keeps
+// the buffer the slot already owned. The third, reclaiming a slot a retired
+// voice left behind, needs a real retirement and lives in
+// TestRetirementThroughProcessBlockKeepsBuffersDistinct.
 func TestNoteOnKeepsVoiceSlotBuffers(t *testing.T) {
 	engine := newTestEngine(t)
 	engine.maxVoices = 3
@@ -130,15 +133,96 @@ func TestNoteOnKeepsVoiceSlotBuffers(t *testing.T) {
 	if !sameBuffer(stolen, last.buffer) {
 		t.Fatal("voice stealing dropped the stolen slot's buffer")
 	}
+}
 
-	// Retire everything, then check the next note-on picks a buffer back up
-	// rather than allocating a fresh one.
-	retired := engine.voices[:cap(engine.voices)]
-	engine.voices = engine.voices[:0]
+// TestRetirementThroughProcessBlockKeepsBuffersDistinct drives the swap-based
+// retirement in ProcessBlock instead of truncating the slice by hand, which is
+// the only way to cover it: the compaction is what could overwrite a retired
+// slot's buffer and leave two live voices rendering into one backing array.
+func TestRetirementThroughProcessBlockKeepsBuffersDistinct(t *testing.T) {
+	engine := newTestEngine(t)
 
+	// Two voices that retire inside the block loop and one that outlives it,
+	// in that order: the survivor has to be moved down past both dead slots,
+	// which is the only arrangement that exercises the compaction at all.
+	engine.noteDuration = 0.01
+
+	engine.NoteOn(73, 100)
+	engine.NoteOn(74, 100)
+
+	engine.noteDuration = defaultVoiceDuration
+
+	engine.NoteOn(72, 100)
+
+	if engine.ActiveVoices() != 3 {
+		t.Fatalf("expected three voices before the block loop, got %d", engine.ActiveVoices())
+	}
+
+	slots := engine.voices[:cap(engine.voices)]
+	survivorBuffer := engine.voices[2].buffer
+	shortBuffers := [][]float32{engine.voices[0].buffer, engine.voices[1].buffer}
+
+	for block := 0; engine.ActiveVoices() > 1 && block < 200; block++ {
+		engine.ProcessBlock(defaultRealtimeBlockFrames)
+	}
+
+	if engine.ActiveVoices() != 1 {
+		t.Fatalf("expected the short voices to retire, %d still active", engine.ActiveVoices())
+	}
+
+	if engine.voices[0].note != 72 {
+		t.Fatalf("the wrong voice survived: note %d", engine.voices[0].note)
+	}
+
+	if !sameBuffer(survivorBuffer, engine.voices[0].buffer) {
+		t.Fatal("the compaction moved the survivor onto a different buffer")
+	}
+
+	assertDistinctBuffers(t, slots[:3])
+
+	// The retired slots keep their buffers past the end of the list, so the
+	// next two note-ons get them back rather than allocating.
+	engine.NoteOn(75, 100)
 	engine.NoteOn(76, 100)
 
-	if !sameBuffer(retired[0].buffer, engine.voices[0].buffer) {
-		t.Fatal("a reclaimed slot allocated a new buffer instead of reusing the retired one")
+	for _, reclaimed := range engine.voices[1:3] {
+		if !sameBuffer(reclaimed.buffer, shortBuffers[0]) && !sameBuffer(reclaimed.buffer, shortBuffers[1]) {
+			t.Fatal("a reclaimed slot did not get one of the retired buffers back")
+		}
+	}
+
+	assertDistinctBuffers(t, engine.voices)
+}
+
+// TestEngineOwnsEveryVoiceBufferFromTheStart is the deterministic half of the
+// note-on allocation claim: no slot can allocate on the audio thread, because
+// every slot the engine will ever hand out already has its buffer.
+func TestEngineOwnsEveryVoiceBufferFromTheStart(t *testing.T) {
+	engine := newTestEngine(t)
+
+	slots := engine.voices[:cap(engine.voices)]
+	if len(slots) != defaultRealtimeMaxVoices {
+		t.Fatalf("expected room for %d voices, got %d", defaultRealtimeMaxVoices, len(slots))
+	}
+
+	for i := range slots {
+		if got := len(slots[i].buffer); got != defaultRealtimeBlockFrames {
+			t.Fatalf("slot %d starts with a %d-frame buffer, want %d", i, got, defaultRealtimeBlockFrames)
+		}
+	}
+
+	assertDistinctBuffers(t, slots)
+}
+
+// assertDistinctBuffers fails unless every slot owns its own backing array.
+func assertDistinctBuffers(t *testing.T, slots []realtimeVoice) {
+	t.Helper()
+
+	for i := range slots {
+		for j := i + 1; j < len(slots); j++ {
+			if sameBuffer(slots[i].buffer, slots[j].buffer) {
+				t.Fatalf("voice slots %d and %d share a buffer", i, j)
+			}
+		}
 	}
 }

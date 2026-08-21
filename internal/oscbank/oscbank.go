@@ -242,7 +242,8 @@ func (b *Bank) ProcessBlock(input, output []float32) {
 	// The rotors are what decay into denormal state, so the scope sits here
 	// rather than at some caller: every path into the recursion goes through
 	// this function, and the save-set-restore is noise against a block.
-	defer FlushDenormals().Restore()
+	scope := FlushDenormals()
+	defer scope.Restore()
 
 	for start := 0; start < len(input); start += blockSamples {
 		end := min(start+blockSamples, len(input))

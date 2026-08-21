@@ -2,17 +2,35 @@ package oscbank
 
 import "runtime"
 
-// DenormalScope is the floating-point mode FlushDenormals replaced. Restoring
-// it puts the caller's mode back; the zero value restores nothing.
+// DenormalScope is the floating-point mode FlushDenormals replaced, together
+// with the OS-thread pin it took. Restore gives both back.
+//
+// Restore takes a pointer receiver so that it can mark the scope spent, which
+// makes a second Restore a no-op rather than a second unlock of a pin the scope
+// no longer holds. Keep the scope in a variable:
+//
+//	scope := oscbank.FlushDenormals()
+//	defer scope.Restore()
+//
+// The one-line defer form does not compile against a pointer receiver, which is
+// the point: a spent copy putting back a mode some later scope is relying on is
+// exactly the bug this shape rules out.
 type DenormalScope struct {
-	saved   uint64
-	applied bool
+	saved uint64
+
+	// pinned is whether this scope holds the OS-thread lock, changed whether it
+	// also wrote the control register. They differ when the mode was already
+	// flushing on entry: nothing to write, but the pin is still this scope's to
+	// hold and to drop.
+	pinned  bool
+	changed bool
 }
 
 // FlushDenormals turns on flush-to-zero and denormals-are-zero for the calling
 // goroutine and returns the scope that undoes it again:
 //
-//	defer oscbank.FlushDenormals().Restore()
+//	scope := oscbank.FlushDenormals()
+//	defer scope.Restore()
 //
 // Why this exists: a rotor that is no longer excited decays geometrically and
 // spends a long stretch of its life in the denormal range, where the hardware
@@ -36,12 +54,15 @@ type DenormalScope struct {
 //
 // What it deliberately does not guarantee: nothing outside the scope, and
 // nothing on other threads. FTZ/DAZ are per-hardware-thread state, so the scope
-// pins the goroutine to its OS thread for its duration. That pin is not about
-// speed -- if the goroutine migrated we would restore the saved mode onto a
-// thread we never touched, while leaving our FTZ bits set on the thread we did,
-// which is exactly the host-clobbering this API is meant to avoid. Restore must
-// therefore run on the goroutine that called FlushDenormals, which a defer
-// gives for free.
+// pins the goroutine to its OS thread for its whole duration -- including when
+// it finds the bits already set and writes nothing. The pin is what makes the
+// guarantee above true at all: an unpinned goroutine can be moved onto a thread
+// whose control register never had the bits, and the flushing would stop
+// silently halfway through a block. It also keeps the restore honest, because a
+// migrated goroutine would put the saved mode onto a thread we never touched
+// while leaving our bits set on the thread we did, which is exactly the
+// host-clobbering this API is meant to avoid. Restore must therefore run on the
+// goroutine that called FlushDenormals, which a defer gives for free.
 //
 // The scope is entered per block rather than once per stream. A stream-wide
 // scope would have to keep the render goroutine locked to its thread for the
@@ -61,27 +82,35 @@ func FlushDenormals() DenormalScope {
 
 	saved := getFPMode()
 	if saved&fpFlushMask == fpFlushMask {
-		// Already flushing: leave the mode alone and drop the pin again, so a
-		// host that set FTZ itself pays nothing here.
-		runtime.UnlockOSThread()
-
-		return DenormalScope{}
+		// Already flushing, so there is nothing to write -- but the pin stays.
+		// Dropping it here would leave the goroutine free to migrate onto a
+		// thread that never had the bits, which is the failure this whole
+		// mechanism exists to prevent.
+		return DenormalScope{saved: saved, pinned: true}
 	}
 
 	setFPMode(saved | fpFlushMask)
 
-	return DenormalScope{saved: saved, applied: true}
+	return DenormalScope{saved: saved, pinned: true, changed: true}
 }
 
-// Restore puts back the floating-point mode FlushDenormals replaced. It must
-// run on the goroutine that opened the scope. Restoring the zero value, or
-// restoring twice, does nothing.
-func (s DenormalScope) Restore() {
-	if !s.applied {
+// Restore puts back the floating-point mode FlushDenormals replaced and drops
+// the OS-thread pin it took. It must run on the goroutine that opened the
+// scope. Restoring the zero value does nothing, and so does restoring a scope
+// that has already been restored: a second call must not write a register or
+// release a pin that by then belongs to some later scope.
+func (s *DenormalScope) Restore() {
+	if !s.pinned {
 		return
 	}
 
-	setFPMode(s.saved)
+	if s.changed {
+		setFPMode(s.saved)
+	}
+
+	s.pinned = false
+	s.changed = false
+
 	runtime.UnlockOSThread()
 }
 
