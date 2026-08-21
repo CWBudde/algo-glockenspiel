@@ -33,29 +33,56 @@ func processChebyshevBlock(input, output, gains []float32) {
 // float32 throughout, the recurrence is evaluated as 2*(x*T_k) - T_(k-1), and
 // the terms accumulate front to back. Anything else and a block's tail would
 // not join up seamlessly with its vectorised body.
+//
+// Every product is bound to its own float32 before it is added or subtracted.
+// That is not decoration: the kernel multiplies and adds in separate,
+// separately rounded instructions, while the compiler is free to contract a
+// multiply followed by an add into one fused instruction that rounds only once
+// -- and does exactly that from GOAMD64=v3 upwards, and on arm64 at any level.
+// The Go specification makes an explicit float32 conversion a rounding point
+// that fusion may not cross, so these conversions are what keeps the seam
+// closed. See TestChebyshevBodyTailAndFallbackAgree.
 func chebyshevScalar(input float32, gains []float32) float32 {
 	if len(gains) == 0 {
 		return input
 	}
 
-	x := input
-	if x < -1 {
-		x = -1
-	}
-
-	if x > 1 {
-		x = 1
-	}
+	x := clampChebyshevInput(input)
 
 	prevPrevTerm := float32(1)
 	prevTerm := x
-	out := gains[0] * prevTerm
+	out := float32(gains[0] * prevTerm)
 
 	for i := 1; i < len(gains); i++ {
-		nextTerm := 2*(x*prevTerm) - prevPrevTerm
-		out += gains[i] * nextTerm
+		doubledProduct := float32(2 * float32(x*prevTerm))
+		nextTerm := doubledProduct - prevPrevTerm
+		out += float32(gains[i] * nextTerm)
 		prevPrevTerm, prevTerm = prevTerm, nextTerm
 	}
 
 	return out
+}
+
+// clampChebyshevInput folds a sample into [-1, 1], the interval the Chebyshev
+// polynomials are defined on.
+//
+// It reproduces the AVX2 kernel's VMAXPS/VMINPS semantics, including their NaN
+// policy: those instructions return their second operand when either operand is
+// NaN, so a NaN sample leaves the kernel as -1. Plain Go comparisons would
+// carry the NaN through instead, and the two paths would disagree on exactly
+// the input an audio buffer should never contain but sometimes does.
+//
+// Clamping is also the better answer of the two. A NaN that survives the shaper
+// poisons the oscillator state it is fed into, and every sample after it; -1 is
+// a click, which is audible, local, and recoverable.
+func clampChebyshevInput(input float32) float32 {
+	if input != input || input < -1 {
+		return -1
+	}
+
+	if input > 1 {
+		return 1
+	}
+
+	return input
 }

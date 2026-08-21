@@ -88,6 +88,26 @@ func TestChebyshevScalarClampsItsInput(t *testing.T) {
 	}
 }
 
+func TestChebyshevScalarClampsNaNToTheLowerEndpoint(t *testing.T) {
+	gains := []float32{1, 0.5, 0.3, 0.2}
+
+	// The policy is the AVX2 kernel's: VMAXPS/VMINPS return their second
+	// operand when either operand is NaN, so a NaN sample comes out as the
+	// value at -1 rather than poisoning every later sample of the oscillator
+	// state it feeds.
+	if got, want := chebyshevScalar(float32(math.NaN()), gains), chebyshevScalar(-1, gains); got != want {
+		t.Fatalf("NaN: got %g, want the value at -1, %g", got, want)
+	}
+
+	if got, want := chebyshevScalar(float32(math.Inf(1)), gains), chebyshevScalar(1, gains); got != want {
+		t.Fatalf("+Inf: got %g, want the value at 1, %g", got, want)
+	}
+
+	if got, want := chebyshevScalar(float32(math.Inf(-1)), gains), chebyshevScalar(-1, gains); got != want {
+		t.Fatalf("-Inf: got %g, want the value at -1, %g", got, want)
+	}
+}
+
 func TestChebyshevScalarWithoutGainsIsTransparent(t *testing.T) {
 	if got := chebyshevScalar(0.75, nil); got != 0.75 {
 		t.Fatalf("got %g, want the input unchanged", got)

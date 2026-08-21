@@ -3,6 +3,7 @@
 package model
 
 import (
+	"math"
 	"testing"
 
 	"github.com/cwbudde/glockenspiel/internal/cpufeat"
@@ -26,6 +27,20 @@ func TestChebyshevBodyTailAndFallbackAgree(t *testing.T) {
 
 	input := chebyshevTestInput(blockLength)
 	gains := []float32{1.0, 0.5, 0.3, 0.2}
+
+	// NaN and both infinities in the body and again in the tail: they are what
+	// the clamp's two implementations are most likely to disagree about, and an
+	// excitation buffer does occasionally contain them.
+	for i, pathological := range map[int]float32{
+		5:  float32(math.NaN()),
+		11: float32(math.Inf(1)),
+		20: float32(math.Inf(-1)),
+		33: float32(math.NaN()),
+		34: float32(math.Inf(1)),
+		35: float32(math.Inf(-1)),
+	} {
+		input[i] = pathological
+	}
 
 	cpufeat.SetForcedFeatures(cpufeat.Features{HasAVX2: true, HasFMA: true})
 
