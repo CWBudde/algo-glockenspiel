@@ -2,15 +2,24 @@
 
 ## Project Structure & Module Organization
 
-This repository is a Go project for a physical-model glockenspiel synthesizer. The CLI entry point lives in `cmd/glockenspiel`. Core implementation is under `internal/`:
+This repository is a Go project for a glockenspiel synthesizer built on a runtime-configurable oscillator bank. It is not a physical model. There are three entry points: `cmd/glockenspiel` (the CLI), `cmd/glockenspiel-wasm` (the WebAssembly build behind the web app) and `cmd/glockenspiel-vst3` (behind `linux && cgo && vst3go`).
 
-- `internal/model`: oscillator, bar model, and parameter types
-- `internal/synth`: note rendering pipeline
-- `internal/preset`: preset JSON load/save/validation
-- `internal/cli`: Cobra commands
-- `internal/optimizer`: optimization interfaces and related code
+One package is public, because a separate module has to import it:
 
-Static assets live in `assets/presets`. Regression fixtures and sample inputs live in `testdata/`. Helper scripts are in `scripts/`.
+- `model`: `Bar`, the parameter types and the Chebyshev shaper. It moved out of `internal/model` in Phase 6.1 — Go enforces `internal/` against the module path, so the plugin could not have imported it there.
+
+The rest is under `internal/`:
+
+- `internal/oscbank`: the synthesis core. A bank of `N` decaying quadrature oscillators with `M` harmonic partials each, in an AoSoA `float32` layout, with packed AVX2, SSE2 and NEON kernels alongside the portable one, plus the denormal-flushing scope the render path opens.
+- `internal/cpufeat`: runtime CPU feature detection, published through an `atomic.Pointer` and overridable in tests so a backend can be exercised on a host that would not otherwise dispatch to it.
+- `internal/synth`: note rendering and the realtime voice engine.
+- `internal/preset`: preset JSON schema v1/v2, load, save, validation.
+- `internal/cli`: Cobra commands.
+- `internal/optimizer`: objectives, optimizer backends, checkpoints.
+
+The web front end lives in `web/` and the VST3 layer in `plugin/vst3`. Static assets live in `assets/presets` and are embedded into the binary. Regression fixtures and sample inputs live in `testdata/`. Helper scripts are in `scripts/`. Design notes are in `docs/`, and [PLAN.md](PLAN.md) tracks phase state.
+
+Assembly under `internal/oscbank` and `model` is Go Plan 9 syntax and is held to a written numeric contract; read [docs/oscillator-bank.md](docs/oscillator-bank.md) before touching a `.s` file or the portable kernel it is measured against.
 
 ## Build, Test, and Development Commands
 
@@ -22,8 +31,11 @@ Static assets live in `assets/presets`. Regression fixtures and sample inputs li
 - `just lint`: run `golangci-lint`
 - `just fmt`: format the repo through `treefmt`
 - `just ci`: run formatting checks, tests, lint, and module tidiness
+- `just build-web`: build the WebAssembly demo through `scripts/build-wasm.sh`
 
 Direct equivalents are available, for example `go test ./...` and `go build ./cmd/glockenspiel`.
+
+`just ci` ends in `check-tidy`, which fails until Phase 6.3 removes the `replace` directive for `github.com/cwbudde/vst3go` from `go.mod`: it is unresolvable without a sibling checkout. CI runs the other three checks and does not run `check-tidy` for that reason.
 
 ## Coding Style & Naming Conventions
 
@@ -33,7 +45,7 @@ Run `just fmt` and `just lint` before opening a PR.
 
 ## Testing Guidelines
 
-Tests use Go’s built-in `testing` package. Place unit tests next to the code they cover, for example `internal/model/params_test.go`. Name tests `TestXxx` and benchmarks `BenchmarkXxx`. Add table-driven tests where inputs vary. For synthesis or preset changes, include coverage for both happy-path behavior and validation failures.
+Tests use Go’s built-in `testing` package. Place unit tests next to the code they cover, for example `model/params_test.go`. Name tests `TestXxx` and benchmarks `BenchmarkXxx`. Add table-driven tests where inputs vary. For synthesis or preset changes, include coverage for both happy-path behavior and validation failures. A new SIMD backend has one more obligation: register it in `availableBackends()` in `internal/oscbank/contract_test.go`, which is what the differential, golden-vector and fuzz harnesses iterate.
 
 ## Commit & Pull Request Guidelines
 

@@ -41,8 +41,10 @@ same.
 State lives in five `[]float32` arrays — `re`, `im`, `cosCoeff`, `sinCoeff`,
 `amp` — in AoSoA blocks of eight rotors, rounded up to an **even** number of
 blocks. Two blocks is what the AVX2 kernel consumes per pass; the even count
-also lets a future 16-lane AVX-512 kernel take two blocks at a time and a 4-lane
-NEON or SSE kernel take half a block, with no separate tail path anywhere.
+also lets a future 16-lane AVX-512 kernel take two blocks at a time, with no
+separate tail path anywhere. The 4-lane kernels take the same block pair rather
+than half a block — see "The NEON kernel" and "The SSE2 kernel" for why the fold
+order rather than the register width decides that.
 
 Unused lanes carry zero coefficients and zero amplitude. They stay at zero
 forever and contribute nothing, so no masking is needed.
@@ -486,10 +488,13 @@ most of the gap and the missing FMA for the rest — two multiplies and two adds
 per rotor and sample where AVX2 issues two FMAs.
 
 That row was measured on a loaded machine, and the honest way to read it is as a
-ratio. The same binary in the same run reported 1336–1372 ns/block for AVX2 and
+ratio. The load average during the run sat between 18 and 36 — five agents
+working in the same checkout — on a machine with far fewer cores than that. The
+same binary in the same run reported 1336–1372 ns/block for AVX2 and
 8755–11608 for the portable kernel, both around 15% above their own rows above,
 so the absolute SSE2 figure is inflated by roughly the same amount and the
-ratios are what survive.
+ratios are what survive. Re-measure the row on an idle machine before quoting
+its absolute number anywhere.
 
 The first row is history, not something to re-run: `QuadDecayOscillator` and its
 five `.s` files were deleted in Phase 2.1 once nothing rendered through them. It
