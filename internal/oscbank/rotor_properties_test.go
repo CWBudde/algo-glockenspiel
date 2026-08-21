@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// The assertions in this file migrated from model.QuadDecayOscillator's tests
-// when that fixed four-mode oscillator was retired. They describe the rotor
+// The assertions in this file migrated from the tests of the fixed four-mode
+// oscillator in model/ when that oscillator was retired. They describe the rotor
 // recursion itself -- its coefficients, its envelope and its long-run stability
 // -- which is behaviour the bank inherited rather than behaviour of the four
 // hand-unrolled modes, so it keeps its coverage here.

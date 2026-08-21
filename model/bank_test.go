@@ -239,10 +239,10 @@ func TestUpdateParamsDoesNotAliasCallerSlices(t *testing.T) {
 	}
 }
 
-// BenchmarkOscBank4x4Block512 sits next to
-// BenchmarkQuadDecayOscillatorProcessBlock32 so the Phase 1 performance gate can
-// be read off one process, under one thermal state: four oscillators with four
-// harmonics each -- sixteen rotors -- against the four-rotor kernel it replaces.
+// BenchmarkOscBank4x4Block512 renders the bar's own working shape -- four
+// oscillators with four harmonics each, sixteen rotors -- through the bank, so
+// the model package keeps a rendering-path benchmark of its own now that the
+// fixed four-mode oscillator it was measured against is gone.
 func BenchmarkOscBank4x4Block512(b *testing.B) {
 	bank := oscbank.New(44100)
 
