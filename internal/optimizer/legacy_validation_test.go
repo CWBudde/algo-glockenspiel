@@ -1,12 +1,12 @@
 package optimizer
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/cwbudde/glockenspiel/internal/model"
 	"github.com/cwbudde/glockenspiel/internal/preset"
@@ -42,9 +42,10 @@ func TestOptimizationImprovesFitAgainstLegacyReference(t *testing.T) {
 		AbsoluteTolerance: 1e-10,
 		RelativeTolerance: 1e-10,
 		StallIterations:   50,
-	}).Optimize(objective.Objective(), initialEncoded, objective.Codec().EncodedBounds(), OptimizeOptions{
+	}).Optimize(context.Background(), objective.Objective(), initialEncoded, objective.Codec().EncodedBounds(), OptimizeOptions{
+		// Bounded by iterations only: pairing a wall-clock budget with a
+		// solution-quality assertion makes the test fail on a loaded runner.
 		MaxIterations: 120,
-		TimeBudget:    3 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Optimize failed: %v", err)

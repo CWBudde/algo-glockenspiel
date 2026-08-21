@@ -30,7 +30,7 @@ What does not match the goal:
 
 - The core is a fixed 4-mode bar model. `NumModes = 4` is a `const` materialized as
   `[NumModes]ModeParams` arrays, a hand-unrolled scalar loop, and five `.s` files.
-- The Chebyshev shaper runs on the excitation *before* the resonators
+- The Chebyshev shaper runs on the excitation _before_ the resonators
   (`internal/model/bar.go:110-115`), so harmonics are not computed on top of the oscillators.
 - 76% of the assembly is dead, and every dead kernel is slower than the live one:
   `block4x4` 37280 ns, `cheby_osc_fused` 49309 ns, `mode_block4` 58985 ns per 512-block.
@@ -94,7 +94,7 @@ Notes:
   an FFT-plan error, and two missing `b.Helper()` calls — are fixed.
 - algo-fft v0.8.0 made the real plans generic; `spectralFFTPlan` now holds
   `*algofft.FastPlanReal[float64, complex128]` and `*algofft.PlanReal[float64, complex128]`.
-- mayfly v0.4.0 is a drop-in at the call site. Actually *using* its new API is Phase 3.
+- mayfly v0.4.0 is a drop-in at the call site. Actually _using_ its new API is Phase 3.
 - `go mod tidy` promoted `golang.org/x/sys` to a direct dependency and dropped the stale
   `justyntemme/vst3go` entries from `go.sum`.
 - `.trunk/` is deleted and gitignored; golangci-lint and the prettier job cover its useful
@@ -170,7 +170,7 @@ Acceptance criteria:
 - [ ] No allocation and no mutex acquisition on the audio path.
 - [ ] Rendered output is bit-identical across backends for a given precision.
 
-## Phase 3: Optimizer
+## Phase 3: Optimizer — DONE (2026-08-21)
 
 Goal: use mayfly as intended, make the objectives measure what they claim to, and make the
 CLI usable.
@@ -209,12 +209,46 @@ Tasks:
 
 Acceptance criteria:
 
-- [ ] Failures print a real error message.
-- [ ] Starting a mayfly fit from the exact optimum yields a cost near zero (regression test).
-- [ ] `--time-budget` stops the run within its budget.
-- [ ] `--resume` continues with the remaining budget and improves on the checkpoint cost.
-- [ ] Objective evaluation is parallel and race-free under `-race`.
-- [ ] Fitting a recorded reference with a leading offset converges.
+- [x] Failures print a real error message. Verified: a bad `--reference` now prints
+      `glockenspiel: open wav "...": no such file or directory` and exits 1; previously it
+      exited 1 with completely empty output.
+- [x] Starting a mayfly fit from the exact optimum yields a cost near zero (regression test).
+- [x] `--time-budget` stops the run within its budget. Verified: `--time-budget 10s` returned
+      after 10.06 s with `stop=time_budget`.
+- [x] `--resume` continues with the remaining budget. Verified: resuming picks up at the
+      checkpoint's exact cost (0.244404) instead of restarting from a random population.
+- [x] Objective evaluation is parallel and race-free under `-race`. Verified: a fit run
+      sustains ~561% CPU; the whole suite passes `go test -race`.
+- [x] Fitting a reference with a leading offset converges
+      (`TestObjectiveFitsReferenceWithLeadingSilence`: aligned cost < 1e-6, unaligned > 100x).
+
+Notes:
+
+- mayfly now uses the real v0.4.0 API: `OptimizeContext`, `WithInitialPopulation`,
+  `WithProgressObserver`, `Result.TerminationReason`, `NewVariant`, and
+  `EnableParallel`/`MaxWorkers`. The hand-rolled deadline poison, progress hook, variant
+  switch and `recover()` are gone.
+- Both backends now optimize the unit cube, so they finally search the same space.
+  `DecayMs` is log-encoded like the frequencies. `Range.Mirror` is deleted — mirroring made
+  the objective a folded many-to-one map that Nelder-Mead chased across the fold.
+- **Checkpoint format is now version 2.0.** Version 1.0 files encoded decay linearly and are
+  refused with an explanatory error rather than silently resumed at the wrong decay.
+- The objective no longer quantizes to PCM16. That destroyed 24-bit reference precision and
+  made the cost piecewise constant, so Nelder-Mead's 1e-8 tolerance was comparing values
+  below the quantization step. `ProjectToPCM16Domain` survives as a reporting aid for the
+  figures `fit` prints about the rendered WAV; the duplicate in `fit.go`, which had the
+  32767-in/32768-out asymmetry, is deleted.
+- The spectral metric is a multi-frame STFT over the whole signal. It previously analysed
+  only the first 4096 samples, ignoring ~95% of a two-second reference and therefore
+  essentially all of the decay it was supposed to be fitting.
+- `rms_avx2_amd64.s` accumulates into float64 YMM accumulators, so a fit is reproducible
+  between AVX2 and non-AVX2 hosts. Its reduction tail is fully VEX-encoded, removing an
+  AVX-to-SSE transition per call.
+- `internal/cpufeat.Detect()` is now lock-free after first use: 1.1 ns/op, down from ~20 ns
+  with an RWMutex plus a Mutex on every audio block.
+- **`simd_dispatch_test_amd64.go` did not end in `_test.go`**, so Go compiled it as
+  production code: its eight SIMD dispatch tests had never run anywhere, and `testing` was
+  linked into the shipped binary. Renamed to `simd_dispatch_amd64_test.go`; all eight pass.
 
 ## Phase 4: Serve And The Optimizer UI
 
@@ -321,4 +355,19 @@ Acceptance criteria:
 
 ## Resume Point
 
-Phase 0 is closed. Phase 3 is in progress; Phases 1, 2, 4, 5, 6 and 7 are open.
+Phases 0 and 3 are closed. Phases 1, 2, 4, 5, 6 and 7 are open.
+
+Phase 1 (the configurable oscillator bank) is the natural next step: Phase 2's SIMD work
+targets the bank's layout, and Phase 4's `serve` builds on the now-context-aware optimizer.
+
+Two findings from Phase 3 that belong to later phases:
+
+- The shipped `assets/presets/default.json` renders at a peak of about 6.17, roughly
+  +15.8 dBFS. Any fit against a normalized recording has to travel ~16 dB of amplitude before
+  modal structure starts to matter, and writing that render to a 16-bit WAV clips it beyond
+  recognition. Either the preset amplitudes need rescaling or `fit` should default to
+  `--normalize-gain`.
+- `fit` computes its resumed budget as `max-iter - checkpoint.Iteration`, but those are
+  different units: `Progress.Iteration` counts progress reports while `max-iter` bounds
+  optimizer iterations. It warns when the subtraction exhausts the budget, but making it
+  exact needs a report count on `Result`.

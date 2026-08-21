@@ -1,12 +1,15 @@
 package optimizer
 
 import (
+	"context"
 	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/cwbudde/glockenspiel/internal/model"
 	"github.com/cwbudde/glockenspiel/internal/preset"
+	"github.com/cwbudde/mayfly"
 )
 
 func TestMayflyConfigRejectsUnsupportedVariant(t *testing.T) {
@@ -15,7 +18,7 @@ func TestMayflyConfigRejectsUnsupportedVariant(t *testing.T) {
 	}
 }
 
-func TestNormalizeDenormalizeVectorRoundTrip(t *testing.T) {
+func TestBoundsNormalizeDenormalizeRoundTrip(t *testing.T) {
 	bounds := Bounds{Ranges: []Range{
 		{Min: -2, Max: 2},
 		{Min: 10, Max: 20},
@@ -23,8 +26,15 @@ func TestNormalizeDenormalizeVectorRoundTrip(t *testing.T) {
 	}}
 	input := []float64{1.5, 12.5, 5}
 
-	normalized := normalizeVector(input, bounds)
-	denormalized := denormalizeVector(normalized, bounds)
+	normalized, err := bounds.Normalize(input)
+	if err != nil {
+		t.Fatalf("Normalize failed: %v", err)
+	}
+
+	denormalized, err := bounds.Denormalize(normalized)
+	if err != nil {
+		t.Fatalf("Denormalize failed: %v", err)
+	}
 
 	for i := range input {
 		if math.Abs(input[i]-denormalized[i]) > 1e-12 {
@@ -33,10 +43,160 @@ func TestNormalizeDenormalizeVectorRoundTrip(t *testing.T) {
 	}
 }
 
+// TestMayflyOptimizerStartsFromInitialGuess is the regression test for the
+// initial guess being discarded: without WithInitialPopulation the run starts
+// uniformly at random and --preset and --resume have no effect at all.
+func TestMayflyOptimizerStartsFromInitialGuess(t *testing.T) {
+	optimum := []float64{12.5, -7.25, 3}
+	bounds := Bounds{Ranges: []Range{
+		{Min: -1000, Max: 1000},
+		{Min: -1000, Max: 1000},
+		{Min: -1000, Max: 1000},
+	}}
+	sphere := func(x []float64) float64 {
+		total := 0.0
+		for i := range x {
+			total += square(x[i] - optimum[i])
+		}
+
+		return total
+	}
+
+	result, err := (&MayflyOptimizer{Population: 8, Seed: 1}).Optimize(
+		context.Background(), sphere, optimum, bounds, OptimizeOptions{MaxIterations: 20},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if result.BestCost > 1e-9 {
+		t.Fatalf("starting from the optimum must stay at the optimum: got %g", result.BestCost)
+	}
+
+	// Starting one unit away, a seeded population refines the guess. An
+	// unseeded one samples a box a thousand times wider and never gets close.
+	near := []float64{optimum[0] + 0.5, optimum[1] + 0.5, optimum[2] + 0.5}
+	nearCost := sphere(near)
+
+	result, err = (&MayflyOptimizer{Population: 8, Seed: 1}).Optimize(
+		context.Background(), sphere, near, bounds, OptimizeOptions{MaxIterations: 60},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if result.BestCost > nearCost*0.5 {
+		t.Fatalf("expected the seeded population to improve on the initial guess: initial=%g best=%g",
+			nearCost, result.BestCost)
+	}
+}
+
+func TestMayflyOptimizerReportsTerminationReason(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}}}
+
+	result, err := (&MayflyOptimizer{Population: 4, Seed: 1}).Optimize(
+		context.Background(), func(x []float64) float64 { return square(x[0]) },
+		[]float64{5}, bounds, OptimizeOptions{MaxIterations: 7},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if result.StopReason != string(mayfly.TerminationMaxIterations) {
+		t.Fatalf("unexpected stop reason: %q", result.StopReason)
+	}
+
+	if result.Iterations != 7 {
+		t.Fatalf("expected the real iteration count, got %d", result.Iterations)
+	}
+
+	if result.Converged {
+		t.Fatal("exhausting the iteration budget is not convergence")
+	}
+}
+
+func TestMayflyOptimizerStopsOnCanceledContext(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// The objective is called from several workers at once, so the trip counter
+	// has to be atomic - exactly the contract parallel evaluation imposes.
+	var calls atomic.Int64
+
+	result, err := (&MayflyOptimizer{Population: 4, Seed: 1}).Optimize(
+		ctx, func(x []float64) float64 {
+			if calls.Add(1) > 20 {
+				cancel()
+			}
+
+			return square(x[0])
+		}, []float64{5}, bounds, OptimizeOptions{MaxIterations: 100000},
+	)
+
+	cancel()
+
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if result.StopReason != "context_canceled" {
+		t.Fatalf("unexpected stop reason: %q", result.StopReason)
+	}
+
+	if result.Iterations >= 100000 {
+		t.Fatalf("expected a truncated run, got %d iterations", result.Iterations)
+	}
+}
+
+func TestMayflyOptimizerStopsOnTimeBudget(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}}}
+
+	result, err := (&MayflyOptimizer{Population: 4, Seed: 1}).Optimize(
+		context.Background(), func(x []float64) float64 { return square(x[0]) },
+		[]float64{5}, bounds, OptimizeOptions{MaxIterations: 100000000, TimeBudget: 50 * time.Millisecond},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if result.StopReason != "time_budget" {
+		t.Fatalf("unexpected stop reason: %q", result.StopReason)
+	}
+}
+
+func TestMayflyOptimizerCountsProgressCallbacks(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}}}
+
+	var updates []Progress
+
+	_, err := (&MayflyOptimizer{Population: 4, Seed: 1}).Optimize(
+		context.Background(), func(x []float64) float64 { return square(x[0]) },
+		[]float64{5}, bounds, OptimizeOptions{
+			MaxIterations: 20,
+			ReportEvery:   5,
+			Report:        func(p Progress) { updates = append(updates, p) },
+		},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if len(updates) != 4 {
+		t.Fatalf("expected one callback per 5 of 20 iterations, got %d", len(updates))
+	}
+
+	for i, update := range updates {
+		if update.Iteration != i+1 {
+			t.Fatalf("Progress.Iteration must count callbacks: update %d reported %d", i, update.Iteration)
+		}
+	}
+}
+
 func TestMayflyOptimizerRejectsNilObjective(t *testing.T) {
 	opt := &MayflyOptimizer{}
 
-	_, err := opt.Optimize(nil, []float64{0.5}, Bounds{Ranges: []Range{{Min: 0, Max: 1}}}, OptimizeOptions{
+	_, err := opt.Optimize(context.Background(), nil, []float64{0.5}, Bounds{Ranges: []Range{{Min: 0, Max: 1}}}, OptimizeOptions{
 		MaxIterations: 2,
 		TimeBudget:    time.Second,
 	})
@@ -57,11 +217,10 @@ func TestMayflyOptimizerFindsKnownMinimum(t *testing.T) {
 		{Min: -10, Max: 10},
 	}}
 
-	result, err := opt.Optimize(func(x []float64) float64 {
+	result, err := opt.Optimize(context.Background(), func(x []float64) float64 {
 		return square(x[0]-1.25) + square(x[1]+2.5)
 	}, initial, bounds, OptimizeOptions{
 		MaxIterations: 80,
-		TimeBudget:    2 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Optimize failed: %v", err)
@@ -113,9 +272,10 @@ func TestMayflyOptimizerImprovesSyntheticReference(t *testing.T) {
 		Variant:    "desma",
 		Population: 8,
 		Seed:       1,
-	}).Optimize(objective.Objective(), initialEncoded, objective.Codec().EncodedBounds(), OptimizeOptions{
+	}).Optimize(context.Background(), objective.Objective(), initialEncoded, objective.Codec().EncodedBounds(), OptimizeOptions{
+		// Bounded by iterations only: pairing a wall-clock budget with a
+		// solution-quality assertion makes the test fail on a loaded runner.
 		MaxIterations: 40,
-		TimeBudget:    2 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Optimize failed: %v", err)
@@ -157,9 +317,8 @@ func TestMayflyOptimizerImprovesLegacyReference(t *testing.T) {
 		Variant:    "desma",
 		Population: 10,
 		Seed:       1,
-	}).Optimize(objective.Objective(), initialEncoded, objective.Codec().EncodedBounds(), OptimizeOptions{
+	}).Optimize(context.Background(), objective.Objective(), initialEncoded, objective.Codec().EncodedBounds(), OptimizeOptions{
 		MaxIterations: 25,
-		TimeBudget:    2 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Optimize failed: %v", err)

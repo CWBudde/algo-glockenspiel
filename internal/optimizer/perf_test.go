@@ -1,6 +1,7 @@
 package optimizer
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -71,7 +72,7 @@ func benchmarkOptimizeLegacyShort(b *testing.B, opt Optimizer) {
 	start := time.Now()
 
 	for i := 0; i < b.N; i++ {
-		result, err := opt.Optimize(objective.Objective(), initial, objective.Codec().EncodedBounds(), OptimizeOptions{
+		result, err := opt.Optimize(context.Background(), objective.Objective(), initial, objective.Codec().EncodedBounds(), OptimizeOptions{
 			MaxIterations: 20,
 			TimeBudget:    time.Second,
 		})

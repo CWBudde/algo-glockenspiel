@@ -1,10 +1,10 @@
 package optimizer
 
 import (
+	"context"
 	"math"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/cwbudde/glockenspiel/internal/model"
 	"github.com/cwbudde/glockenspiel/internal/preset"
@@ -48,9 +48,10 @@ func TestOptimizationRecoversSyntheticReferenceWithinTolerance(t *testing.T) {
 		AbsoluteTolerance: 1e-12,
 		RelativeTolerance: 1e-12,
 		StallIterations:   40,
-	}).Optimize(objective.Objective(), initialEncoded, objective.Codec().EncodedBounds(), OptimizeOptions{
+	}).Optimize(context.Background(), objective.Objective(), initialEncoded, objective.Codec().EncodedBounds(), OptimizeOptions{
+		// Bounded by iterations only: pairing a wall-clock budget with a
+		// solution-quality assertion makes the test fail on a loaded runner.
 		MaxIterations: 120,
-		TimeBudget:    2 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Optimize failed: %v", err)
@@ -91,10 +92,11 @@ func TestOptimizationRespectsBoundsForEdgeCaseInitialConditions(t *testing.T) {
 	}
 
 	result, err := (&SimpleOptimizer{}).Optimize(
+		context.Background(),
 		objective.Objective(),
 		initialEncoded,
 		objective.Codec().EncodedBounds(),
-		OptimizeOptions{MaxIterations: 40, TimeBudget: 1500 * time.Millisecond},
+		OptimizeOptions{MaxIterations: 40},
 	)
 	if err != nil {
 		t.Fatalf("Optimize failed: %v", err)

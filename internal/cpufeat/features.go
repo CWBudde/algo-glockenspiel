@@ -1,62 +1,56 @@
 package cpufeat
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // Features reports CPU capabilities used for optional SIMD dispatch.
 type Features struct {
 	HasAVX2 bool
 }
 
+// Detect is called from the audio path on every processed block, so the common
+// case must not take a lock. The detected value is published once through an
+// atomic pointer; the mutex only serializes the rare test-only overrides.
 var (
-	detectOnce sync.Once
-	detected   Features
-
+	current  atomic.Pointer[Features]
 	detectMu sync.Mutex
-
-	forcedMu sync.RWMutex
-	forced   *Features
 )
 
 // Detect returns the cached CPU feature set for the current process.
 func Detect() Features {
-	forcedMu.RLock()
-
-	override := forced
-
-	forcedMu.RUnlock()
-
-	if override != nil {
-		return *override
+	if f := current.Load(); f != nil {
+		return *f
 	}
 
 	detectMu.Lock()
-	detectOnce.Do(func() {
-		detected = detect()
-	})
+	defer detectMu.Unlock()
 
-	result := detected
-	detectMu.Unlock()
+	// Another goroutine may have published between the load and the lock.
+	if f := current.Load(); f != nil {
+		return *f
+	}
 
-	return result
+	detected := detect()
+	current.Store(&detected)
+
+	return detected
 }
 
 // SetForcedFeatures overrides hardware detection for tests.
 func SetForcedFeatures(f Features) {
-	forcedMu.Lock()
-	defer forcedMu.Unlock()
+	detectMu.Lock()
+	defer detectMu.Unlock()
 
-	copy := f
-	forced = &copy
+	forced := f
+	current.Store(&forced)
 }
 
 // ResetDetection clears forced features and the detection cache.
 func ResetDetection() {
-	forcedMu.Lock()
-	forced = nil
-	forcedMu.Unlock()
-
 	detectMu.Lock()
-	detectOnce = sync.Once{}
-	detected = Features{}
-	detectMu.Unlock()
+	defer detectMu.Unlock()
+
+	current.Store(nil)
 }
