@@ -187,20 +187,29 @@ makes the backends comparable in the first place.
 
 ### The tolerance a test may use
 
-Scaling the bound to a bank means summing the per-rotor injection scale, since
-rotor errors are independent but the output is their sum:
+Scaling the bound to a bank means combining the per-rotor injection scales. They
+combine in quadrature, not in a sum — the same argument that let error compose as
+a square root over samples applies over lanes, because one rotor's rounding tells
+you nothing about its neighbour's:
 
 ```
-E(n) = Σ_r (|amp_r * x(n)| + d_r * ρ_r(n))
+E(n) = sqrt( Σ_r (|amp_r * x(n)| + d_r * ρ_r(n))² )
 ```
+
+The distinction is worth a sentence, because on a wide bank it is the whole
+difference. An ell-1 sum is the adversarial version, larger by up to `sqrt(R)`
+for `R` similarly scaled rotors — sixteen times too generous on a 256-rotor bank
+to catch anything. `errorEnvelope` in `contract_test.go` implements the
+quadrature form above, and a backend implemented against the ell-1 version would
+be built to a bound the harness does not enforce.
 
 `E` is a no-cancellation envelope: it is deliberately not the peak of the
 rendered output. A bank whose rotors happen to cancel produces a small output
 and exactly the same absolute error, so normalizing to the realized peak turns a
-correct backend into a failing one. `contract_test.go` computes `E` by running
-the magnitude recursion `ρ(n+1) = d*ρ(n) + |amp*x(n)|` alongside the render,
-which costs one extra scalar pass and is contractive for the same reason the
-error is.
+correct backend into a failing one. `contract_test.go` derives `E` from the state
+the render starts from, in one extra scalar pass, by running the magnitude
+recursion `ρ(n+1) = d*ρ(n) + |amp*x(n)|` — which is contractive for the same
+reason the error is.
 
 The reduction adds a second term that is easy to forget. Rule two makes every
 backend fold the lanes in the same order with the same number of adds, so the
@@ -215,32 +224,56 @@ where `g` is still 1:
 tol = u * max_n E(n) * (6 * g(N, d_max) + 6 + pairs - 1)
 ```
 
-Measured against the AVX2 kernel, the worst realized ratio over the differential
-grid is about 0.2, and about 0.35 over several million fuzz executions — halving
-both constants makes the harness fail within a second. That is the intended
-calibration. The bound is not a rubber stamp: a new backend that lands inside it
-is conforming, and one that exceeds it has an actual bug rather than bad luck.
+Measured against the AVX2 kernel, the worst realized ratio is about 0.02 over the
+backend-differential grid and about 0.35 over several million fuzz executions —
+halving both constants makes the harness fail within a second. That is the
+intended calibration. The bound is not a rubber stamp: a new backend that lands
+inside it is conforming, and one that exceeds it has an actual bug rather than
+bad luck.
+
+One test asks a larger question than this and needs a larger tolerance.
+`TestBankMatchesScalarReference` compares the bank against a float64 reference
+that derives its own coefficients, so rounding `cos` and `sin` to float32
+perturbs the recursion itself rather than just its arithmetic: the decay factor
+becomes `d(1 + δ)` and after `n` steps the state is off by `(1 + δ)^n`. That bias
+is systematic — it points the same way on every step — so it composes in the
+ell-1 form rather than in quadrature, and `referenceTolerance` adds it on top.
+That term is not part of the backend contract, and no backend should be judged
+by it.
 
 ### Denormals
 
-`FlushDenormals` puts the calling OS thread into flush-to-zero and
-denormals-are-zero for the duration of a block — MXCSR FTZ+DAZ on amd64, FPCR FZ
-on arm64, a documented no-op on wasm — and `DenormalScope.Restore` puts the
-thread's mode back exactly as it was, so a host's own policy survives being
-called. The scope holds the goroutine to its thread while it is open, because
-restoring a saved mode onto a thread that was never in it would be worse than
-not saving it.
+**Today the bank does not touch the floating-point mode.** `processChunk` calls
+`processRotorBlocks` and `reduceLanes` and nothing else, so the rotors run in
+whatever mode the host thread is already in. A rotor ringing down past about
+`1e-38` therefore enters the subnormal range rather than reaching zero, on every
+backend, and slows down sharply while it is there.
 
-That guarantee is part of the numeric contract, not a performance footnote.
-Every backend runs inside the same scope, so they still round the same way as
-each other; what changes is that a rotor ringing down past about `1e-38` reaches
-exactly zero on all of them instead of drifting through the denormal range at
-whatever precision each backend's tail happens to have. The bound above is
-unaffected — flushing only ever moves a value toward zero, and the envelope
-already dominates anything that small — but the _reason_ it is unaffected is
-worth stating: without the scope, denormals are the one place where two
-backends could legitimately disagree by 100% of a very small number. The fuzz
-corpus drives rotors deliberately into that range for exactly that reason.
+That has a consequence for this contract, and it is the one place the derivation
+above is weaker than it looks. Every bound here is relative: it models a rounding
+as `fl(x) = x(1 + δ)` with `|δ| <= u`. That model is exact for normal results and
+wrong for subnormal ones, where the true statement carries an extra absolute term
+of up to `2^-150`. Two backends evaluating the same rotor deep in the subnormal
+range can therefore differ by more than `u` times anything, because an FMA rounds
+its product once while a separate multiply and add round a subnormal product
+first.
+
+The gap is theoretical rather than observed. The fuzz corpus drives rotors into
+that range deliberately — one whole amplitude regime seeds state at `1e-30` and
+one decay regime reaches subnormals within a few samples — and neither this
+harness nor the SSE2 kernel's bit-identity assertion has found a divergence
+there. **The tolerances in this document do not depend on flush-to-zero, and are
+not relaxed to accommodate its absence.** The unflushed subnormal range is where
+the harness is at its strictest, and it stays that way.
+
+**Pending, with Phase 2.4:** the denormal-scope work sets MXCSR FTZ+DAZ on amd64
+and FPCR FZ on arm64 for the duration of a block, restoring the thread's mode
+afterwards so a host's own policy survives being called. When it lands it closes
+the gap above by construction — a rotor ringing down reaches exactly zero on
+every backend instead of drifting through a range where the relative-error model
+does not hold — and this section loses its first three paragraphs. It does not
+change any tolerance, because flushing only ever moves a value toward zero and
+the envelope already dominates anything that small.
 
 ### The SSE2 corollary
 
@@ -320,6 +353,9 @@ note. It clones now, and `TestRenderingIsIndependentOfPresetState` guards it.
 - Only AVX2 is packed. Everything else runs the portable kernel, which is about
   7x slower. NEON and SSE2 are Phase 2.3; AVX-512 is deferred, because CI cannot
   prove it correct on a runner pool that only sometimes has the instructions.
+- Denormals are not flushed. A bank left running with no excitation decays into
+  denormal state and slows down sharply; Phase 2.4 sets MXCSR FTZ/DAZ once per
+  stream. The numeric consequence is in "Denormals" above.
 - The recursion still costs eight cycles per sample per block pair. Stepping two
   samples at a time through the squared rotation matrix would halve that, at the
   cost of a second coefficient set and a sample-count tail.
