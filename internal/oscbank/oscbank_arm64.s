@@ -4,22 +4,41 @@
 
 // Go's arm64 assembler has no mnemonic for floating-point vector multiply, add,
 // subtract or pairwise-add: FMULS/FADDS/FSUBS are the scalar forms, and the only
-// vector float arithmetic it knows is VFMLA and VFMLS. The five macros below
-// encode the missing A64 instructions directly. Every one of them is checked by
-// `go tool objdump`, which decodes them back to the names used here; the
-// operand order matches the assembler's own convention, destination last.
+// vector float arithmetic it knows is VFMLA and VFMLS. The macros below encode
+// the A64 instructions this kernel needs as raw WORD directives.
+//
+// Not all of them have to be encoded by hand, and it is worth saying why they
+// all are, because the reason is what decides whether a future addition belongs
+// in this list. A WORD directive cannot take `V8.S4`, so anything hand-encoded
+// must be handed register numbers -- and Go's assembly preprocessor has no token
+// pasting, so a macro given the number 8 cannot build the name V8 from it. A
+// rotor step mixing both notations would have to take every register twice, once
+// each way. Encoding the supported instructions the same way as the unsupported
+// ones is what lets ROTORSTEP take a register number per operand and read like
+// the arithmetic it performs.
+//
+// Every macro is checked by `go tool objdump`, which decodes each one back to
+// the instruction named here; the operand order matches the assembler's own
+// convention, destination last.
+//
+// Absent from the assembler entirely:
 //
 //	FMUL  Vd.4S, Vn.4S, Vm.4S   0110 1110 001m mmmm 1101 11nn nnnd dddd
 //	FADD  Vd.4S, Vn.4S, Vm.4S   0100 1110 001m mmmm 1101 01nn nnnd dddd
 //	FSUB  Vd.4S, Vn.4S, Vm.4S   0100 1110 101m mmmm 1101 01nn nnnd dddd
+//	FADDP Vd.4S, Vn.4S, Vm.4S   0110 1110 001m mmmm 1101 01nn nnnd dddd
+//
+// Spelled VFMLA, VFMLS and VMOV by the assembler, re-encoded for uniformity:
+//
 //	FMLA  Vd.4S, Vn.4S, Vm.4S   0100 1110 001m mmmm 1100 11nn nnnd dddd
 //	FMLS  Vd.4S, Vn.4S, Vm.4S   0100 1110 101m mmmm 1100 11nn nnnd dddd
-//	FADDP Vd.4S, Vn.4S, Vm.4S   0110 1110 001m mmmm 1101 01nn nnnd dddd
 //	MOV   Vd.16B, Vn.16B        0100 1110 101n nnnn 0001 11nn nnnd dddd
 //
-// The arguments are register numbers rather than register names, because a WORD
-// directive cannot take `V8.S4`. The register map in front of each kernel is
-// therefore load-bearing documentation, not a courtesy.
+// MOV is the ORR alias, which is why VMOV16B takes one source register and
+// writes its number into both operand fields.
+//
+// Because the operands are numbers and not names, the register map in front of
+// oscBankBlocksNEON is load-bearing documentation, not a courtesy.
 #define VFMUL4S(m, n, d)  WORD $(0x6E20DC00 + ((m)<<16) + ((n)<<5) + (d))
 #define VFADD4S(m, n, d)  WORD $(0x4E20D400 + ((m)<<16) + ((n)<<5) + (d))
 #define VFSUB4S(m, n, d)  WORD $(0x4EA0D400 + ((m)<<16) + ((n)<<5) + (d))
@@ -206,12 +225,11 @@ done:
 // samples must be a positive multiple of 4.
 //
 // FADDP is the whole reason this is worth writing in assembly. It adds adjacent
-// pairs of the concatenation of its two source vectors, so one instruction
-// halves two frames at once and a second instruction halves the results again.
-// The tree that falls out is (a0+a1) + (a2+a3) per frame -- exactly
-// reduceLanesGeneric's order, with no permute needed to repair it, because
-// FADDP keeps the frames in place instead of interleaving them the way VHADDPS
-// does on amd64.
+// pairs of the concatenation of its two source vectors, so two instructions
+// halve four frames at once and a third halves the results again. The tree that
+// falls out is (a0+a1) + (a2+a3) per frame -- exactly reduceLanesGeneric's
+// order, with no permute needed to repair it, because FADDP keeps the frames in
+// place instead of interleaving them the way VHADDPS does on amd64.
 TEXT ·reduceLanesNEON(SB), NOSPLIT, $0-24
 	MOVD acc+0(FP), R0
 	MOVD output+8(FP), R1
