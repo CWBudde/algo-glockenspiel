@@ -101,7 +101,9 @@ contract has no tolerance.
 the same places and in the same order, so the two kernels are bit-identical.
 `golden_test.go` pins that with a vector of expected float32 words: it is the
 only way to check rule one across architectures, since no process can run both
-kernels.
+kernels. Measured against the reference on the same generated case, NEON on
+arm64 and AVX2 on amd64 diverge in the same samples by the same amount, to the
+last digit — which is the same claim arrived at from the other side.
 
 There is no runtime gate. Advanced SIMD is mandatory in ARMv8-A, so there is no
 arm64 machine that can run the binary and not run the kernel; `cpufeat` reports
@@ -120,6 +122,35 @@ mnemonic for floating-point vector multiply, add, subtract or pairwise-add. Only
 `VFMLA` and `VFMLS` exist. The kernel encodes the other four itself through
 `WORD` macros, whose encodings `go tool objdump` decodes back to the expected
 instruction names.
+
+### The rounding barrier this kernel is the reason for
+
+`advanceRotor` binds every product to its own `float32`, and the line most
+easily mistaken for decoration is the last one, `newIm - ampx`. It is not
+decoration, and this kernel is how that was found out.
+
+Before the barriers existed, gc on arm64 compiled the reference's rotor step to
+`FMADDS` twice for the accumulator seed and `FMULS`/`FMSUBS` for the real part —
+the same arithmetic the kernel does, in the same places. But it also contracted
+`t = next - ampx` into a single `FMSUBS next, amp, x`, because `ampx` is a
+product and a subtract following a product fuses exactly as readily as an add
+does. So the reference recovered `t` with one rounding where a packed kernel
+needs two, having already materialised `amp*x` in a register and being unable to
+un-round it.
+
+That one instruction was the entire difference between this kernel and the
+reference on arm64: put a rounding back into `amp*x` and the two agreed to the
+bit. Which sounds harmless, and is exactly the problem. It made the reference a
+poor oracle — nearly bit-identical to a fused backend on one architecture and
+six roundings away from it on another, so "how far apart are these two" had a
+different answer depending on where you asked. The same contraction on amd64 at
+`GOAMD64=v3` is what broke the SSE2 kernel's bit-identity assertion outright.
+
+The barriers close it. `TestPortableKernelDoesNotFuse` asserts the arithmetic
+from inside, and `TestPortableKernelMatchesTheGoldenVector` pins the number
+every target has to arrive at. **Anyone tempted to remove those `float32`
+conversions as noise should read this paragraph first**: the last one in
+`advanceRotor` looks the most redundant and is the one that actually moved.
 
 ## The numeric contract
 
