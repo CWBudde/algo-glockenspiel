@@ -15,6 +15,15 @@ func newTestEngine(t *testing.T) *RealtimeEngine {
 	return NewRealtimeEngine(s)
 }
 
+// sameBuffer reports whether two slices share a backing array.
+func sameBuffer(a, b []float32) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+
+	return &a[0] == &b[0]
+}
+
 // TestProcessBlockDoesNotAllocateAfterFirstBlock pins the buffer growth: a
 // block wider than the voice buffer must allocate once, not once per block.
 //
@@ -51,5 +60,85 @@ func TestProcessBlockDoesNotAllocateAfterFirstBlock(t *testing.T) {
 		if got := cap(engine.voices[i].buffer); got < frames {
 			t.Fatalf("voice %d still carries a %d-frame buffer after a %d-frame block", i, got, frames)
 		}
+	}
+}
+
+// TestNoteOnAllocatesNothingBeyondTheVoice pins the fix for the per-note-on
+// block buffer: what NoteOn allocates is what constructing the voice costs, and
+// nothing on top of it.
+//
+// Constructing a voice is not free -- it builds a transposed bar -- and making
+// it free is not this change's job. The comparison against NewVoice is what
+// makes the assertion stable regardless of what that costs.
+func TestNoteOnAllocatesNothingBeyondTheVoice(t *testing.T) {
+	engine := newTestEngine(t)
+
+	const note = 72
+
+	engine.NoteOn(note, 100)
+
+	voiceAllocs := testing.AllocsPerRun(20, func() {
+		if _, err := engine.synth.NewVoice(note, 100, engine.noteDuration, engine.renderOptions); err != nil {
+			t.Fatalf("NewVoice failed: %v", err)
+		}
+	})
+
+	noteOnAllocs := testing.AllocsPerRun(20, func() {
+		engine.NoteOn(note, 100)
+	})
+
+	if noteOnAllocs > voiceAllocs {
+		t.Fatalf("NoteOn allocated %.1f times, the voice it builds costs %.1f", noteOnAllocs, voiceAllocs)
+	}
+}
+
+// TestNoteOnKeepsVoiceSlotBuffers walks the three paths that hand a slot a new
+// stream and checks each keeps the buffer the slot already owned.
+func TestNoteOnKeepsVoiceSlotBuffers(t *testing.T) {
+	engine := newTestEngine(t)
+	engine.maxVoices = 3
+
+	engine.NoteOn(72, 100)
+
+	first := engine.voices[0].buffer
+	if len(first) != defaultRealtimeBlockFrames {
+		t.Fatalf("expected a preallocated block buffer, got len %d", len(first))
+	}
+
+	engine.NoteOn(72, 100)
+
+	if !sameBuffer(first, engine.voices[0].buffer) {
+		t.Fatal("retriggering the same note dropped the slot's buffer")
+	}
+
+	engine.NoteOn(73, 100)
+	engine.NoteOn(74, 100)
+
+	stolen := engine.voices[0].buffer
+
+	engine.NoteOn(75, 100)
+
+	if engine.ActiveVoices() != 3 {
+		t.Fatalf("expected the voice list to stay at maxVoices, got %d", engine.ActiveVoices())
+	}
+
+	last := engine.voices[len(engine.voices)-1]
+	if last.note != 75 {
+		t.Fatalf("expected the stolen slot to carry the new note, got %d", last.note)
+	}
+
+	if !sameBuffer(stolen, last.buffer) {
+		t.Fatal("voice stealing dropped the stolen slot's buffer")
+	}
+
+	// Retire everything, then check the next note-on picks a buffer back up
+	// rather than allocating a fresh one.
+	retired := engine.voices[:cap(engine.voices)]
+	engine.voices = engine.voices[:0]
+
+	engine.NoteOn(76, 100)
+
+	if !sameBuffer(retired[0].buffer, engine.voices[0].buffer) {
+		t.Fatal("a reclaimed slot allocated a new buffer instead of reusing the retired one")
 	}
 }
