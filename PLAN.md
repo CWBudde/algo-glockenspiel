@@ -16,16 +16,16 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 
 ## Phase index
 
-| Phase | Title                        | Status                   |
-| ----- | ---------------------------- | ------------------------ |
-| 0     | Unblock                      | done                     |
-| 1     | Configurable oscillator bank | done                     |
-| 2     | Real SIMD on three targets   | open — 2.3 is next       |
-| 3     | Optimizer                    | done                     |
-| 4     | Serve and the optimizer UI   | open — no code yet       |
-| 5     | Web app                      | open — no code yet       |
-| 6     | Split out VST3               | open — 6.1 partly earned |
-| 7     | Documentation                | open                     |
+| Phase | Title                        | Status                            |
+| ----- | ---------------------------- | --------------------------------- |
+| 0     | Unblock                      | done                              |
+| 1     | Configurable oscillator bank | done                              |
+| 2     | Real SIMD on three targets   | open — 2.1-2.3 done, 2.4 partly   |
+| 3     | Optimizer                    | done                              |
+| 4     | Serve and the optimizer UI   | open — no code yet                |
+| 5     | Web app                      | open — no code yet                |
+| 6     | Split out VST3               | open — 6.1 all but the last audit |
+| 7     | Documentation                | open — 7.1 and 7.2 done           |
 
 ## Status (2026-08-21)
 
@@ -35,29 +35,37 @@ Reviewed against the goal above. What exists and works:
   partials each, both ordinary runtime values, in an AoSoA float32 layout. Sixteen rotors run
   in ~1140 ns per 512-sample block against 1314-1384 ns for the four-rotor kernel it replaced.
 - Exact phase-rotation recursion, correct and drift-free while the decay factor is below 1.
-- One genuinely packed AVX2 oscillator kernel and one packed AVX2 Chebyshev kernel (136 ns).
+- Three packed oscillator kernels — AVX2, SSE2 and NEON — plus one packed AVX2 Chebyshev
+  kernel (136 ns). Everything else runs the portable kernel, roughly 7x slower.
+- A written numeric contract with a harness that enforces it: golden vectors, a backend
+  differential grid, and `FuzzOscBankMatchesGeneric`. The portable kernel is pinned against
+  compiler fusion so it is the same program at `GOAMD64=v1`, `v3`, `v4` and on arm64.
+- Denormal flushing as a scope (`oscbank.FlushDenormals`): MXCSR FTZ+DAZ on amd64, FPCR FZ on
+  arm64, per block and per realtime callback, with the caller's mode restored.
 - Preset schema v1 and v2 side by side with a strict v1 loader, WAV note rendering, offline
   fitting with three metrics, Nelder-Mead and Mayfly v0.4.0 backends, parallel race-free
   objective evaluation, checkpoint and resume, legacy-reference regression tests.
-- CI that builds, vets, race-tests on amd64 **and** arm64, lints, checks formatting, and
-  builds the WASM target.
+- CI that builds, vets, race-tests on amd64 at `GOAMD64=v1` and `v3` **and** on arm64, lints,
+  checks formatting, and builds the WASM target.
 - A deployed browser demo and a VST3 spike.
 
 What does not match the goal:
 
-- Only AVX2 is packed. arm64, WASM and pre-AVX2 amd64 all run `kernel_generic.go`, roughly 7x
-  slower. There is no NEON and no SSE; AVX-512 is deferred, with the reason in `## Deferred`.
-- The backends do not agree numerically. The Chebyshev shaper is float32 in the AVX2 kernel, a
-  separate float32 scalar tail, and float64 in the fallback (`model/bar.go:232`), so output
-  differs by machine and even within one buffer.
-- Lanes are filled from one voice's oscillators and voices still render serially
-  (`internal/synth/realtime.go:105`), so voice count costs linearly.
+- Cross-voice lane packing is missing. A bank fills its lanes from one voice's oscillators and
+  `internal/synth/realtime.go` renders voices serially, so voice count still costs linearly.
+- The audio path still allocates. `synth.NewVoice` builds a whole transposed `model.Bar` per
+  note-on (`internal/synth/synth.go:106`), measured at 19 allocations; see Phase 2.4.
+- The NEON kernel has no measured throughput. It is exercised under qemu-user, which is
+  worthless for timing, so the NEON row of the benchmark table in `docs/oscillator-bank.md` is
+  still `TODO` pending a native arm64 host.
+- AVX-512 is deferred rather than written, with the reason in `## Deferred`.
 - `serve` and the optimizer tab have no code.
 - The web app runs on `ScriptProcessorNode`, master gain never reaches a ringing note, and the
   bottom two octaves of the keyboard are over-unity with an inverted right channel.
 - `go build -tags=vst3go ./plugin/...` fails with four errors, and `go.mod` still carries a
-  `replace` directive that is unresolvable without a sibling checkout.
-- `README.md` describes a four-mode model in `internal/model` and a repo without a web app.
+  `replace` directive that is unresolvable without a sibling checkout, which is also why
+  `just check-tidy` cannot run in CI.
+- The web app has no page in `docs/` (Phase 7.3).
 
 ---
 
@@ -116,12 +124,33 @@ Goal: one kernel shape, three packed backends, one differential test suite.
 
 Acceptance criteria:
 
-- [ ] AVX2, SSE2, and NEON kernels exist, are packed, and use FMA where available.
-      AVX-512 moved to `## Deferred`; the reason is recorded there.
-- [ ] Differential and fuzz tests pass for every backend on amd64 and arm64 CI.
+- [x] AVX2, SSE2, and NEON kernels exist, are packed, and use FMA where available.
+      `oscbank_avx2_amd64.s`, `oscbank_sse2_amd64.s` and `oscbank_arm64.s`. AVX2 uses
+      `VFMADD231PS`/`VFNMADD231PS` and NEON `FMLA`/`FMLS`; SSE2 has no FMA to use and is held
+      to the portable side of the contract instead. AVX-512 moved to `## Deferred`; the reason
+      is recorded there.
+- [x] Differential and fuzz tests pass for every backend on amd64 and arm64 CI.
+      `availableBackends()` in `internal/oscbank/contract_test.go` registers each reachable
+      dispatch path and the differential, golden-vector and fuzz harnesses all iterate it.
+      `.github/workflows/test-unit.yaml` runs `ubuntu-latest` at `GOAMD64=v1` and `v3` and
+      `ubuntu-24.04-arm`, so every kernel is executed by CI on hardware that has it.
 - [ ] A benchmark table in `docs/` records ns/op per backend against the scalar reference.
-- [ ] No allocation and no mutex acquisition on the audio path.
-- [ ] Rendered output is bit-identical across every packed backend that fuses, and the
+      Partly: the table in [docs/oscillator-bank.md](docs/oscillator-bank.md#measured-performance)
+      has AVX2, SSE2 and portable rows, and the NEON row is `TODO`. qemu-user is a translation
+      layer, so a number taken there would be fiction; this stays open until the kernel can be
+      benchmarked on a native arm64 host.
+- [ ] No allocation and no mutex acquisition on the audio path. **Not met, and not quietly
+      reworded so that it passes.** No mutex is taken — `cpufeat.Detect()` is an
+      `atomic.Pointer` load after first use and nothing else on the path locks — and
+      `RealtimeEngine.ProcessBlock` is allocation-free, pinned by
+      `TestProcessBlockDoesNotAllocateAfterFirstBlock`. Note-on is not: `synth.NewVoice`
+      calls `model.NewBar` (`internal/synth/synth.go:106`), which builds a transposed bar and
+      its buffers, measured at 19 allocations per note-on.
+      `TestNoteOnAllocatesNothingBeyondTheVoice` measures `NoteOn` against that cost rather
+      than against zero, and says so in its own comment. What remains is to build the voice
+      without allocating — reusing a `Bar` the engine already owns and reconfiguring it in
+      place rather than constructing a new one per note. Tracked in Phase 2.4.
+- [x] Rendered output is bit-identical across every packed backend that fuses, and the
       portable fallback stays inside the documented per-operation bound. Written up as
       three rules in [docs/oscillator-bank.md](docs/oscillator-bank.md#the-numeric-contract):
       fused packed backends are the reference and agree to the bit; the lane-fold order
@@ -168,10 +197,15 @@ writing kernels the harness has to judge.
       of compounding, and the tolerance that falls out is
       `u * E * (6*g(N,d) + folds)`. Halving either constant makes the fuzz harness fail within
       a second, so it is a bound rather than a rubber stamp.
-- [ ] Collapse the three-way Chebyshev divergence: the AVX2 kernel is float32
-      (`model/cheby_avx2_amd64.s`), its tail is a second float32 implementation
-      (`chebyshev4Scalar`, `model/cheby_avx2_amd64.go:22-28`), and the fallback is float64
-      (`model/bar.go:206,232`).
+- [x] Collapse the three-way Chebyshev divergence: the AVX2 kernel was float32
+      (`model/cheby_avx2_amd64.s`), its tail a second float32 implementation and the fallback
+      float64. Done: `model/cheby.go` now holds one definition of what the shaper computes.
+      `processChebyshevBlock` dispatches to the AVX2 kernel only for the specialised gain
+      count and finishes every remaining sample — tail, non-AVX2 hosts and any other gain
+      count — through the single float32 `chebyshevScalar`. `Bar` keeps its gains in float32
+      (`model/bar.go:28-30`) so nothing converts per sample, and
+      `TestChebyshevBodyTailAndFallbackAgree` pins that the three agree. CI builds at
+      `GOAMD64=v3` specifically to catch the seam reopening through compiler fusion.
 - [x] Extend `internal/cpufeat.Features` with `HasSSE2`, `HasSSE3`, `HasAVX`, `HasAVX512F`,
       `HasAVX512DQ` and arm64 `HasASIMD`. `Detect()` keeps its `atomic.Pointer` publication
       unchanged; only the flag set grew. `features_arm64.go` reports ASIMD unconditionally,
@@ -208,11 +242,21 @@ Already true, do not redo:
 Goal: two more packed kernels, each green under the 2.2 harness on both CI runners. AVX-512 is
 deferred — see `## Deferred` for why a green CI would not be evidence of correctness.
 
-- [ ] `internal/oscbank/oscbank_arm64.s` — `FMLA V*.S4`, 4 lanes, no runtime gate (NEON is
-      arm64 baseline).
-- [ ] `internal/oscbank/oscbank_sse2_amd64.s` — XMM, 4 lanes, gated on `HasSSE2`.
-- [ ] Extend the `docs/oscillator-bank.md` performance table with one row per backend against
-      the scalar reference, and update "Known limits", which still reads "Only AVX2 is packed".
+- [x] `internal/oscbank/oscbank_arm64.s` — `FMLA`/`FMLS` on `V*.S4`, four lanes, no runtime
+      gate (Advanced SIMD is mandatory in ARMv8-A). It consumes a whole block pair rather than
+      a half block, which is what keeps the lane fold in the order rule two pins. Go's arm64
+      assembler has no mnemonic for vector multiply, add, subtract or pairwise-add, so the
+      kernel encodes those four itself through `WORD` macros.
+- [x] `internal/oscbank/oscbank_sse2_amd64.s` — XMM, four lanes, gated on `HasSSE2`. It splits
+      a block pair four ways and associates exactly as `kernel_generic.go` does, which makes
+      the portable kernel an exact oracle for it rather than an approximate one
+      (`TestSSE2IsBitIdenticalToPortable`).
+- [x] Extend the `docs/oscillator-bank.md` performance table with one row per backend against
+      the scalar reference, and update "Known limits", which used to read "Only AVX2 is
+      packed". Both done. One number is still outstanding rather than wrong: the NEON row
+      reads `TODO`, because the kernel is only reachable here under qemu-user and a timing
+      taken through a translation layer would be fiction. The doc says where to take it from
+      and what to take alongside it.
 
 ### Phase 2.4: The audio path
 
@@ -228,13 +272,22 @@ Goal: the render loop neither allocates nor stalls.
       save-set-restore costs against a block that takes thousands. No-op on `GOARCH=wasm`,
       which exposes no control register. See "Denormals" in `docs/oscillator-bank.md` for why
       the numeric contract is still measured unflushed.
-- [ ] Remove the per-NoteOn allocation at `internal/synth/realtime.go:74`. The `mixBuffer` and
-      per-voice buffer growth at `:99-101` and `:109-111` are grow-only and already amortized;
-      the note-on path is not.
+- [x] Remove the per-NoteOn block-buffer allocation. Done: `newVoiceSlots` builds the whole
+      voice bank at `maxVoices` capacity and cuts every slot's block buffer out of one backing
+      array, with a full slice expression so a slot can never append into its neighbour.
+      `claimSlot` only reslices within that capacity, and `ProcessBlock` retires a voice by
+      swapping it past the end instead of overwriting it, so a retired voice leaves its buffer
+      in the slot the next note-on picks up. Retrigger and voice stealing keep the slot's
+      buffer too. `internal/synth/realtime_alloc_test.go` covers all four paths.
+      What is left of this line is not the buffer but the voice: `synth.NewVoice` still builds
+      a whole transposed `model.Bar` per note-on (`internal/synth/synth.go:106`), 19
+      allocations, and that is why the phase's "no allocation on the audio path" criterion is
+      not ticked.
 - [ ] Pack `voices x oscillators` into lanes. Deferred from Phase 1: a bank currently fills its
-      lanes from one voice and `internal/synth/realtime.go:105` renders voices serially, so
-      voice count costs linearly. This needs per-lane excitation and per-voice output
-      separation, which is a redesign of the voice engine.
+      lanes from one voice and the render loop in `RealtimeEngine.ProcessBlock`
+      (`internal/synth/realtime.go:185`) walks voices serially, so voice count costs linearly.
+      This needs per-lane excitation and per-voice output separation, which is a redesign of
+      the voice engine.
 - [ ] Optional: step two samples at a time through the squared rotation matrix. The recursion
       costs eight cycles per sample per block pair; this halves it at the cost of a second
       coefficient set and a sample-count tail.
@@ -335,11 +388,11 @@ Acceptance criteria:
 
 Goal: fix the three level bugs. All of them live in Go and are unit-testable without a browser.
 
-- [ ] Make master gain reach sounding notes. `internal/synth/realtime.go:68` bakes
+- [ ] Make master gain reach sounding notes. `internal/synth/realtime.go:103` bakes
       `gainsForNote(note, e.masterGain)` into the voice at NoteOn, and `ProcessBlock`
-      (`:93-133`) multiplies only by the stored `v.left`/`v.right`, so `SetMasterGain` has no
+      (`:161-221`) multiplies only by the stored `v.left`/`v.right`, so `SetMasterGain` has no
       effect on a ringing note.
-- [ ] Fix `gainsForNote` (`internal/synth/realtime.go:140-153`). It hardcodes `firstNote = 72`
+- [ ] Fix `gainsForNote` (`internal/synth/realtime.go:228-241`). It hardcodes `firstNote = 72`
       over 24 semitones while the UI spans MIDI 36 to 96 (`web/ui.js:3-4`); note 36 yields
       pan -2.48, left 1.74x gain and an inverted right channel.
 - [ ] Resolve the default preset's level, carried over from Phase 3: `assets/presets/default.json`
@@ -412,11 +465,15 @@ Goal: a public model package shaped around the runtime-configurable bank, not ar
       in `cb72e96`: the package is `model/` and `plugin/vst3/params.go:3` imports it normally.
       This was the blocker — Go enforces `internal/` against the module path, so a separate
       module could not have imported it even with a `replace` directive.
-- [ ] Unexport `NumModes`. `model/params.go:13` still exports it and
-      `plugin/vst3/params.go:49-52,83-86,112,133-136` hardcodes `[model.NumModes]float64`
-      arrays, which is exactly what this phase says must not happen. Give the two callers that
-      genuinely need a fixed count their own constant: the v1 preset schema in
-      `internal/preset` and the VST3 parameter grid in `plugin/vst3`.
+- [x] Unexport `NumModes`. Already done, in `54358ff` on the Phase 1 branch (PR #2) — this
+      line was written against the state before that commit and had gone stale. The constant
+      does not survive anywhere: `git grep NumModes` finds only the `Bar.NumModes()` accessor
+      (`model/bar.go:170`), which reports a runtime count and is not a fixed size. Both
+      callers that genuinely need a frozen count declare their own: `v1ModeCount = 4` in
+      `internal/preset/preset.go:28`, scoped to the compatibility layer, and
+      `numModes = 4`/`numChebyshevGains = 4` in `plugin/vst3/params.go:11-12`, which the same
+      commit also split apart because the two counts are unrelated and a single-mode bar used
+      to lose Chebyshev gains 2-4.
 - [ ] Audit the rest of the exported surface against the bank. The plugin uses `Bar`, `NewBar`,
       `BarParams`, `ModeParams`, `ChebyshevParams` and the twelve `*Min`/`*Max` range constants;
       each has to make sense for a variable mode count.
@@ -454,30 +511,42 @@ Goal: make the docs describe the project that exists.
 
 Acceptance criteria:
 
-- [ ] README describes what the repo actually contains.
-- [ ] The web app is documented.
+- [x] README describes what the repo actually contains.
+- [ ] The web app is documented. `web/README.md` covers building and serving it; it has no
+      page in `docs/`, which is Phase 7.3.
 - [ ] `out/` is migrated and removed.
 
 ### Phase 7.1: README
 
 Goal: one accurate front page, built around the web app.
 
-- [ ] Rewrite `README.md` around the web app as the primary product with the CLI second.
-- [ ] Fix the Status section: "four-mode bar model with quadrature decay oscillators" (`:10`) is
-      no longer what the core is, and "VST or DAW plugin support" and "GUI tooling" are listed
-      as not implemented (`:23-24`) five lines below an "Implemented" list that contradicts it.
-- [ ] Fix the layout tree (`:29-40`): it names `internal/model`, which moved, and omits `web/`,
+- [x] Rewrite `README.md` around the web app as the primary product with the CLI second.
+- [x] Fix the Status section: "four-mode bar model with quadrature decay oscillators" was no
+      longer what the core is, and "VST or DAW plugin support" and "GUI tooling" were listed
+      as not implemented five lines below an "Implemented" list that contradicted it.
+- [x] Fix the layout tree: it named `internal/model`, which moved, and omitted `web/`,
       `plugin/`, `docs/`, `scripts/`, `internal/oscbank`, `internal/cpufeat` and
       `cmd/glockenspiel-wasm`.
+- [x] Also fixed while in there: the three links that pointed at absolute paths on one
+      developer's filesystem (`/mnt/projekte/...`) and so were broken for every reader; the
+      description of the synthesis chain as "physical-model", which the goal explicitly is
+      not; and the `fit` flag list, which was missing `--bounds`, `--align` and
+      `--normalize-gain` and described `--checkpoint-interval 0` as disabling only
+      intermediate writes when it disables the final checkpoint too.
 
 ### Phase 7.2: Docs against the code
 
 Goal: no path in the docs points at something that moved.
 
-- [ ] Refresh `AGENTS.md`'s package list — it still describes `internal/model` and omits
+- [x] Refresh `AGENTS.md`'s package list — it described `internal/model` and omitted
       `internal/oscbank` and `internal/cpufeat`.
-- [ ] Refresh `docs/user-guide.md` against the current flag set and the v1/v2 preset schema.
-- [ ] Update "Known limits" in `docs/oscillator-bank.md` as Phase 2 closes its items.
+- [x] Refresh `docs/user-guide.md` against the current flag set and the v1/v2 preset schema.
+      It was missing `--align` and `--normalize-gain` on `fit`, and its parameter guide
+      described `modes` as a fixed four with no mention of v2's per-mode harmonics or explicit
+      Chebyshev stage.
+- [x] Update "Known limits" in `docs/oscillator-bank.md` as Phase 2 closes its items. The
+      packed-backend and denormal limits are current; cross-voice lane packing, the two-sample
+      step and the optimizer's blindness to per-mode harmonic gains are all still real.
 
 ### Phase 7.3: The web app and the leftovers
 
@@ -513,12 +582,32 @@ Goal: document what is undocumented, retire what is finished.
 
 Phases 0, 1 and 3 are closed. Phases 2, 4, 5, 6 and 7 are open.
 
-**Next: Phase 2.3.** 2.1 and 2.2 are closed: the dead assembly is gone, every layout an `.s`
-file assumes is pinned at compile time, and the numeric contract is written down with a harness
-that enforces it. The NEON and SSE2 kernels can now be written against a decided contract
-instead of a guess — and `availableBackends()` in `internal/oscbank/contract_test.go` is the one
-place each of them has to be registered.
+**Phase 2 is closed except for two items of 2.4, and they want the same thing.** 2.1, 2.2 and
+2.3 are done: the dead assembly is gone, every layout an `.s` file assumes is pinned at compile time,
+the numeric contract is written down with a harness that enforces it, and three packed kernels
+— AVX2, SSE2, NEON — are registered in `availableBackends()`
+(`internal/oscbank/contract_test.go`) and green on both CI runners. 2.4 has its denormal scope
+and its per-note-on block buffers. What is left of 2.4:
 
-Two subphases are independent of the SIMD work and can be picked up whenever: **5.1** (three
-level bugs, all in Go, all unit-testable) and **7.1** (the README, which is wrong in a way a
-first-time reader will notice immediately).
+- **Cross-voice lane packing.** A bank fills its lanes from one voice, so four oscillators
+  leave twelve of sixteen lanes empty and `RealtimeEngine.ProcessBlock` renders voices
+  serially. This is a redesign of the voice engine, not a patch: it needs per-lane excitation
+  and per-voice output separation.
+- **The note-on allocation.** `synth.NewVoice` builds a fresh `model.Bar` per note, 19
+  allocations, which is the one reason Phase 2's "no allocation on the audio path" criterion
+  is unticked. The fix is to reconfigure a bar the engine already owns instead of constructing
+  one, which is also what lane packing needs from the model.
+
+Both want the same thing from `model.Bar` — a bar that can be pointed at new parameters
+instead of rebuilt — so doing them independently means doing that model work twice.
+
+**Also outstanding, and not code:** the NEON row of the benchmark table in
+`docs/oscillator-bank.md` needs a native arm64 host. Everything here runs the kernel under
+qemu-user, which is trustworthy for correctness and worthless for timing, so the row stays
+`TODO` rather than being filled in with a translated number. Take
+`BenchmarkBank4x4Portable` in the same run — the interesting figure is the ratio, and it will
+not be the amd64 ratio.
+
+Independent of all of that, and pickable in any order: **5.1** (three level bugs, all in Go,
+all unit-testable), **4.1** (the `serve` skeleton) and **7.3** (a docs page for the web app,
+which has none).
