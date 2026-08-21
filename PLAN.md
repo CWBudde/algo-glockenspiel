@@ -50,8 +50,6 @@ What does not match the goal:
 - The backends do not agree numerically. The Chebyshev shaper is float32 in the AVX2 kernel, a
   separate float32 scalar tail, and float64 in the fallback (`model/bar.go:232`), so output
   differs by machine and even within one buffer.
-- Denormals are unhandled in the bank. A bank left running with no excitation decays into
-  denormal state and slows down sharply; MXCSR FTZ/DAZ is never set.
 - Lanes are filled from one voice's oscillators and voices still render serially
   (`internal/synth/realtime.go:105`), so voice count costs linearly.
 - `serve` and the optimizer tab have no code.
@@ -220,10 +218,16 @@ deferred — see `## Deferred` for why a green CI would not be evidence of corre
 
 Goal: the render loop neither allocates nor stalls.
 
-- [ ] Set MXCSR FTZ/DAZ once per stream and retire the branchy per-block `flushDenormals` with
-      its magic `1e-300` floor (`model/decay_osc.go:11,145,157,218,296`). The bank has no
-      denormal handling at all today, and a bank left running with no excitation decays into
-      denormal state and slows down sharply.
+- [x] Set FTZ/DAZ around the render and retire the branchy per-block `flushDenormals` with its
+      magic `1e-300` floor. Done: `oscbank.FlushDenormals` returns a `DenormalScope` that sets
+      MXCSR FTZ+DAZ on amd64 and FPCR FZ on arm64 and restores the caller's mode, opened per
+      block in `Bank.ProcessBlock` and once per callback in `RealtimeEngine.ProcessBlock`.
+      Scoped per block rather than once per stream as this line originally read: a stream-wide
+      scope would hold the render goroutine pinned to its OS thread for the whole session,
+      which is a heavier promise to make a host than the roughly forty cycles a
+      save-set-restore costs against a block that takes thousands. No-op on `GOARCH=wasm`,
+      which exposes no control register. See "Denormals" in `docs/oscillator-bank.md` for why
+      the numeric contract is still measured unflushed.
 - [ ] Remove the per-NoteOn allocation at `internal/synth/realtime.go:74`. The `mixBuffer` and
       per-voice buffer growth at `:99-101` and `:109-111` are grow-only and already amortized;
       the note-on path is not.

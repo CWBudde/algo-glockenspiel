@@ -309,14 +309,29 @@ by it.
 
 ### Denormals
 
-**Today the bank does not touch the floating-point mode.** `processChunk` calls
-`processRotorBlocks` and `reduceLanes` and nothing else, so the rotors run in
-whatever mode the host thread is already in. A rotor ringing down past about
-`1e-38` therefore enters the subnormal range rather than reaching zero, on every
-backend, and slows down sharply while it is there.
+`Bank.ProcessBlock` opens a `FlushDenormals` scope for the length of the block:
+MXCSR FTZ+DAZ on amd64, FPCR FZ on arm64, with the caller's mode put back on the
+way out so a host's own policy survives being called. `RealtimeEngine.ProcessBlock`
+opens one per callback as well, so the bank's own scopes usually find the bits
+already set and cost a register read each. On that path a rotor ringing down past
+about `1e-38` reaches exactly zero instead of grinding through the subnormal
+range, where the hardware traps into microcode and the recursion slows by one to
+two orders of magnitude.
 
-That has a consequence for this contract, and it is the one place the derivation
-above is weaker than it looks. Every bound here is relative: it models a rounding
+That does not retire the analysis below, which is what an earlier version of this
+section predicted it would. Two paths still run unflushed, and one of them is the
+harness that validates this entire contract.
+
+`FuzzOscBankMatchesGeneric` and the contract tests drive `processRotorBlocks`
+directly rather than going through `Bank`, because the contract has to hold for
+coefficients no real oscillator produces — so no scope is ever opened and every
+tolerance in this document is measured with denormals live. And `FlushDenormals`
+is a documented no-op wherever there is no reachable control register, which for
+this project means `GOARCH=wasm`: the web build keeps IEEE denormal behaviour and
+a decaying bank there stays as slow as the host makes it.
+
+Running unflushed has a consequence for this contract, and it is the one place
+the derivation above is weaker than it looks. Every bound here is relative: it models a rounding
 as `fl(x) = x(1 + δ)` with `|δ| <= u`. That model is exact for normal results and
 wrong for subnormal ones, where the true statement carries an extra absolute term
 of up to `2^-150`. Two backends evaluating the same rotor deep in the subnormal
@@ -331,15 +346,6 @@ harness nor the SSE2 kernel's bit-identity assertion has found a divergence
 there. **The tolerances in this document do not depend on flush-to-zero, and are
 not relaxed to accommodate its absence.** The unflushed subnormal range is where
 the harness is at its strictest, and it stays that way.
-
-**Pending, with Phase 2.4:** the denormal-scope work sets MXCSR FTZ+DAZ on amd64
-and FPCR FZ on arm64 for the duration of a block, restoring the thread's mode
-afterwards so a host's own policy survives being called. When it lands it closes
-the gap above by construction — a rotor ringing down reaches exactly zero on
-every backend instead of drifting through a range where the relative-error model
-does not hold — and this section loses its first three paragraphs. It does not
-change any tolerance, because flushing only ever moves a value toward zero and
-the envelope already dominates anything that small.
 
 ### The SSE2 corollary
 
@@ -528,9 +534,9 @@ note. It clones now, and `TestRenderingIsIndependentOfPresetState` guards it.
 - AVX2, SSE2 and NEON are packed. Everything else runs the portable kernel,
   which is about 7x slower. AVX-512 is deferred, because CI cannot
   prove it correct on a runner pool that only sometimes has the instructions.
-- Denormals are not flushed. A bank left running with no excitation decays into
-  denormal state and slows down sharply; Phase 2.4 sets MXCSR FTZ/DAZ once per
-  stream. The numeric consequence is in "Denormals" above.
+- Denormals are flushed per block on amd64 and arm64, and not at all on
+  `GOARCH=wasm`, which has no control register to reach. The numeric consequence,
+  and why the contract is still measured unflushed, is in "Denormals" above.
 - The recursion still costs eight cycles per sample per block pair. Stepping two
   samples at a time through the squared rotation matrix would halve that, at the
   cost of a second coefficient set and a sample-count tail.
