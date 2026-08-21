@@ -114,20 +114,27 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 
 	writeIndex := 0
 
-	for _, v := range e.voices {
-		if len(v.buffer) < frames {
+	// Indexing rather than ranging by value is load-bearing: over a copy, the
+	// buffer growth below lands in the copy, and it only survives at all
+	// because the compaction happens to write that copy back a few lines down.
+	// Any voice that retires in the same block loses it, and the moment the
+	// compaction stops writing whole structs back the assignment is dead.
+	for i := range e.voices {
+		v := &e.voices[i]
+
+		if cap(v.buffer) < frames {
 			v.buffer = make([]float32, frames)
 		}
 
 		n := v.stream.RenderInto(v.buffer[:frames])
-		for i := 0; i < n; i++ {
-			sample := v.buffer[i]
-			buf[i*2] += sample * v.left
-			buf[i*2+1] += sample * v.right
+		for j := 0; j < n; j++ {
+			sample := v.buffer[j]
+			buf[j*2] += sample * v.left
+			buf[j*2+1] += sample * v.right
 		}
 
 		if v.stream.Active() {
-			e.voices[writeIndex] = v
+			e.voices[writeIndex] = *v
 			writeIndex++
 		}
 	}
