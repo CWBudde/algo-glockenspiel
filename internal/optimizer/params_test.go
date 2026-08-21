@@ -33,7 +33,7 @@ func TestParamCodecEncodeDecodeRoundTrip(t *testing.T) {
 		t.Fatalf("chebyshev enabled mismatch: got %v want %v", decoded.Chebyshev.Enabled, params.Chebyshev.Enabled)
 	}
 
-	for i := range model.NumModes {
+	for i := range params.Modes {
 		assertClose(t, decoded.Modes[i].Amplitude, params.Modes[i].Amplitude, 1e-12, "mode amplitude")
 		assertClose(t, decoded.Modes[i].Frequency, params.Modes[i].Frequency, 1e-9, "mode frequency")
 		assertClose(t, decoded.Modes[i].DecayMs, params.Modes[i].DecayMs, 1e-9, "mode decay")
@@ -238,5 +238,27 @@ func TestNewParamCodecWithStrictBoundsDoesNotWiden(t *testing.T) {
 
 	if lenient.EncodedBounds().Ranges[3].Max <= 1 {
 		t.Fatal("expected the default constructor to keep widening bounds")
+	}
+}
+
+// TestDecodeParamsPreservesChebyshevStage guards the shaper placement: it is
+// template metadata, not a search dimension, so dropping it would render every
+// evaluation of an output-stage preset through the excitation-stage chain.
+func TestDecodeParamsPreservesChebyshevStage(t *testing.T) {
+	params := validBarParams()
+	params.Chebyshev.Stage = model.ChebyshevStageOutput
+
+	codec, err := NewParamCodec(&params)
+	if err != nil {
+		t.Fatalf("NewParamCodec failed: %v", err)
+	}
+
+	decoded, err := codec.DecodeParams(mustEncode(t, codec, &params))
+	if err != nil {
+		t.Fatalf("DecodeParams failed: %v", err)
+	}
+
+	if decoded.Chebyshev.Stage != model.ChebyshevStageOutput {
+		t.Fatalf("chebyshev stage = %q, want %q", decoded.Chebyshev.Stage, model.ChebyshevStageOutput)
 	}
 }

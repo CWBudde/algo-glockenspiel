@@ -40,7 +40,7 @@ func TestBarUpdateParams(t *testing.T) {
 	}
 
 	updated := params
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		updated.Modes[i].Amplitude = 0
 	}
 
@@ -227,7 +227,7 @@ func BenchmarkChebyshevOscillatorFused(b *testing.B) {
 func benchmarkConfiguredOscillator() *QuadDecayOscillator {
 	osc := NewQuadDecayOscillator(48000)
 
-	for mode := 0; mode < NumModes; mode++ {
+	for mode := 0; mode < numModes; mode++ {
 		freq := float64(430 + 300*mode)
 		amp := 0.2 + float64(mode)*0.2
 		decay := 30.0 + float64(mode)*60.0
@@ -274,7 +274,7 @@ func TestProcessChebyshev4OscillatorBlockAVX2MatchesScalar(t *testing.T) {
 	avx := NewQuadDecayOscillator(48000)
 	gen := NewQuadDecayOscillator(48000)
 
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		freq := float64(430 + 300*i)
 		amp := 0.2 + float64(i)*0.2
 		decay := 30.0 + float64(i)*60.0
@@ -307,7 +307,7 @@ func TestProcessChebyshev4OscillatorBlockAVX2MatchesScalar(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		if !approxEqual(avx.realState[i], gen.realState[i], 1e-6) {
 			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, avx.realState[i], gen.realState[i])
 		}

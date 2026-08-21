@@ -7,10 +7,12 @@ import (
 )
 
 const (
-	// NumModes is the default resonant mode count and the count every v1 preset
-	// carries. It is a default, not a limit: BarParams.Modes is a slice and the
-	// oscillator bank sizes itself at runtime.
-	NumModes = 4
+	// numModes is the mode count the legacy QuadDecayOscillator is hard-wired
+	// to. It is deliberately unexported: the bank sizes itself at runtime, so a
+	// fixed count must not be part of this package's public surface. Callers
+	// that still need a fixed count -- the v1 preset schema, the VST3 parameter
+	// grid -- declare their own.
+	numModes = 4
 
 	// MaxModes bounds a preset's mode count so a malformed file cannot ask for
 	// an unbounded allocation.
@@ -145,12 +147,6 @@ func (p BarParams) Clone() BarParams {
 	p.Chebyshev = p.Chebyshev.Clone()
 
 	return p
-}
-
-// DefaultModes returns a zero-valued slice of the default mode count, so
-// callers that still think in terms of four modes have somewhere to start.
-func DefaultModes() []ModeParams {
-	return make([]ModeParams, NumModes)
 }
 
 // Validate checks whether BarParams are well-formed and in supported ranges.

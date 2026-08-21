@@ -11,9 +11,8 @@ import (
 )
 
 const (
-	// VersionV1 is the original schema: exactly model.NumModes modes, no
-	// per-mode harmonics, and a Chebyshev shaper that always sits on the
-	// excitation.
+	// VersionV1 is the original schema: exactly v1ModeCount modes, no per-mode
+	// harmonics, and a Chebyshev shaper that always sits on the excitation.
 	VersionV1 = "1.0"
 
 	// VersionV2 adds a variable-length mode array, per-mode harmonic partials
@@ -22,6 +21,11 @@ const (
 
 	// CurrentVersion is the schema new presets are written in.
 	CurrentVersion = VersionV2
+
+	// v1ModeCount is the fixed mode count a v1 document carries. It belongs to
+	// this compatibility layer, not to the model: the bank sizes itself at
+	// runtime and has no fixed count to export.
+	v1ModeCount = 4
 )
 
 // Preset describes a stored parameter configuration.
@@ -69,7 +73,46 @@ func Decode(data []byte, source string) (*Preset, error) {
 		return nil, fmt.Errorf("validate preset %q: %w", source, err)
 	}
 
+	if preset.Version == VersionV1 {
+		if err := rejectV2Fields(data); err != nil {
+			return nil, fmt.Errorf("validate preset %q: %w", source, err)
+		}
+	}
+
 	return &preset, nil
+}
+
+// rejectV2Fields reports a v2-only field that is present in a v1 document. The
+// value checks in validateV1 cannot do this on their own: an explicit
+// "stage": "" or "harmonics": [] is indistinguishable from an omitted field
+// once it has been decoded, so presence has to be read off the raw JSON.
+func rejectV2Fields(data []byte) error {
+	var raw struct {
+		Parameters struct {
+			Modes []struct {
+				Harmonics *json.RawMessage `json:"harmonics"`
+			} `json:"modes"`
+			Chebyshev struct {
+				Stage *json.RawMessage `json:"stage"`
+			} `json:"chebyshev"`
+		} `json:"parameters"`
+	}
+
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("decode schema fields: %w", err)
+	}
+
+	for i, mode := range raw.Parameters.Modes {
+		if mode.Harmonics != nil {
+			return fmt.Errorf("modes[%d].harmonics needs version %s", i, VersionV2)
+		}
+	}
+
+	if raw.Parameters.Chebyshev.Stage != nil {
+		return fmt.Errorf("chebyshev.stage needs version %s", VersionV2)
+	}
+
+	return nil
 }
 
 // Upgrade returns an equivalent preset in the current schema version. The v1
@@ -157,9 +200,9 @@ func validateSchema(preset *Preset) error {
 }
 
 func validateV1(params *model.BarParams) error {
-	if len(params.Modes) != model.NumModes {
+	if len(params.Modes) != v1ModeCount {
 		return fmt.Errorf("version %s requires exactly %d modes, got %d; use version %s for a variable mode count",
-			VersionV1, model.NumModes, len(params.Modes), VersionV2)
+			VersionV1, v1ModeCount, len(params.Modes), VersionV2)
 	}
 
 	for i, mode := range params.Modes {

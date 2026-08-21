@@ -42,7 +42,7 @@ func TestQuadDecayOscillatorDecayEnvelope(t *testing.T) {
 	osc.SetFrequency(0, 0)
 	osc.SetDecay(0, 100)
 
-	for i := 1; i < NumModes; i++ {
+	for i := 1; i < numModes; i++ {
 		osc.SetAmplitude(i, 0)
 	}
 
@@ -73,7 +73,7 @@ func TestQuadDecayOscillatorReset(t *testing.T) {
 
 	osc.Reset()
 
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		if osc.realState[i] != 0 || osc.imagState[i] != 0 {
 			t.Fatalf("state not reset at mode %d", i)
 		}
@@ -82,7 +82,7 @@ func TestQuadDecayOscillatorReset(t *testing.T) {
 
 func TestQuadDecayOscillatorNumericalStability(t *testing.T) {
 	osc := NewQuadDecayOscillator(48000)
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		osc.SetAmplitude(i, 1.0)
 		osc.SetFrequency(i, float64(500*(i+1)))
 		osc.SetDecay(i, 250.0)
@@ -103,7 +103,7 @@ func TestQuadDecayOscillatorEdgeCases(t *testing.T) {
 	osc.SetFrequency(0, 0)
 	osc.SetDecay(0, DecayMsMin)
 
-	for i := 1; i < NumModes; i++ {
+	for i := 1; i < numModes; i++ {
 		osc.SetAmplitude(i, 0)
 	}
 
@@ -134,7 +134,7 @@ func TestQuadDecayOscillatorFlushesDenormals(t *testing.T) {
 
 func BenchmarkQuadDecayOscillatorProcessSample32(b *testing.B) {
 	osc := NewQuadDecayOscillator(48000)
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		osc.SetAmplitude(i, 0.5)
 	}
 
@@ -151,7 +151,7 @@ func BenchmarkQuadDecayOscillatorProcessSample32(b *testing.B) {
 
 func BenchmarkQuadDecayOscillatorProcessBlock32(b *testing.B) {
 	osc := NewQuadDecayOscillator(48000)
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		osc.SetAmplitude(i, 0.5)
 	}
 
@@ -169,7 +169,7 @@ func BenchmarkQuadDecayOscillatorProcessBlock32(b *testing.B) {
 
 func BenchmarkQuadDecayOscillatorProcessBlock32Generic(b *testing.B) {
 	osc := NewQuadDecayOscillator(48000)
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		osc.SetAmplitude(i, 0.5)
 	}
 
@@ -216,7 +216,7 @@ func BenchmarkQuadDecayOscillatorProcessBlock32ModeBlock4PrototypeAVX2(b *testin
 	}
 
 	osc := NewQuadDecayOscillator(48000)
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		osc.SetAmplitude(i, 0.5)
 	}
 
@@ -241,7 +241,7 @@ func BenchmarkQuadDecayOscillatorProcessBlock32ModeBlock4KernelAVX2(b *testing.B
 	}
 
 	osc := NewQuadDecayOscillator(48000)
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		osc.SetAmplitude(i, 0.5)
 	}
 
@@ -268,7 +268,7 @@ func TestQuadDecayOscillatorProcessBlock32AVX2MatchesGeneric(t *testing.T) {
 	avx := NewQuadDecayOscillator(48000)
 	gen := NewQuadDecayOscillator(48000)
 
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		freq := float64(400 + 275*i)
 		amp := 0.25 + float64(i)*0.15
 		decay := 40.0 + float64(i)*55.0
@@ -300,7 +300,7 @@ func TestQuadDecayOscillatorProcessBlock32AVX2MatchesGeneric(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		if !approxEqual(avx.realState[i], gen.realState[i], 1e-9) {
 			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, avx.realState[i], gen.realState[i])
 		}
@@ -319,7 +319,7 @@ func TestQuadDecayOscillatorProcessBlock32ModeBlock4PrototypeMatchesGeneric(t *t
 	avx := NewQuadDecayOscillator(48000)
 	gen := NewQuadDecayOscillator(48000)
 
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		freq := float64(400 + 275*i)
 		amp := 0.25 + float64(i)*0.15
 		decay := 40.0 + float64(i)*55.0
@@ -347,7 +347,7 @@ func TestQuadDecayOscillatorProcessBlock32ModeBlock4PrototypeMatchesGeneric(t *t
 		}
 	}
 
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		if !approxEqual(avx.realState[i], gen.realState[i], 1e-9) {
 			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, avx.realState[i], gen.realState[i])
 		}
@@ -366,7 +366,7 @@ func TestQuadDecayOscillatorProcessBlock32ModeBlock4KernelMatchesGeneric(t *test
 	avx := NewQuadDecayOscillator(48000)
 	gen := NewQuadDecayOscillator(48000)
 
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		freq := float64(400 + 275*i)
 		amp := 0.25 + float64(i)*0.15
 		decay := 40.0 + float64(i)*55.0
@@ -394,7 +394,7 @@ func TestQuadDecayOscillatorProcessBlock32ModeBlock4KernelMatchesGeneric(t *test
 		}
 	}
 
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		if !approxEqual(avx.realState[i], gen.realState[i], 1e-9) {
 			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, avx.realState[i], gen.realState[i])
 		}
@@ -463,7 +463,7 @@ func TestQuadDecayOscillatorProcessBlock32GenericMatchesSampleBySample(t *testin
 	gen := NewQuadDecayOscillator(48000)
 	ref := NewQuadDecayOscillator(48000)
 
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		freq := float64(410 + 235*i)
 		amp := 0.2 + float64(i)*0.17
 		decay := 45.0 + float64(i)*70.0
@@ -491,7 +491,7 @@ func TestQuadDecayOscillatorProcessBlock32GenericMatchesSampleBySample(t *testin
 		}
 	}
 
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		if !approxEqual(gen.realState[i], ref.realState[i], 1e-9) {
 			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, gen.realState[i], ref.realState[i])
 		}

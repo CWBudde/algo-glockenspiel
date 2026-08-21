@@ -41,7 +41,7 @@ func TestProcessBlock32AVX2DefaultStrategyMatchesModeParallelKernel(t *testing.T
 	def := NewQuadDecayOscillator(48000)
 	par := NewQuadDecayOscillator(48000)
 
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		freq := float64(400 + 275*i)
 		amp := 0.25 + float64(i)*0.15
 		decay := 40.0 + float64(i)*55.0
@@ -86,7 +86,7 @@ func TestProcessBlock32AVX2CanForceModeBlock4Strategy(t *testing.T) {
 	avx := NewQuadDecayOscillator(48000)
 	gen := NewQuadDecayOscillator(48000)
 
-	for i := 0; i < NumModes; i++ {
+	for i := 0; i < numModes; i++ {
 		freq := float64(400 + 275*i)
 		amp := 0.25 + float64(i)*0.15
 		decay := 40.0 + float64(i)*55.0

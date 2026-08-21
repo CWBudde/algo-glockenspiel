@@ -11,6 +11,9 @@ import (
 	"github.com/cwbudde/glockenspiel/model"
 )
 
+// v1ModeCount mirrors the fixed mode count of the v1 schema.
+const v1ModeCount = 4
+
 // shippedPresets returns every preset file tracked in the repository.
 func shippedPresets(t *testing.T) []string {
 	t.Helper()
@@ -53,8 +56,8 @@ func TestShippedPresetsLoadAsV1(t *testing.T) {
 			t.Fatalf("%s: version = %q, want %q", path, loaded.Version, preset.VersionV1)
 		}
 
-		if len(loaded.Parameters.Modes) != model.NumModes {
-			t.Fatalf("%s: %d modes, want %d", path, len(loaded.Parameters.Modes), model.NumModes)
+		if len(loaded.Parameters.Modes) != v1ModeCount {
+			t.Fatalf("%s: %d modes, want %d", path, len(loaded.Parameters.Modes), v1ModeCount)
 		}
 
 		if loaded.Parameters.Chebyshev.ResolvedStage() != model.ChebyshevStageExcitation {
@@ -230,5 +233,59 @@ func assertPresetsEqual(t *testing.T, label string, want, got *preset.Preset) {
 
 	if string(wantJSON) != string(gotJSON) {
 		t.Fatalf("%s mismatch:\n got %s\nwant %s", label, gotJSON, wantJSON)
+	}
+}
+
+// TestV1RejectsV2FieldsPresentButEmpty covers what a value check cannot see: an
+// explicit "stage": "" or "harmonics": [] decodes to the same zero value as an
+// omitted field, so presence has to be read off the raw JSON.
+func TestV1RejectsV2FieldsPresentButEmpty(t *testing.T) {
+	base, err := os.ReadFile(filepath.FromSlash("../../assets/presets/default.json"))
+	if err != nil {
+		t.Fatalf("read default: %v", err)
+	}
+
+	var document map[string]any
+	if err := json.Unmarshal(base, &document); err != nil {
+		t.Fatalf("decode default: %v", err)
+	}
+
+	params, ok := document["parameters"].(map[string]any)
+	if !ok {
+		t.Fatal("default preset has no parameters object")
+	}
+
+	cases := map[string]func(){
+		"empty stage": func() {
+			chebyshev, _ := params["chebyshev"].(map[string]any)
+			chebyshev["stage"] = ""
+		},
+		"empty harmonics": func() {
+			modes, _ := params["modes"].([]any)
+			mode, _ := modes[0].(map[string]any)
+			mode["harmonics"] = []any{}
+		},
+	}
+
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			var candidate map[string]any
+			if err := json.Unmarshal(base, &candidate); err != nil {
+				t.Fatalf("decode default: %v", err)
+			}
+
+			params, _ = candidate["parameters"].(map[string]any)
+
+			mutate()
+
+			data, err := json.Marshal(candidate)
+			if err != nil {
+				t.Fatalf("encode candidate: %v", err)
+			}
+
+			if _, err := preset.Decode(data, "test"); err == nil {
+				t.Fatal("expected a v1 schema error")
+			}
+		})
 	}
 }

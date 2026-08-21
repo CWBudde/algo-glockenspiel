@@ -185,12 +185,15 @@ var DefaultParamBounds = ParamBounds{
 // The mode count comes from the template rather than a constant, so a codec
 // built from a nine-mode preset searches a nine-mode space.
 //
-// Per-mode harmonic gains are carried through from the template unchanged: the
-// bank supports them, but they are not part of the search space yet.
+// Per-mode harmonic gains and the Chebyshev stage are carried through from the
+// template unchanged: the bank supports them, but they are not part of the
+// search space yet. Dropping the stage would silently re-render an
+// output-stage preset through the excitation-stage chain.
 type ParamCodec struct {
 	modeCount        int
 	harmonicCount    int
 	chebyshevEnabled bool
+	chebyshevStage   model.ChebyshevStage
 	modeHarmonics    [][]float64
 	bounds           ParamBounds
 }
@@ -238,6 +241,7 @@ func newParamCodec(params *model.BarParams, bounds ParamBounds, strict bool) (*P
 		modeCount:        len(params.Modes),
 		harmonicCount:    len(params.Chebyshev.HarmonicGains),
 		chebyshevEnabled: params.Chebyshev.Enabled,
+		chebyshevStage:   params.Chebyshev.Stage,
 		modeHarmonics:    modeHarmonics,
 		bounds:           bounds,
 	}, nil
@@ -390,6 +394,7 @@ func (c *ParamCodec) DecodeParams(encoded []float64) (*model.BarParams, error) {
 		Modes:           make([]model.ModeParams, c.modeCount),
 		Chebyshev: model.ChebyshevParams{
 			Enabled:       c.chebyshevEnabled,
+			Stage:         c.chebyshevStage,
 			HarmonicGains: make([]float64, c.harmonicCount),
 		},
 	}
