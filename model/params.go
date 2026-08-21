@@ -7,13 +7,6 @@ import (
 )
 
 const (
-	// numModes is the mode count the legacy QuadDecayOscillator is hard-wired
-	// to. It is deliberately unexported: the bank sizes itself at runtime, so a
-	// fixed count must not be part of this package's public surface. Callers
-	// that still need a fixed count -- the v1 preset schema, the VST3 parameter
-	// grid -- declare their own.
-	numModes = 4
-
 	// MaxModes bounds a preset's mode count so a malformed file cannot ask for
 	// an unbounded allocation.
 	MaxModes = 512

@@ -49,23 +49,6 @@ linters:
         - b
         - r
         - t
-        # hand-unrolled 4-mode oscillator state; retired with the oscillator-bank rewrite
-        - a0
-        - a1
-        - a2
-        - a3
-        - c0
-        - c1
-        - c2
-        - c3
-        - r0
-        - r1
-        - r2
-        - r3
-        - s0
-        - s1
-        - s2
-        - s3
     revive:
       rules:
         - name: file-length-limit
