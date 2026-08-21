@@ -2,6 +2,8 @@
 
 package model
 
-func processChebyshevBlockAVX2(_ []float32, _ []float32, _ *[4]float32) bool {
-	return false
+// processChebyshev4AVX2 shapes nothing off amd64, so every sample takes the
+// scalar path.
+func processChebyshev4AVX2(_ []float32, _ []float32, _ *[chebyshevFastGains]float32) int {
+	return 0
 }
