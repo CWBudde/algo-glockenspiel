@@ -20,8 +20,11 @@ var (
 // Detect returns the cached CPU feature set for the current process.
 func Detect() Features {
 	forcedMu.RLock()
+
 	override := forced
+
 	forcedMu.RUnlock()
+
 	if override != nil {
 		return *override
 	}
@@ -30,6 +33,7 @@ func Detect() Features {
 	detectOnce.Do(func() {
 		detected = detect()
 	})
+
 	result := detected
 	detectMu.Unlock()
 

@@ -4,11 +4,47 @@ export const KEYBOARD_FIRST_NOTE = 36; // C2
 export const KEYBOARD_LAST_NOTE = 96; // C7
 export const WHITE_OFFSETS = new Set([0, 2, 4, 5, 7, 9, 11]);
 export const KEY_BINDINGS = [
-  "A", "W", "S", "E", "D", "F", "T", "G", "Y", "H", "U", "J",
-  "K", "O", "L", "P", ";", "'", "]", "\\", "Z", "X", "C", "V", "B",
+  "A",
+  "W",
+  "S",
+  "E",
+  "D",
+  "F",
+  "T",
+  "G",
+  "Y",
+  "H",
+  "U",
+  "J",
+  "K",
+  "O",
+  "L",
+  "P",
+  ";",
+  "'",
+  "]",
+  "\\",
+  "Z",
+  "X",
+  "C",
+  "V",
+  "B",
 ];
 
-const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const NOTE_NAMES = [
+  "C",
+  "C#",
+  "D",
+  "D#",
+  "E",
+  "F",
+  "F#",
+  "G",
+  "G#",
+  "A",
+  "A#",
+  "B",
+];
 
 export function midiToName(note) {
   const pitchClass = note % 12;
@@ -88,35 +124,65 @@ function centerPercent(xUnits, totalWhiteUnits) {
   return (xUnits / totalWhiteUnits) * 100;
 }
 
-export function buildUI({ naturalContainer, accidentalContainer, keyboardContainer, onStrike }) {
+export function buildUI({
+  naturalContainer,
+  accidentalContainer,
+  keyboardContainer,
+  onStrike,
+}) {
   const { naturals, accidentals } = computeNoteLayout();
   const keyboard = computeKeyboardLayout();
   const noteButtons = new Map();
   const pianoKeys = new Map();
 
   naturals.forEach((entry, index) => {
-    const button = createBarButton(entry, "natural", KEY_BINDINGS[index] || "", onStrike, 15);
+    const button = createBarButton(
+      entry,
+      "natural",
+      KEY_BINDINGS[index] || "",
+      onStrike,
+      15,
+    );
     naturalContainer.appendChild(button);
     noteButtons.set(entry.note, button);
   });
 
   accidentals.forEach((entry) => {
     const index = entry.note - FIRST_NOTE;
-    const button = createBarButton(entry, "accidental", KEY_BINDINGS[index] || "", onStrike, 15);
+    const button = createBarButton(
+      entry,
+      "accidental",
+      KEY_BINDINGS[index] || "",
+      onStrike,
+      15,
+    );
     accidentalContainer.appendChild(button);
     noteButtons.set(entry.note, button);
   });
 
-  keyboardContainer.style.setProperty("--keyboard-white-count", String(keyboard.totalWhiteUnits));
+  keyboardContainer.style.setProperty(
+    "--keyboard-white-count",
+    String(keyboard.totalWhiteUnits),
+  );
 
   keyboard.whites.forEach((entry) => {
-    const key = createPianoKey(entry, "white", onStrike, keyboard.totalWhiteUnits);
+    const key = createPianoKey(
+      entry,
+      "white",
+      onStrike,
+      keyboard.totalWhiteUnits,
+    );
     keyboardContainer.appendChild(key);
     pianoKeys.set(entry.note, key);
   });
 
   keyboard.blacks.forEach((entry) => {
-    const key = createPianoKey(entry, "black", onStrike, keyboard.totalWhiteUnits);
+    const key = createPianoKey(
+      entry,
+      "black",
+      onStrike,
+      keyboard.totalWhiteUnits,
+    );
     keyboardContainer.appendChild(key);
     pianoKeys.set(entry.note, key);
   });
@@ -144,7 +210,10 @@ function createBarButton(entry, kind, keyHint, onStrike, totalWhiteUnits) {
   button.type = "button";
   button.className = `bar ${kind}`;
   button.dataset.note = String(entry.note);
-  button.style.setProperty("--center", `${centerPercent(entry.center, totalWhiteUnits)}%`);
+  button.style.setProperty(
+    "--center",
+    `${centerPercent(entry.center, totalWhiteUnits)}%`,
+  );
   button.style.setProperty("--length", `${entry.length}px`);
 
   const note = document.createElement("span");
@@ -258,7 +327,7 @@ export function bindDial(input, output, formatter) {
     const rect = face.getBoundingClientRect();
     const dx = event.clientX - (rect.left + rect.width / 2);
     const dy = event.clientY - (rect.top + rect.height / 2);
-    const angle = Math.atan2(dy, dx) * 180 / Math.PI + 90;
+    const angle = (Math.atan2(dy, dx) * 180) / Math.PI + 90;
     const wrapped = angle < -180 ? angle + 360 : angle;
     const clamped = Math.min(132, Math.max(-132, wrapped));
     setValueFromRatio((clamped + 132) / 264);
@@ -274,14 +343,18 @@ export function bindDial(input, output, formatter) {
     if ((event.buttons & 1) === 0) return;
     applyPointer(event);
   });
-  control?.addEventListener("wheel", (event) => {
-    event.preventDefault();
-    const step = (max - min) / 80;
-    const delta = event.deltaY < 0 ? step : -step;
-    const next = Math.min(max, Math.max(min, Number(input.value) + delta));
-    input.value = String(Math.round(next));
-    sync();
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  }, { passive: false });
+  control?.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const step = (max - min) / 80;
+      const delta = event.deltaY < 0 ? step : -step;
+      const next = Math.min(max, Math.max(min, Number(input.value) + delta));
+      input.value = String(Math.round(next));
+      sync();
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    { passive: false },
+  );
   sync();
 }

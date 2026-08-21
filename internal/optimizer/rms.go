@@ -10,14 +10,17 @@ func ComputeRMSError(synth, ref []float32) float64 {
 	}
 
 	sum := squaredDiffSum(synth[:sampleCount], ref[:sampleCount])
+
 	return math.Sqrt(sum / float64(sampleCount))
 }
 
 func squaredDiffSumGeneric(synth, ref []float32) float64 {
 	sum := 0.0
+
 	for i := range synth {
 		d := float64(synth[i] - ref[i])
 		sum += d * d
 	}
+
 	return sum
 }

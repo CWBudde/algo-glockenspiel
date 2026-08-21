@@ -6,11 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/go-audio/audio"
-	"github.com/go-audio/wav"
-
 	"github.com/cwbudde/glockenspiel/internal/preset"
 	"github.com/cwbudde/glockenspiel/internal/synth"
+	"github.com/go-audio/audio"
+	"github.com/go-audio/wav"
 )
 
 func TestComputeRMSErrorIdenticalSignals(t *testing.T) {
@@ -37,6 +36,7 @@ func TestComputeRMSErrorKnownDifference(t *testing.T) {
 func TestComputeRMSErrorMatchesGenericForLongInput(t *testing.T) {
 	a := make([]float32, 257)
 	b := make([]float32, 257)
+
 	for i := range a {
 		a[i] = float32(math.Sin(float64(i) * 0.13))
 		b[i] = float32(math.Cos(float64(i) * 0.07))
@@ -94,6 +94,7 @@ func TestObjectiveEvaluateMatchesPCM16RoundTripReference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadPCM16WAV failed: %v", err)
 	}
+
 	if sampleRate != 44100 {
 		t.Fatalf("unexpected sample rate: got %d want 44100", sampleRate)
 	}
@@ -196,6 +197,7 @@ func writePCM16WAV(path string, sampleRate int, samples []float32) error {
 	}()
 
 	encoder := wav.NewEncoder(file, sampleRate, 16, 1, 1)
+
 	intData := make([]int, len(samples))
 	for i, sample := range samples {
 		intData[i] = int(float32ToPCM16(sample))
@@ -226,6 +228,7 @@ func loadPCM16WAV(path string) ([]float32, int, error) {
 	}()
 
 	decoder := wav.NewDecoder(file)
+
 	intBuffer, err := decoder.FullPCMBuffer()
 	if err != nil {
 		return nil, 0, err

@@ -139,6 +139,7 @@ func TestProcessChebyshevBlockAVX2MatchesScalar(t *testing.T) {
 	for i := range input {
 		input[i] = float32(math.Sin(float64(i)*0.17) * 1.3)
 	}
+
 	gains := []float64{1.0, 0.5, 0.3, 0.2}
 	gains4 := [4]float32{1.0, 0.5, 0.3, 0.2}
 
@@ -148,6 +149,7 @@ func TestProcessChebyshevBlockAVX2MatchesScalar(t *testing.T) {
 	if !processChebyshevBlockAVX2(input, got, &gains4) {
 		t.Fatal("expected AVX2 Chebyshev path to be active")
 	}
+
 	for i := range input {
 		want[i] = float32(applyChebyshev(float64(input[i]), gains))
 	}
@@ -164,11 +166,13 @@ func BenchmarkProcessChebyshevBlock(b *testing.B) {
 	output := make([]float32, 512)
 	gains := []float64{1.0, 0.5, 0.3, 0.2}
 	gains4 := [4]float32{1.0, 0.5, 0.3, 0.2}
+
 	for i := range input {
 		input[i] = float32(math.Sin(float64(i)*0.17) * 1.3)
 	}
 
 	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
 		processChebyshevBlock(input, output, gains, &gains4, true)
 	}
@@ -181,11 +185,13 @@ func BenchmarkChebyshevOscillatorSeparate(b *testing.B) {
 	gains := []float64{1.0, 0.5, 0.3, 0.2}
 	gains4 := [4]float32{1.0, 0.5, 0.3, 0.2}
 	osc := benchmarkConfiguredOscillator()
+
 	for i := range input {
 		input[i] = float32(math.Sin(float64(i)*0.17) * 1.3)
 	}
 
 	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
 		osc.Reset()
 		processChebyshevBlock(input, distorted, gains, &gains4, true)
@@ -202,13 +208,16 @@ func BenchmarkChebyshevOscillatorFused(b *testing.B) {
 	output := make([]float32, 512)
 	gains4 := [4]float32{1.0, 0.5, 0.3, 0.2}
 	osc := benchmarkConfiguredOscillator()
+
 	for i := range input {
 		input[i] = float32(math.Sin(float64(i)*0.17) * 1.3)
 	}
 
 	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
 		osc.Reset()
+
 		if !processChebyshev4OscillatorBlockAVX2(osc, input, output, &gains4) {
 			b.Fatal("expected fused AVX2 path to be active")
 		}
@@ -217,6 +226,7 @@ func BenchmarkChebyshevOscillatorFused(b *testing.B) {
 
 func benchmarkConfiguredOscillator() *QuadDecayOscillator {
 	osc := NewQuadDecayOscillator(48000)
+
 	for mode := 0; mode < NumModes; mode++ {
 		freq := float64(430 + 300*mode)
 		amp := 0.2 + float64(mode)*0.2
@@ -229,6 +239,7 @@ func benchmarkConfiguredOscillator() *QuadDecayOscillator {
 
 func BenchmarkBarUpdateParams(b *testing.B) {
 	params := validTestParams()
+
 	bar, err := NewBar(&params, 48000)
 	if err != nil {
 		b.Fatalf("failed to create bar: %v", err)
@@ -241,6 +252,7 @@ func BenchmarkBarUpdateParams(b *testing.B) {
 	updated.Modes[0].DecayMs = 170
 
 	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
 		if i&1 == 0 {
 			if err := bar.UpdateParams(&params); err != nil {
@@ -261,6 +273,7 @@ func TestProcessChebyshev4OscillatorBlockAVX2MatchesScalar(t *testing.T) {
 
 	avx := NewQuadDecayOscillator(48000)
 	gen := NewQuadDecayOscillator(48000)
+
 	for i := 0; i < NumModes; i++ {
 		freq := float64(430 + 300*i)
 		amp := 0.2 + float64(i)*0.2
@@ -273,6 +286,7 @@ func TestProcessChebyshev4OscillatorBlockAVX2MatchesScalar(t *testing.T) {
 	for i := range input {
 		input[i] = float32(math.Sin(float64(i)*0.11) * 1.2)
 	}
+
 	gains4 := [4]float32{1.0, 0.5, 0.3, 0.2}
 	gains := []float64{1.0, 0.5, 0.3, 0.2}
 
@@ -282,6 +296,7 @@ func TestProcessChebyshev4OscillatorBlockAVX2MatchesScalar(t *testing.T) {
 	if !processChebyshev4OscillatorBlockAVX2(avx, input, got, &gains4) {
 		t.Fatal("expected fused AVX2 path to be active")
 	}
+
 	for i := range input {
 		want[i] = gen.ProcessSample32(float32(applyChebyshev(float64(input[i]), gains)))
 	}
@@ -296,6 +311,7 @@ func TestProcessChebyshev4OscillatorBlockAVX2MatchesScalar(t *testing.T) {
 		if !approxEqual(avx.realState[i], gen.realState[i], 1e-6) {
 			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, avx.realState[i], gen.realState[i])
 		}
+
 		if !approxEqual(avx.imagState[i], gen.imagState[i], 1e-6) {
 			t.Fatalf("imag state mismatch at mode %d: got %.12f want %.12f", i, avx.imagState[i], gen.imagState[i])
 		}

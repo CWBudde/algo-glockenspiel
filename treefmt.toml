@@ -1,4 +1,4 @@
-# treefmt configuration for algo-dsp
+# treefmt configuration for algo-glockenspiel
 # Multi-language code formatting
 
 [global]
@@ -26,6 +26,9 @@ excludes = [
     # Build artifacts
     "bin/**",
     "dist/**",
+    "web/dist/**",
+    "web/wasm_exec.js",
+    "*.test",
     "coverage.out",
     "coverage.html",
 ]
@@ -64,6 +67,9 @@ includes = [
     "*.yaml",
     "*.yml",
     "*.json",
+    "*.js",
+    "*.css",
+    "*.html",
 ]
 excludes = [
     # Exclude potentially sensitive or auto-generated files

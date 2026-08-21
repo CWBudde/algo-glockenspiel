@@ -8,8 +8,10 @@ import (
 	"github.com/cwbudde/glockenspiel/internal/synth"
 )
 
-const defaultLogErrorFloor = 1e-20
-const pcm16Scale = 32768.0
+const (
+	defaultLogErrorFloor = 1e-20
+	pcm16Scale           = 32768.0
+)
 
 // Metric selects the objective error metric.
 type Metric string
@@ -76,6 +78,7 @@ func NewObjectiveFunctionWithBounds(reference []float32, template *preset.Preset
 	}
 
 	working := *template
+
 	engine, err := synth.NewSynthesizer(&working, sampleRate)
 	if err != nil {
 		return nil, err
@@ -123,6 +126,7 @@ func (o *ObjectiveFunction) Evaluate(encoded []float64) float64 {
 	o.working.Parameters = *params
 	rendered := o.engine.RenderNote(o.note, o.velocity, o.duration)
 	projectToPCM16Domain(rendered)
+
 	switch o.metric {
 	case MetricRMS:
 		return ComputeRMSError(rendered, o.reference)

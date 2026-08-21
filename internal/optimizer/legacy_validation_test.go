@@ -25,6 +25,7 @@ func TestOptimizationImprovesFitAgainstLegacyReference(t *testing.T) {
 	initial.Parameters.Modes[0].DecayMs = clampToRange(initial.Parameters.Modes[0].DecayMs*0.8, model.DecayMsMin, model.DecayMsMax)
 
 	bounds := legacyValidationBounds(&legacyPreset.Parameters)
+
 	objective, err := NewObjectiveFunctionWithBounds(reference, &initial, sampleRate, 69, 100, MetricRMS, bounds)
 	if err != nil {
 		t.Fatalf("NewObjectiveFunctionWithBounds failed: %v", err)
@@ -34,6 +35,7 @@ func TestOptimizationImprovesFitAgainstLegacyReference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncodeParams failed: %v", err)
 	}
+
 	initialCost := objective.Evaluate(initialEncoded)
 
 	result, err := (&SimpleOptimizer{
@@ -73,6 +75,7 @@ func TestOptimizationImprovesFitAgainstLegacyReference(t *testing.T) {
 	}, sampleRate, 69, 100, float64(len(reference))/float64(sampleRate))
 	initialRendered := renderNote(t, &initial, sampleRate, 69, 100, float64(len(reference))/float64(sampleRate))
 	initialRMS := ComputeRMSError(initialRendered, reference)
+
 	finalRMS := ComputeRMSError(rendered, reference)
 	if !(finalRMS < initialRMS) {
 		t.Fatalf("expected rendered RMS to improve: initial=%g final=%g", initialRMS, finalRMS)
@@ -86,6 +89,7 @@ func loadDefaultPreset(t *testing.T) *preset.Preset {
 	if err != nil {
 		t.Fatalf("load default preset: %v", err)
 	}
+
 	return p
 }
 
@@ -107,10 +111,12 @@ func loadLegacyReferenceWAV(t *testing.T) ([]float32, int) {
 	if !decoder.IsValidFile() {
 		t.Fatalf("invalid legacy wav file: %s", path)
 	}
+
 	intBuffer, err := decoder.FullPCMBuffer()
 	if err != nil {
 		t.Fatalf("decode legacy wav: %v", err)
 	}
+
 	if intBuffer == nil || intBuffer.Format == nil {
 		t.Fatalf("invalid decoded legacy buffer: %s", path)
 	}
@@ -121,6 +127,7 @@ func loadLegacyReferenceWAV(t *testing.T) ([]float32, int) {
 	}
 
 	scale := math.Pow(2, float64(bitDepth-1))
+
 	channels := intBuffer.Format.NumChannels
 	if channels <= 0 {
 		channels = 1
@@ -130,6 +137,7 @@ func loadLegacyReferenceWAV(t *testing.T) ([]float32, int) {
 	for i := range samples {
 		samples[i] = float32(float64(intBuffer.Data[i*channels]) / scale)
 	}
+
 	return samples, intBuffer.Format.SampleRate
 }
 
@@ -162,6 +170,7 @@ func TestLegacyReferenceFixtureLoads(t *testing.T) {
 	if len(samples) == 0 {
 		t.Fatal("expected legacy reference to contain samples")
 	}
+
 	if sampleRate <= 0 {
 		t.Fatalf("expected positive sample rate, got %d", sampleRate)
 	}
@@ -172,10 +181,12 @@ func BenchmarkLegacyObjectiveEvaluate(b *testing.B) {
 	if err != nil {
 		b.Fatalf("load default preset: %v", err)
 	}
+
 	reference, sampleRate, err := loadLegacyReferenceForBenchmark()
 	if err != nil {
 		b.Fatalf("load legacy reference: %v", err)
 	}
+
 	objective, err := NewObjectiveFunctionWithBounds(reference, legacyPreset, sampleRate, 69, 100, MetricRMS, legacyValidationBounds(&legacyPreset.Parameters))
 	if err != nil {
 		b.Fatalf("NewObjectiveFunctionWithBounds failed: %v", err)
@@ -214,6 +225,7 @@ func loadLegacyReferenceForBenchmark() ([]float32, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
+
 	if intBuffer == nil || intBuffer.Format == nil {
 		return nil, 0, fmt.Errorf("invalid decoded buffer: %s", path)
 	}
@@ -222,7 +234,9 @@ func loadLegacyReferenceForBenchmark() ([]float32, int, error) {
 	if bitDepth <= 0 {
 		bitDepth = 16
 	}
+
 	scale := math.Pow(2, float64(bitDepth-1))
+
 	channels := intBuffer.Format.NumChannels
 	if channels <= 0 {
 		channels = 1
@@ -232,5 +246,6 @@ func loadLegacyReferenceForBenchmark() ([]float32, int, error) {
 	for i := range samples {
 		samples[i] = float32(float64(intBuffer.Data[i*channels]) / scale)
 	}
+
 	return samples, intBuffer.Format.SampleRate, nil
 }

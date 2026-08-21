@@ -37,14 +37,18 @@ func BenchmarkMayflyOptimizeLegacyShort(b *testing.B) {
 }
 
 func benchmarkOptimizeLegacyShort(b *testing.B, opt Optimizer) {
+	b.Helper()
+
 	legacyPreset, err := preset.Load(filepath.FromSlash("../../assets/presets/default.json"))
 	if err != nil {
 		b.Fatalf("load default preset: %v", err)
 	}
+
 	reference, sampleRate, err := loadLegacyReferenceForBenchmark()
 	if err != nil {
 		b.Fatalf("load legacy reference: %v", err)
 	}
+
 	objective, err := NewObjectiveFunctionWithBounds(reference, legacyPreset, sampleRate, 69, 100, MetricRMS, legacyValidationBounds(&legacyPreset.Parameters))
 	if err != nil {
 		b.Fatalf("NewObjectiveFunctionWithBounds failed: %v", err)
@@ -56,11 +60,16 @@ func benchmarkOptimizeLegacyShort(b *testing.B, opt Optimizer) {
 	}
 
 	b.ReportAllocs()
-	var totalEvaluations int
-	var totalIterations int
-	var totalSamples int
-	var totalConvergence time.Duration
+
+	var (
+		totalEvaluations int
+		totalIterations  int
+		totalSamples     int
+		totalConvergence time.Duration
+	)
+
 	start := time.Now()
+
 	for i := 0; i < b.N; i++ {
 		result, err := opt.Optimize(objective.Objective(), initial, objective.Codec().EncodedBounds(), OptimizeOptions{
 			MaxIterations: 20,
@@ -69,31 +78,38 @@ func benchmarkOptimizeLegacyShort(b *testing.B, opt Optimizer) {
 		if err != nil {
 			b.Fatalf("Optimize failed: %v", err)
 		}
+
 		totalEvaluations += result.Evaluations
 		totalIterations += result.Iterations
 		totalSamples += result.Evaluations * len(reference)
 		totalConvergence += result.Elapsed
 	}
+
 	elapsed := time.Since(start).Seconds()
 	if elapsed > 0 {
 		b.ReportMetric(float64(totalEvaluations)/elapsed, "eval/s")
 		b.ReportMetric(float64(totalIterations)/elapsed, "iter/s")
 		b.ReportMetric(float64(totalSamples)/elapsed, "samples/s")
 	}
+
 	if b.N > 0 {
 		b.ReportMetric(float64(totalConvergence.Microseconds())/1000/float64(b.N), "convergence-ms")
 	}
 }
 
 func benchmarkObjectiveEvaluate(b *testing.B, metric Metric) {
+	b.Helper()
+
 	legacyPreset, err := preset.Load(filepath.FromSlash("../../assets/presets/default.json"))
 	if err != nil {
 		b.Fatalf("load default preset: %v", err)
 	}
+
 	reference, sampleRate, err := loadLegacyReferenceForBenchmark()
 	if err != nil {
 		b.Fatalf("load legacy reference: %v", err)
 	}
+
 	objective, err := NewObjectiveFunctionWithBounds(reference, legacyPreset, sampleRate, 69, 100, metric, legacyValidationBounds(&legacyPreset.Parameters))
 	if err != nil {
 		b.Fatalf("NewObjectiveFunctionWithBounds failed: %v", err)

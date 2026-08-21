@@ -19,10 +19,12 @@ func TestComputeSpectralErrorIdenticalSignals(t *testing.T) {
 func TestComputeSpectralErrorDetectsDifference(t *testing.T) {
 	a := make([]float32, 1024)
 	b := make([]float32, 1024)
+
 	for i := range a {
 		if i%64 == 0 {
 			a[i] = 1
 		}
+
 		if i%32 == 0 {
 			b[i] = 1
 		}
@@ -39,6 +41,7 @@ func TestParseMetricSupportsSpectral(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseMetric failed: %v", err)
 	}
+
 	if got != MetricSpectral {
 		t.Fatalf("unexpected metric: got %q", got)
 	}

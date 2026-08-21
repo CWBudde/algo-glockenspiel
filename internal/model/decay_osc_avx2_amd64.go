@@ -23,6 +23,7 @@ func processBlock32AVX2(o *QuadDecayOscillator, input, output []float32) bool {
 			&output[0],
 			len(input),
 		)
+
 		return true
 	}
 }
@@ -41,12 +42,15 @@ func processBlock32ModeBlock4PrototypeAVX2(o *QuadDecayOscillator, input, output
 		if !processModeBlock4AVX2(&o.realState[0], &o.imagState[0], &o.amplitude[0], &o.block4Coeff[0], &in4, &out0) {
 			return false
 		}
+
 		if !processModeBlock4AVX2(&o.realState[1], &o.imagState[1], &o.amplitude[1], &o.block4Coeff[1], &in4, &out1) {
 			return false
 		}
+
 		if !processModeBlock4AVX2(&o.realState[2], &o.imagState[2], &o.amplitude[2], &o.block4Coeff[2], &in4, &out2) {
 			return false
 		}
+
 		if !processModeBlock4AVX2(&o.realState[3], &o.imagState[3], &o.amplitude[3], &o.block4Coeff[3], &in4, &out3) {
 			return false
 		}

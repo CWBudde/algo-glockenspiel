@@ -13,21 +13,25 @@ func TestParameterSpecsHaveStableUniqueIDs(t *testing.T) {
 	}
 
 	seenIDs := make(map[ParameterID]struct{}, len(specs))
+
 	seenKeys := make(map[string]struct{}, len(specs))
 	for _, spec := range specs {
 		if _, ok := seenIDs[spec.ID]; ok {
 			t.Fatalf("duplicate parameter id: %d", spec.ID)
 		}
+
 		seenIDs[spec.ID] = struct{}{}
 
 		if _, ok := seenKeys[spec.Key]; ok {
 			t.Fatalf("duplicate parameter key: %q", spec.Key)
 		}
+
 		seenKeys[spec.Key] = struct{}{}
 
 		if spec.Min > spec.Max {
 			t.Fatalf("invalid range for %q: min=%f max=%f", spec.Key, spec.Min, spec.Max)
 		}
+
 		if spec.Default < spec.Min || spec.Default > spec.Max {
 			t.Fatalf("default out of range for %q: default=%f", spec.Key, spec.Default)
 		}
@@ -57,12 +61,15 @@ func TestSnapshotRoundTripBarParams(t *testing.T) {
 	if output.InputMix != input.InputMix {
 		t.Fatalf("input mix mismatch: got %f want %f", output.InputMix, input.InputMix)
 	}
+
 	if output.FilterFrequency != input.FilterFrequency {
 		t.Fatalf("filter frequency mismatch: got %f want %f", output.FilterFrequency, input.FilterFrequency)
 	}
+
 	if output.BaseFrequency != input.BaseFrequency {
 		t.Fatalf("base frequency mismatch: got %f want %f", output.BaseFrequency, input.BaseFrequency)
 	}
+
 	if output.Chebyshev.Enabled != input.Chebyshev.Enabled {
 		t.Fatalf("chebyshev enabled mismatch: got %v want %v", output.Chebyshev.Enabled, input.Chebyshev.Enabled)
 	}
@@ -71,6 +78,7 @@ func TestSnapshotRoundTripBarParams(t *testing.T) {
 		if output.Chebyshev.HarmonicGains[i] != input.Chebyshev.HarmonicGains[i] {
 			t.Fatalf("harmonic gain mismatch at %d: got %f want %f", i, output.Chebyshev.HarmonicGains[i], input.Chebyshev.HarmonicGains[i])
 		}
+
 		if output.Modes[i] != input.Modes[i] {
 			t.Fatalf("mode mismatch at %d: got %+v want %+v", i, output.Modes[i], input.Modes[i])
 		}

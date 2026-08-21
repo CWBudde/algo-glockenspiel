@@ -4,6 +4,9 @@
 .claude
 .codex
 
+# Local tooling
+.trunk/
+
 # Legacy code
 /legacy/
 
@@ -14,3 +17,11 @@
 /out/
 /web/dist/
 /glockenspiel-vst3
+
+# build & test artifacts
+*.test
+*.prof
+*.pprof
+/bin/
+coverage.out
+coverage.html

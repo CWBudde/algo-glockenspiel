@@ -15,6 +15,7 @@ func TestSquaredDiffSumFallsBackWhenAVX2ForcedOff(t *testing.T) {
 
 	a := make([]float32, 64)
 	b := make([]float32, 64)
+
 	for i := range a {
 		a[i] = float32(math.Sin(float64(i) * 0.11))
 		b[i] = float32(math.Cos(float64(i) * 0.07))

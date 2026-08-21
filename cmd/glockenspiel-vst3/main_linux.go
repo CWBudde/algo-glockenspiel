@@ -5,7 +5,6 @@ package main
 import (
 	"github.com/cwbudde/glockenspiel/plugin/vst3"
 	vst3plugin "github.com/cwbudde/vst3go/pkg/plugin"
-
 	_ "github.com/cwbudde/vst3go/pkg/plugin/cbridge"
 )
 

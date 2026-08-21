@@ -95,10 +95,12 @@ function strike(note) {
   };
 
   if (!audioReady) {
-    initAudio().then(start).catch((error) => {
-      console.error(error);
-      updateStatus(error.message, true);
-    });
+    initAudio()
+      .then(start)
+      .catch((error) => {
+        console.error(error);
+        updateStatus(error.message, true);
+      });
     return;
   }
 
@@ -179,13 +181,17 @@ async function init() {
 
     let result;
     try {
-      result = await WebAssembly.instantiateStreaming(response.clone(), go.importObject);
+      result = await WebAssembly.instantiateStreaming(
+        response.clone(),
+        go.importObject,
+      );
     } catch (_streamingError) {
       const bytes = await response.arrayBuffer();
       result = await WebAssembly.instantiate(bytes, go.importObject);
     }
 
-    wasmMemory = result.instance.exports.mem || result.instance.exports.memory || null;
+    wasmMemory =
+      result.instance.exports.mem || result.instance.exports.memory || null;
     if (!wasmMemory) {
       throw new Error("WASM memory export not found");
     }

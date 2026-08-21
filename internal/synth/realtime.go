@@ -50,9 +50,11 @@ func (e *RealtimeEngine) SetMasterGain(gain float32) {
 	if gain < minRealtimeGain {
 		gain = minRealtimeGain
 	}
+
 	if gain > 1 {
 		gain = 1
 	}
+
 	e.masterGain = gain
 }
 
@@ -102,6 +104,7 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 	clear(buf)
 
 	writeIndex := 0
+
 	for _, v := range e.voices {
 		if len(v.buffer) < frames {
 			v.buffer = make([]float32, frames)
@@ -119,6 +122,7 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 			writeIndex++
 		}
 	}
+
 	e.voices = e.voices[:writeIndex]
 
 	for i := range buf {
@@ -144,6 +148,7 @@ func gainsForNote(note int, gain float32) (float32, float32) {
 
 	left := gain * (1 - pan) * 0.5
 	right := gain * (1 + pan) * 0.5
+
 	return left, right
 }
 
@@ -151,11 +156,14 @@ func hardClip(v float32) float32 {
 	if v > 1 {
 		return 1
 	}
+
 	if v < -1 {
 		return -1
 	}
+
 	if math.Abs(float64(v)) < 1e-30 {
 		return 0
 	}
+
 	return v
 }

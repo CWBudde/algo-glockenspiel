@@ -30,9 +30,11 @@ func TestSaveLoadCheckpointRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCheckpoint failed: %v", err)
 	}
+
 	if got.Iteration != want.Iteration || got.BestCost != want.BestCost || len(got.BestParams) != len(want.BestParams) {
 		t.Fatalf("unexpected checkpoint round-trip: got %#v want %#v", got, want)
 	}
+
 	if got.State == nil || got.State.Kind != want.State.Kind {
 		t.Fatalf("unexpected checkpoint state round-trip: got %#v want %#v", got.State, want.State)
 	}
@@ -50,6 +52,7 @@ func TestFindLatestCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindLatestCheckpoint failed: %v", err)
 	}
+
 	if filepath.Base(got) != "checkpoint_0010.json" {
 		t.Fatalf("unexpected latest checkpoint: %s", got)
 	}

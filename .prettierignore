@@ -1,0 +1,5 @@
+# Vendored from the Go toolchain (lib/wasm/wasm_exec.js) — keep byte-identical.
+web/wasm_exec.js
+
+# Generated
+web/dist/

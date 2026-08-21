@@ -40,18 +40,18 @@ func TestRunFitWritesArtifacts(t *testing.T) {
 	cmd.SetErr(io.Discard)
 
 	err = runFit(cmd, fitOptions{
-		referencePath: referencePath,
-		presetPath:    filepath.FromSlash("../../testdata/presets/minimal.json"),
-		outputPath:    outputPath,
-		note:          69,
-		velocity:      100,
-		sampleRate:    44100,
-		optimizerName: "simple",
-		maxIter:       1,
-		timeBudget:    1,
-		reportEvery:   1,
+		referencePath:   referencePath,
+		presetPath:      filepath.FromSlash("../../testdata/presets/minimal.json"),
+		outputPath:      outputPath,
+		note:            69,
+		velocity:        100,
+		sampleRate:      44100,
+		optimizerName:   "simple",
+		maxIter:         1,
+		timeBudget:      1,
+		reportEvery:     1,
 		checkpointEvery: 1,
-		workDir:       workDir,
+		workDir:         workDir,
 	})
 	if err != nil {
 		t.Fatalf("runFit failed: %v", err)
@@ -177,6 +177,7 @@ func TestRunFitWritesCPUProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected cpu profile to exist: %v", err)
 	}
+
 	if stat.Size() == 0 {
 		t.Fatal("expected cpu profile to be non-empty")
 	}
@@ -192,10 +193,12 @@ func TestRunFitResumesFromCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load preset: %v", err)
 	}
+
 	engine, err := synth.NewSynthesizer(p, 44100)
 	if err != nil {
 		t.Fatalf("new synthesizer: %v", err)
 	}
+
 	reference := engine.RenderNote(69, 100, 0.05)
 	if err := writeWAV(referencePath, 44100, reference); err != nil {
 		t.Fatalf("write reference wav: %v", err)
@@ -205,10 +208,12 @@ func TestRunFitResumesFromCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewObjectiveFunction failed: %v", err)
 	}
+
 	encoded, err := objective.Codec().EncodeParams(&p.Parameters)
 	if err != nil {
 		t.Fatalf("EncodeParams failed: %v", err)
 	}
+
 	if err := optimizer.SaveCheckpoint(filepath.Join(workDir, "checkpoint_0007.json"), &optimizer.Checkpoint{
 		Version:    "1.0",
 		Iteration:  7,
@@ -224,6 +229,7 @@ func TestRunFitResumesFromCheckpoint(t *testing.T) {
 	}
 
 	cmd := &cobra.Command{}
+
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(io.Discard)
@@ -246,6 +252,7 @@ func TestRunFitResumesFromCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runFit failed: %v", err)
 	}
+
 	if !strings.Contains(out.String(), "Resuming from") {
 		t.Fatalf("expected resume output, got %q", out.String())
 	}
@@ -261,10 +268,12 @@ func TestRunFitResumeRestoresMayflySettingsFromCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load preset: %v", err)
 	}
+
 	engine, err := synth.NewSynthesizer(p, 44100)
 	if err != nil {
 		t.Fatalf("new synthesizer: %v", err)
 	}
+
 	reference := engine.RenderNote(69, 100, 0.05)
 	if err := writeWAV(referencePath, 44100, reference); err != nil {
 		t.Fatalf("write reference wav: %v", err)
@@ -274,10 +283,12 @@ func TestRunFitResumeRestoresMayflySettingsFromCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewObjectiveFunction failed: %v", err)
 	}
+
 	encoded, err := objective.Codec().EncodeParams(&p.Parameters)
 	if err != nil {
 		t.Fatalf("EncodeParams failed: %v", err)
 	}
+
 	if err := optimizer.SaveCheckpoint(filepath.Join(workDir, "checkpoint_0007.json"), &optimizer.Checkpoint{
 		Version:    "1.0",
 		Iteration:  7,
@@ -303,6 +314,7 @@ func TestRunFitResumeRestoresMayflySettingsFromCheckpoint(t *testing.T) {
 	cmd.Flags().String("mayfly-variant", "", "")
 	cmd.Flags().Int("mayfly-pop", 0, "")
 	cmd.Flags().Int64("mayfly-seed", 0, "")
+
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(io.Discard)
@@ -324,10 +336,12 @@ func TestRunFitResumeRestoresMayflySettingsFromCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runFit failed: %v", err)
 	}
+
 	text := out.String()
 	if !strings.Contains(text, "optimizer=mayfly") || !strings.Contains(text, "metric=spectral") {
 		t.Fatalf("expected resume output to restore optimizer/metric, got %q", text)
 	}
+
 	if !strings.Contains(text, "remaining-iter=1") {
 		t.Fatalf("expected remaining iterations to account for checkpoint, got %q", text)
 	}

@@ -35,6 +35,7 @@ func TestNormalizeDenormalizeVectorRoundTrip(t *testing.T) {
 
 func TestMayflyOptimizerRejectsNilObjective(t *testing.T) {
 	opt := &MayflyOptimizer{}
+
 	_, err := opt.Optimize(nil, []float64{0.5}, Bounds{Ranges: []Range{{Min: 0, Max: 1}}}, OptimizeOptions{
 		MaxIterations: 2,
 		TimeBudget:    time.Second,
@@ -95,6 +96,7 @@ func TestMayflyOptimizerImprovesSyntheticReference(t *testing.T) {
 	initial.Parameters.Modes[0].DecayMs = 90
 
 	bounds := narrowBoundsAroundTarget(&target.Parameters)
+
 	objective, err := NewObjectiveFunctionWithBounds(reference, &initial, 44100, 69, 100, MetricRMS, bounds)
 	if err != nil {
 		t.Fatalf("NewObjectiveFunctionWithBounds failed: %v", err)
@@ -104,6 +106,7 @@ func TestMayflyOptimizerImprovesSyntheticReference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncodeParams failed: %v", err)
 	}
+
 	initialCost := objective.Evaluate(initialEncoded)
 
 	result, err := (&MayflyOptimizer{
@@ -121,6 +124,7 @@ func TestMayflyOptimizerImprovesSyntheticReference(t *testing.T) {
 	if !(result.BestCost < initialCost) {
 		t.Fatalf("expected optimization to improve cost: initial=%g best=%g", initialCost, result.BestCost)
 	}
+
 	if !(result.BestCost <= initialCost*0.98) {
 		t.Fatalf("expected material cost improvement: initial=%g best=%g", initialCost, result.BestCost)
 	}
@@ -146,6 +150,7 @@ func TestMayflyOptimizerImprovesLegacyReference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncodeParams failed: %v", err)
 	}
+
 	initialCost := objective.Evaluate(initialEncoded)
 
 	result, err := (&MayflyOptimizer{
@@ -168,6 +173,7 @@ func TestMayflyOptimizerImprovesLegacyReference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeParams failed: %v", err)
 	}
+
 	rendered := renderNote(t, &preset.Preset{
 		Version:    legacyPreset.Version,
 		Name:       legacyPreset.Name,
@@ -176,6 +182,7 @@ func TestMayflyOptimizerImprovesLegacyReference(t *testing.T) {
 	}, sampleRate, 69, 100, float64(len(reference))/float64(sampleRate))
 	initialRendered := renderNote(t, &initial, sampleRate, 69, 100, float64(len(reference))/float64(sampleRate))
 	initialRMS := ComputeRMSError(initialRendered, reference)
+
 	finalRMS := ComputeRMSError(rendered, reference)
 	if !(finalRMS < initialRMS) {
 		t.Fatalf("expected rendered RMS to improve: initial=%g final=%g", initialRMS, finalRMS)

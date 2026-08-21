@@ -1,192 +1,324 @@
 # Glockenspiel Plan
 
-## Status
+## Goal
 
-Core CLI synthesis and fitting are implemented and tested.
-Current remaining work is mostly validation, documentation, and next-step plugin hardening.
+A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 
-## Phase 1: Validate The Existing CLI/Fit Stack
+- **Core**: a configurable bank of `N` independent phase-rotation oscillators with `M`
+  harmonics each. No `sin()` in the inner loop, no physical modelling. Counts are runtime
+  configuration, not compile-time constants.
+- **SIMD**: true packed kernels in Go Plan 9 assembly. AVX2 and ARM NEON are first-class;
+  SSE2/SSE3 for backward compatibility; AVX-512 where available.
+- **Optimizer**: parameter fitting driven by the current release of `cwbudde/mayfly`,
+  exposed through a CLI that can also `serve` an interactive web UI.
+- **Web app**: the user-facing product. WASM-compiled Go, shipped to GitHub Pages by a
+  GitHub Action, with a **Play** tab for a pretrained model and an **Optimize** tab.
 
-Goal: prove the current synth/fit implementation is reliable enough to treat as the stable baseline.
+## Status (2026-08-21)
 
-### Phase 1.1: Manual Fit Validation
+Reviewed against the goal above. What exists and works:
 
-Tasks:
+- Exact phase-rotation recursion (`internal/model/decay_osc.go:137-141`), correct and
+  drift-free while the decay factor is below 1.
+- One genuinely packed AVX2 oscillator kernel (1392 ns per 512-sample block, 6.5× the
+  scalar fallback) and one packed AVX2 Chebyshev kernel (136 ns).
+- Preset load/save/validation, WAV note rendering, offline fitting with three metrics,
+  Nelder-Mead and Mayfly backends, checkpointing, legacy-reference regression tests.
+- A deployed browser demo and a VST3 spike.
 
-- Re-run synthetic-reference fit checks from a known preset.
-- Re-run recorded-reference fit checks, especially the recorded A4 path.
-- Listen to reference vs fitted output for the meaningful cases, not just short diagnostics.
-- Capture a short written summary of what matched, what did not, and which metric/optimizer was used.
+What does not match the goal:
 
-Acceptance criteria:
+- The core is a fixed 4-mode bar model. `NumModes = 4` is a `const` materialized as
+  `[NumModes]ModeParams` arrays, a hand-unrolled scalar loop, and five `.s` files.
+- The Chebyshev shaper runs on the excitation *before* the resonators
+  (`internal/model/bar.go:110-115`), so harmonics are not computed on top of the oscillators.
+- 76% of the assembly is dead, and every dead kernel is slower than the live one:
+  `block4x4` 37280 ns, `cheby_osc_fused` 49309 ns, `mode_block4` 58985 ns per 512-block.
+  `cheby_osc_fused_avx2_amd64.s:34-81` is scalar `MULSS`/`ADDSS` inside a `.s` file.
+- No NEON, no SSE, no AVX-512, no FMA. ARM and WASM run `processBlock32Generic`, which is
+  1.8× slower per sample than the naive loop it replaced.
+- Parallelism is across the 4 modes of one voice; voices render serially
+  (`internal/synth/realtime.go:105`), so oscillator count costs linearly.
+- mayfly is pinned at v0.1.0 (upstream v0.4.0) behind a wrapper that discards the initial
+  guess, so `--preset` has no effect on a mayfly search and `--resume` is a no-op.
+- `serve` and the optimizer tab have no code.
+- CI runs one job: copy static files to Pages. `go build ./...` fails on `main`.
 
-- [ ] Synthetic fit run completed and results captured.
-- [ ] Recorded-reference fit run completed and results captured.
-- [ ] Listening notes written down in repo docs.
-- [ ] A recommended default fit workflow is stated clearly enough for reuse.
+---
 
-### Phase 1.2: Legacy Verification
+## Phase 0: Unblock — DONE (2026-08-21)
 
-Tasks:
-
-- Finish the strict legacy comparison path.
-- Decide the actual numeric acceptance threshold for similarity.
-- Verify the reference artifact setup needed by the strict test is reproducible.
-- If the strict check still fails, isolate whether the mismatch is in coefficients, excitation chain, or test/reference setup.
-
-Acceptance criteria:
-
-- [ ] Strict legacy comparison test has a defined pass condition.
-- [ ] Required reference artifacts and env vars are documented.
-- [ ] Legacy comparison is either passing or has a narrowed, documented blocker.
-
-### Phase 1.3: Fit Workflow Robustness
-
-Tasks:
-
-- Re-check checkpoint/resume on a longer fit run.
-- Confirm optimizer/metric combinations behave as documented.
-- Decide which combinations are recommended defaults vs experimental alternatives.
-
-Acceptance criteria:
-
-- [ ] Checkpoint/resume verified on a non-trivial run.
-- [ ] Recommended optimizer/metric combinations documented.
-- [ ] Any still-risky combinations are explicitly called out.
-
-## Phase 2: Documentation Cleanup
-
-Goal: make the implemented system understandable and usable without digging through commit history or scratch notes.
-
-### Phase 2.1: API Documentation
+Goal: make CI able to tell you when something breaks, before changing anything else.
 
 Tasks:
 
-- Add missing godoc comments on exported types and functions.
-- Add package-level docs where the public surface is non-trivial.
-- Review public packages for inconsistent or stale comments.
+- Add `.github/workflows/ci.yml` on `pull_request` and `push`: `go build ./...`,
+  `go vet ./...`, `go test -race ./...`, `just check-formatted`, `just lint`,
+  `just check-tidy`. Matrix `ubuntu-latest`, `ubuntu-24.04-arm`, and a `GOOS=js GOARCH=wasm`
+  build.
+- Fix `go build ./...`. `cmd/glockenspiel-vst3/doc.go` declares `package main` with no build
+  tag while the only `func main()` sits behind `//go:build linux && cgo && vst3go`.
+- Untrack `optimizer.test` (7.1 MB, unstripped, over half of `.git`). Add `*.test`, `bin/`,
+  `coverage.*`, `*.prof`, `*.pprof` to `.gitignore`.
+- Add a `LICENSE` file and attribute the vendored BSD-licensed `web/wasm_exec.js`.
+- Add `*.js`, `*.css`, `*.html` to the prettier `includes` in `treefmt.toml`; 2401 lines of
+  the user-facing product are outside every formatter and linter. Fix the file header, which
+  still says "algo-dsp". Commit `.trunk/` or delete it — it is currently hidden by a
+  local-only `.git/info/exclude`.
+- `.golangci.yml`: `issues.exclude-use-default` is v1 syntax under `version: "2"`, and its
+  `gofmt` conflicts with `gofumpt` in `treefmt.toml`. Pick one.
+- Bump dependencies: mayfly v0.1.0 to v0.4.0, algo-dsp v0.4.0 to v0.7.0, algo-fft v0.6.10 to
+  v0.8.0, algo-vecmath v0.1.0 to v0.1.3. Run `go mod tidy`; note that
+  `internal/cpufeat/features_amd64.go` imports `golang.org/x/sys/cpu` directly, so it should
+  not be marked indirect.
 
 Acceptance criteria:
 
-- [ ] Exported public APIs have usable godoc comments.
-- [ ] Public-facing packages have package docs where needed.
-- [ ] Comments reflect current behavior rather than earlier design intent.
+- [x] `go build ./...`, `go test -race ./...`, and `golangci-lint run` pass locally, and
+      `.github/workflows/ci.yml` runs them on every push and pull request.
+- [x] No compiled binaries tracked in git (`optimizer.test` untracked; `.gitignore` extended).
+- [x] A LICENSE exists (MIT), with `web/THIRD_PARTY.md` covering the vendored `wasm_exec.js`.
+- [x] JS, CSS, and HTML are covered by the formatter (`treefmt.toml` + a prettier CI job).
+- [x] Dependencies are current: algo-dsp v0.7.0, algo-fft v0.8.0, mayfly v0.4.0,
+      algo-vecmath v0.1.3.
 
-### Phase 2.2: User-Facing Examples
+Notes:
+
+- `go build ./...` was failing because `cmd/glockenspiel-vst3/doc.go` declared `package main`
+  with no build tag. It now carries the same `//go:build linux && cgo && vst3go` tag as
+  `main_linux.go`.
+- `golangci-lint` had never passed: 94 findings, of which 41 `wsl_v5` were auto-fixable, 50
+  `varnamelen` were the linter objecting to conventional DSP names (`t0..t2`, `c1..c3`,
+  `re`/`im`, `aw`/`bw`), and 3 were real. `varnamelen` is now configured for the domain
+  rather than disabled; the real findings — an empty `else if` in `spectral.go` that swallowed
+  an FFT-plan error, and two missing `b.Helper()` calls — are fixed.
+- algo-fft v0.8.0 made the real plans generic; `spectralFFTPlan` now holds
+  `*algofft.FastPlanReal[float64, complex128]` and `*algofft.PlanReal[float64, complex128]`.
+- mayfly v0.4.0 is a drop-in at the call site. Actually *using* its new API is Phase 3.
+- `go mod tidy` promoted `golang.org/x/sys` to a direct dependency and dropped the stale
+  `justyntemme/vst3go` entries from `go.sum`.
+- `.trunk/` is deleted and gitignored; golangci-lint and the prettier job cover its useful
+  overlap and actually run.
+
+## Phase 1: Configurable Oscillator Bank
+
+Goal: replace the fixed 4-mode bar model with a bank whose oscillator and harmonic counts are
+runtime configuration, laid out for SIMD, without losing performance.
 
 Tasks:
 
-- Add a few example presets with clear intent.
-- Add at least one documented synth workflow example.
-- Add at least one documented fit workflow example.
-- Add helper scripts only where they reduce repeated manual setup.
+- New package `internal/oscbank`. AoSoA layout, float32 state: `re`, `im`, `cosCoeff`,
+  `sinCoeff`, `amp` as `[]float32` in blocks of the target's vector width. `N` and `M` are
+  struct fields.
+- Keep the existing phase-rotation recursion verbatim. If a sustained oscillator
+  (decay factor 1) is ever added, magnitude renormalization becomes mandatory.
+- Compute harmonics on top of the oscillators, either as integer-multiple rotors sharing a
+  decay or by keeping the Chebyshev shaper as an optional post-oscillator stage.
+- Pack `voices x oscillators` into lanes so oscillator count scales sublinearly rather than
+  adding serial voice cost.
+- Remove the per-sample horizontal reduction; accumulate in-lane across the block and reduce
+  once at the end.
+- Preset schema v2 with a variable-length oscillator array, plus a v1 loader so the shipped
+  presets keep working.
+- Retire `internal/model` only after the benchmark gate passes.
 
 Acceptance criteria:
 
-- [ ] Example presets exist and are explained briefly.
-- [ ] Synth example workflow exists.
-- [ ] Fit example workflow exists.
-- [ ] Any added scripts are small, repo-appropriate, and documented.
+- [ ] Oscillator and harmonic counts are configurable at runtime.
+- [ ] The 4x4 case benchmarks at or below 1392 ns per 512-sample block.
+- [ ] Scaling to 64 oscillators is close to linear in total work, not in voice count.
+- [ ] Every existing preset round-trips through the v1 loader and renders identically.
 
-### Phase 2.3: Results Documentation
+## Phase 2: Real SIMD On Four Targets
+
+Goal: one kernel shape, four packed backends, one differential test suite.
 
 Tasks:
 
-- Move important findings out of ad hoc `out/` notes into durable docs.
-- Summarize current fit quality, legacy-comparison status, and recommended usage.
-- Keep the write-up short and operational, not historical.
+- Delete the dead assembly first: `cheby_osc_fused_avx2_amd64.{go,s}`,
+  `mode_block4_avx2_amd64.{go,s}`, `block4x4_avx2_amd64.s`, `osc_strategy.go`, their
+  `_other.go` stubs, and `modeBlock4Coeff` / `processModeBlock4` / `block4Coeff`.
+  `block4x4_avx2_amd64.s` hardcodes `unsafe.Sizeof(modeBlock4Coeff) == 208` with no
+  compile-time assertion.
+- Extend `internal/cpufeat` with `HasSSE2`, `HasSSE3`, `HasAVX`, `HasFMA`, `HasAVX2`,
+  `HasAVX512F`/`HasAVX512DQ`, and arm64 `HasASIMD`. Make `Detect()` lock-free after first
+  use; it currently takes an `RWMutex` and a `Mutex` on every audio block.
+- Write packed float32 kernels with FMA where available:
+  - `oscbank_avx2_amd64.s` (`VFMADD231PS`, YMM, 8 lanes, unrolled for ILP)
+  - `oscbank_avx512_amd64.s` (ZMM, 16 lanes, masked tail)
+  - `oscbank_sse2_amd64.s` (XMM, 4 lanes)
+  - `oscbank_arm64.s` (`FMLA V*.S4`, 4 lanes; NEON is arm64 baseline, no runtime gate)
+- Make every backend agree numerically. Today AVX2 Chebyshev is float32, its tail is a third
+  float32 implementation, and the fallback is float64, so output differs by machine and even
+  within one buffer. `internal/optimizer/rms_avx2_amd64.s` accumulates in float32 while
+  `rms.go` accumulates in float64, so optimizer fitness is not reproducible across machines.
+- Add `unsafe.Offsetof`/`Sizeof` compile-time assertions for every struct an `.s` file indexes.
+- Add `FuzzOscBankMatchesGeneric` comparing each backend to the scalar reference over random
+  coefficients, states, inputs, and lengths. There is currently no fuzzing at all.
+- Tighten the existing `approxEqual(..., 1e-5)` tolerances and give the kernel tests non-zero
+  initial state; `decay_osc_test.go:389` and `:475` currently run with zero state, so half the
+  packed kernel multiplies by zero.
+- Remove audio-thread allocations (`internal/synth/realtime.go:72,98,108`,
+  `internal/model/bar.go:149-157`). Set MXCSR FTZ/DAZ once per stream instead of the branchy
+  per-block `flushDenormals` with its magic `1e-300` floor.
 
 Acceptance criteria:
 
-- [ ] Important validation findings are stored in repo docs.
-- [ ] The docs identify what is proven, what is still approximate, and what remains open.
+- [ ] AVX2, AVX-512, SSE2, and NEON kernels exist, are packed, and use FMA where available.
+- [ ] Differential and fuzz tests pass for every backend on amd64 and arm64 CI.
+- [ ] A benchmark table in `docs/` records ns/op per backend against the scalar reference.
+- [ ] No allocation and no mutex acquisition on the audio path.
+- [ ] Rendered output is bit-identical across backends for a given precision.
 
-## Phase 3: Performance Follow-Up
+## Phase 3: Optimizer
 
-Goal: only spend more time on optimization if profiling shows real headroom on current workloads.
-
-### Phase 3.1: Re-Profile Current Fit Path
+Goal: use mayfly as intended, make the objectives measure what they claim to, and make the
+CLI usable.
 
 Tasks:
 
-- Re-run profiling on the current `fit` path.
-- Confirm whether the main hotspots are still the same.
-- Compare against earlier benchmark notes before starting new low-level work.
+- Upgrade to mayfly v0.4.0 and delete the hand-rolled machinery it replaces:
+  `OptimizeContext` for cancellation, `WithProgressObserver` for progress,
+  `WithInitialPopulation` for seeding, `Result.TerminationReason`, and
+  `EnableParallel`/`MaxWorkers`.
+- Make the objective safe for concurrent use before enabling parallelism.
+  `ObjectiveFunction.Evaluate` mutates shared render state and the mayfly closure mutates
+  `evals`/`bestCost`/`bestParams` without synchronization. Give each worker its own scratch
+  state and drop the process-wide FFT plan mutex.
+- Objectives:
+  - Add onset alignment and gain normalization to `ComputeRMSError`. A 7-sample offset at
+    1756 Hz is a full phase inversion.
+  - Replace the 4096-sample cap in `spectral.go` with a multi-frame STFT; the current cap
+    ignores about 95% of a two-second reference, including all of the decay.
+  - Reweight `spectralBinWeight`; it currently weights sub-500 Hz highest for an instrument
+    whose fundamental is above 1 kHz.
+  - Fix the PCM16 round trip (32767 versus 32768), stop quantizing the reference, and stop
+    quantizing every candidate, which makes the objective piecewise constant.
+  - De-duplicate `projectToPCM16Domain` and the WAV loader.
+- Checkpoints: count progress callbacks rather than reusing mayfly's evaluation counter as an
+  iteration count, which currently breaks both the resumed budget and the checkpoint modulo.
+  Sort checkpoints numerically. Warn on a dimension-mismatched checkpoint instead of silently
+  ignoring it. `fsync` before rename.
+- CLI: print errors (`cmd/glockenspiel/main.go` discards them while `root.go` sets
+  `SilenceErrors`); use the embedded default preset instead of a CWD-relative path; add a
+  bounds flag; `cobra.NoArgs`; `DurationVar` for the time budget; signal handling and a
+  `context.Context` threaded through; fix the `--optimizer` help text.
+- Fix `SimpleOptimizer` returning best-params that do not correspond to its reported best
+  cost, and replace mirror-based bound handling with normalized-space optimization so both
+  backends search the same space.
 
 Acceptance criteria:
 
-- [ ] Current profile captured.
-- [ ] Dominant hotspots identified.
-- [ ] Decision made: stop here or continue optimization.
+- [ ] Failures print a real error message.
+- [ ] Starting a mayfly fit from the exact optimum yields a cost near zero (regression test).
+- [ ] `--time-budget` stops the run within its budget.
+- [ ] `--resume` continues with the remaining budget and improves on the checkpoint cost.
+- [ ] Objective evaluation is parallel and race-free under `-race`.
+- [ ] Fitting a recorded reference with a leading offset converges.
 
-### Phase 3.2: Targeted Optimization If Justified
+## Phase 4: Serve And The Optimizer UI
+
+Goal: run optimization interactively from a browser.
 
 Tasks:
 
-- Pursue more SIMD or parallel evaluation only if profiling justifies it.
-- Keep optimization scoped to measured bottlenecks.
-- Re-benchmark after each material change.
+- Add `glockenspiel serve --addr :8080` (`internal/cli/serve.go`, `internal/server/`)
+  serving the embedded web assets plus a JSON API: start a fit, stream progress over SSE,
+  fetch the result preset, render audio.
+- Add a tab bar to the web UI: **Play** and **Optimize**.
+- The Optimize tab uploads a reference WAV, selects metric, optimizer and bounds, shows a
+  live cost curve, auditions the fitted preset, and downloads it.
+- The Pages build ships Play; Optimize explains that it needs the local CLI. Running the
+  optimizer in WASM is a later option, not a blocker.
 
 Acceptance criteria:
 
-- [ ] Each optimization change is tied to a measured hotspot.
-- [ ] Before/after benchmark evidence exists.
-- [ ] No speculative optimization work is left undocumented.
+- [ ] `serve` hosts the UI and the API.
+- [ ] A fit can be started, watched, auditioned, and downloaded from the browser.
+- [ ] The Pages build degrades gracefully with no server.
 
-## Phase 4: VST3 Spike Validation
+## Phase 5: Web App
 
-Goal: determine whether the current plugin spike is viable enough to become a real product path.
-
-### Phase 4.1: DAW Validation
+Goal: make the user-facing product good.
 
 Tasks:
 
-- Test the current plugin in at least one DAW.
-- Verify plugin loading, parameter updates, note triggering, and audio output stability.
-- Check whether current note handling and quiet-voice retirement behave acceptably in practice.
+- Replace `ScriptProcessorNode` with `AudioWorklet`. Decide explicitly between a
+  same-thread worklet instance and a Worker plus ring buffer; `SharedArrayBuffer` needs
+  COOP/COEP headers, which GitHub Pages cannot set.
+- Fix master gain, which never reaches sounding notes because gain is baked per voice at
+  NoteOn while `ProcessBlock` never consults it.
+- Fix `gainsForNote`, which hardcodes `firstNote = 72` over 24 semitones while the UI spans
+  MIDI 36 to 96, producing over-unity clipped gain and an inverted right channel below C4.
+- Bake the wood textures at build time. `wood-texture.js` is 577 lines, larger than the rest
+  of the front end, and runs on the order of 10^8 operations synchronously before first paint
+  and before the WASM fetch starts, then again on every species change. Keep the generator as
+  a build tool.
+- Replace the 50 ms `setTimeout` WASM-ready race with a real ready signal from Go.
+- Accessibility: add focus styles (there are none), make bars and keys keyboard-activatable
+  (they bind only `pointerdown`), give piano keys accessible names, and add `aria-live` to
+  the status element. Add `touch-action: manipulation` and `user-select: none`.
+- Wire or remove the inert hamburger menu, preset select, and Save/Load buttons. Fix the
+  `<h1>`, which says "VST3" on a page that is not a VST3.
+- WASM bridge: namespace the globals, delete `wasmGetMemoryBuffer` (it reads a global nothing
+  sets), cache the `Float32Array` view instead of allocating one per callback, add
+  `-trimpath -ldflags="-s -w"` and a `wasm-opt` pass, add content-hash cache busting, and
+  stop overwriting the tracked `wasm_exec.js` during the build.
+- Document the TinyGo decision either way.
 
 Acceptance criteria:
 
-- [ ] Plugin loads in a DAW.
-- [ ] Basic note playback works.
-- [ ] Parameter changes work during use.
-- [ ] Major blocking integration issues are documented.
+- [ ] Audio runs off the main thread with no dropouts under load.
+- [ ] Volume affects a ringing note; low keys are in phase and unclipped.
+- [ ] First paint under one second on a mid-range device.
+- [ ] Full keyboard traversal with visible focus; Lighthouse accessibility at least 90.
+- [ ] The WASM payload is materially smaller and cache-busted.
 
-### Phase 4.2: Runtime Viability
+## Phase 6: Split Out VST3
+
+Goal: this repo builds cleanly from a fresh clone.
 
 Tasks:
 
-- Measure whether current real-time performance is acceptable.
-- Identify xruns, latency issues, or parameter-update glitches.
-- Decide whether `vst3go` remains the right base or whether a local bridge is needed.
+- Move `plugin/vst3/`, `cmd/glockenspiel-vst3/`, and `docs/vst3*.md` to their own repository
+  depending on this module normally.
+- Remove `replace github.com/cwbudde/vst3go => ../vst3go`, which is unresolvable without a
+  sibling checkout and breaks every documented `-tags=vst3go` command as well as
+  `go mod tidy`.
+- Clean the stale `justyntemme/vst3go` entries out of `go.sum`.
 
 Acceptance criteria:
 
-- [ ] Real-time performance has been evaluated.
-- [ ] The main runtime risks are documented.
-- [ ] A concrete direction for the VST3 implementation has been chosen.
+- [ ] No `replace` directive; `go mod tidy` is a no-op.
+- [ ] The split-out repo builds against a published version of this module.
 
-### Phase 4.3: Post-Spike Expansion
+## Phase 7: Documentation
+
+Goal: make the docs describe the project that exists.
 
 Tasks:
 
-- Extend behavior beyond the current spike only after DAW validation is solid.
-- Prioritize full MIDI-range handling, parameter smoothing, and additional plugin polish.
-- Defer GUI/editor work until the processing path is stable.
+- Rewrite `README.md` around the web app as the primary product with the CLI second. It
+  currently claims VST/DAW plugin support and GUI tooling are "not implemented" while both
+  exist, contradicts its own "Implemented" list five lines above, and omits `web/`,
+  `plugin/`, `docs/`, `scripts/`, and `cmd/glockenspiel-wasm` from the layout tree.
+- Document the web app in `docs/`; it is currently undocumented.
+- Migrate the findings in `out/` into `docs/` and delete the directory.
+- Retire `docs/vst3-evaluation.md` and `docs/vst3go-spike.md` with the split, or mark them
+  historical.
 
 Acceptance criteria:
 
-- [ ] Expansion work is gated on successful DAW validation.
-- [ ] Next plugin milestones are ordered clearly.
+- [ ] README describes what the repo actually contains.
+- [ ] The web app is documented.
+- [ ] `out/` is migrated and removed.
 
 ## Deferred
 
-- richer preset library
-- broader multi-note modeling strategy outside the current plugin spike
-- polished plugin GUI/editor
-- any major architectural expansion before Phases 1 and 4 are closed
+- Running the optimizer itself in WASM.
+- Richer preset library and multi-note modeling.
+- Any GUI editor for the plugin, which now lives in its own repository.
 
 ## Resume Point
 
-Start with Phase 1.1 if the focus is the CLI/model path.
-Start with Phase 4.1 if the focus is the VST/plugin path.
+Phase 0 is closed. Phase 3 is in progress; Phases 1, 2, 4, 5, 6 and 7 are open.

@@ -123,6 +123,7 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	if options.reportEvery < 0 {
 		return fmt.Errorf("report-every must be >= 0, got %d", options.reportEvery)
 	}
+
 	if options.checkpointEvery < 0 {
 		return fmt.Errorf("checkpoint-interval must be >= 0, got %d", options.checkpointEvery)
 	}
@@ -130,13 +131,16 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	if options.optimizerName != "simple" && options.optimizerName != "mayfly" {
 		return fmt.Errorf("unsupported optimizer %q", options.optimizerName)
 	}
+
 	if options.metric == "" {
 		options.metric = string(optimizer.MetricRMS)
 	}
+
 	metric, err := optimizer.ParseMetric(options.metric)
 	if err != nil {
 		return err
 	}
+
 	if options.optimizerName == "mayfly" && options.mayflyPop < 2 {
 		return fmt.Errorf("mayfly-pop must be >= 2, got %d", options.mayflyPop)
 	}
@@ -144,6 +148,7 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	if err := os.MkdirAll(options.workDir, 0o755); err != nil {
 		return fmt.Errorf("create work dir: %w", err)
 	}
+
 	stopCPUProfile, err := startCPUProfile(options.cpuProfilePath)
 	if err != nil {
 		return err
@@ -173,22 +178,27 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	if err != nil {
 		return err
 	}
+
 	if options.resume {
 		latestPath, err := optimizer.FindLatestCheckpoint(options.workDir)
 		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
+
 		if err == nil {
 			cp, err := optimizer.LoadCheckpoint(latestPath)
 			if err != nil {
 				return err
 			}
+
 			if len(cp.BestParams) == len(initialEncoded) {
 				applyCheckpointResume(cmd, &options, cp)
+
 				initialEncoded = append(initialEncoded[:0], cp.BestParams...)
 				if cp.Iteration > 0 {
 					options.maxIter = maxInt(1, options.maxIter-cp.Iteration)
 				}
+
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 					"Resuming from %s (iteration=%d best=%0.6g optimizer=%s metric=%s remaining-iter=%d)\n",
 					latestPath, cp.Iteration, cp.BestCost, options.optimizerName, options.metric, options.maxIter)
@@ -206,6 +216,7 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		if len(params) == 0 {
 			return nil
 		}
+
 		return optimizer.SaveCheckpoint(bestCheckpointPath(iteration), &optimizer.Checkpoint{
 			Version:    "1.0",
 			Iteration:  iteration,
@@ -216,7 +227,9 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 			State:      checkpointStateForOptions(options),
 		})
 	}
+
 	var selectedOptimizer optimizer.Optimizer
+
 	switch options.optimizerName {
 	case "simple":
 		selectedOptimizer = &optimizer.SimpleOptimizer{}
@@ -309,6 +322,7 @@ func checkpointStateForOptions(options fitOptions) *optimizer.OptimizerState {
 			Seed:       options.mayflySeed,
 		}
 	}
+
 	return state
 }
 
@@ -320,22 +334,28 @@ func applyCheckpointResume(cmd *cobra.Command, options *fitOptions, cp *optimize
 	if !flagChanged(cmd, "optimizer") && cp.Optimizer != "" {
 		options.optimizerName = cp.Optimizer
 	}
+
 	if !flagChanged(cmd, "metric") && cp.Metric != "" {
 		options.metric = cp.Metric
 	}
+
 	if cp.State == nil {
 		return
 	}
+
 	if !flagChanged(cmd, "optimizer") && cp.State.Kind != "" {
 		options.optimizerName = cp.State.Kind
 	}
+
 	if cp.State.Mayfly != nil {
 		if !flagChanged(cmd, "mayfly-variant") && cp.State.Mayfly.Variant != "" {
 			options.mayflyVariant = cp.State.Mayfly.Variant
 		}
+
 		if !flagChanged(cmd, "mayfly-pop") && cp.State.Mayfly.Population > 0 {
 			options.mayflyPop = cp.State.Mayfly.Population
 		}
+
 		if !flagChanged(cmd, "mayfly-seed") {
 			options.mayflySeed = cp.State.Mayfly.Seed
 		}
@@ -346,14 +366,17 @@ func flagChanged(cmd *cobra.Command, name string) bool {
 	if cmd == nil {
 		return false
 	}
+
 	flags := cmd.Flags()
 	if flags == nil {
 		return false
 	}
+
 	flag := flags.Lookup(name)
 	if flag == nil {
 		return false
 	}
+
 	return flag.Changed
 }
 
@@ -361,6 +384,7 @@ func maxInt(a, b int) int {
 	if a > b {
 		return a
 	}
+
 	return b
 }
 
@@ -385,6 +409,7 @@ func startCPUProfile(path string) (func(), error) {
 
 	return func() {
 		pprof.StopCPUProfile()
+
 		_ = file.Close()
 	}, nil
 }

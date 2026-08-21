@@ -52,9 +52,11 @@ func (r Range) Denormalize(value float64) float64 {
 	if r.Max == r.Min {
 		return r.Min
 	}
+
 	if value < 0 {
 		value = 0
 	}
+
 	if value > 1 {
 		value = 1
 	}

@@ -42,7 +42,8 @@ const BASE_PRESET = {
 const SPECIES_PRESETS = {
   beech: {
     name: "Beech",
-    description: "Light diffuse-porous beech with subtle ring contrast and very restrained figure.",
+    description:
+      "Light diffuse-porous beech with subtle ring contrast and very restrained figure.",
     beerBase: [0.89, 0.8, 0.64],
     alphaBase: 0.22,
     alphaLatewood: 0.34,
@@ -74,7 +75,8 @@ const SPECIES_PRESETS = {
   },
   walnut: {
     name: "Walnut",
-    description: "Dark semi-ring-porous walnut with restrained rays and soft curl.",
+    description:
+      "Dark semi-ring-porous walnut with restrained rays and soft curl.",
     beerBase: [0.67, 0.5, 0.32],
     alphaBase: 0.9,
     alphaLatewood: 0.62,
@@ -106,7 +108,8 @@ const SPECIES_PRESETS = {
   },
   oak: {
     name: "Oak",
-    description: "Ring-porous oak with strong pore structure and prominent medullary rays.",
+    description:
+      "Ring-porous oak with strong pore structure and prominent medullary rays.",
     beerBase: [0.79, 0.64, 0.43],
     alphaBase: 0.58,
     alphaLatewood: 1.18,
@@ -138,7 +141,8 @@ const SPECIES_PRESETS = {
   },
   maple: {
     name: "Maple",
-    description: "Diffuse-porous curly maple with fine pores and stronger figured ripple.",
+    description:
+      "Diffuse-porous curly maple with fine pores and stronger figured ripple.",
     beerBase: [0.84, 0.72, 0.53],
     alphaBase: 0.48,
     alphaLatewood: 0.82,
@@ -255,7 +259,9 @@ function sampleBoard(preset, u, v) {
   let alpha = preset.alphaBase;
   alpha += preset.alphaLatewood * ring.latewood;
   alpha += preset.alphaRingNoise * ring.ringNoise;
-  alpha += preset.alphaDetailNoise * anisotropicNoise(distorted.x * 0.85, distorted.z * 0.42, SEED + 71, 3);
+  alpha +=
+    preset.alphaDetailNoise *
+    anisotropicNoise(distorted.x * 0.85, distorted.z * 0.42, SEED + 71, 3);
   alpha += pore.weight * preset.poreDarkening;
   alpha = Math.max(0.35, alpha);
 
@@ -269,7 +275,7 @@ function sampleBoard(preset, u, v) {
   ];
 
   const earlywoodSink = 0.05 * ring.earlywood;
-  color = darken(color, earlywoodSink + pore.weight * 0.30);
+  color = darken(color, earlywoodSink + pore.weight * 0.3);
   color = lighten(color, ray.weight * preset.rayStrength * 0.8);
   color = lighten(color, figure * preset.finishHighlight);
 
@@ -307,17 +313,31 @@ function distortionField(preset, r, theta, z) {
   const phase1 = z * preset.rippleFreqZ + circum * preset.rippleFreqCirc;
   const phase2 = z * preset.ripple2FreqZ - circum * preset.ripple2FreqCirc;
 
-  const mr = preset.rippleAmpCm * Math.sin(phase1 + 0.55 * lowFreqNoise(circum * 0.18, z * 0.24, SEED + 101))
-    + preset.ripple2AmpCm * Math.sin(phase2 + 0.25 * lowFreqNoise(circum * 0.33, z * 0.17, SEED + 103))
-    + 0.03 * lowFreqNoise(theta * 3.4, z * 0.8, SEED + 107);
+  const mr =
+    preset.rippleAmpCm *
+      Math.sin(
+        phase1 + 0.55 * lowFreqNoise(circum * 0.18, z * 0.24, SEED + 101),
+      ) +
+    preset.ripple2AmpCm *
+      Math.sin(
+        phase2 + 0.25 * lowFreqNoise(circum * 0.33, z * 0.17, SEED + 103),
+      ) +
+    0.03 * lowFreqNoise(theta * 3.4, z * 0.8, SEED + 107);
 
-  const mt = preset.tangentialAmpCm * Math.sin(z * preset.tangentialFreqZ + circum * preset.tangentialFreqCirc)
-    + 0.02 * lowFreqNoise(circum * 0.27 + 13.7, z * 0.31 - 2.1, SEED + 109);
+  const mt =
+    preset.tangentialAmpCm *
+      Math.sin(
+        z * preset.tangentialFreqZ + circum * preset.tangentialFreqCirc,
+      ) +
+    0.02 * lowFreqNoise(circum * 0.27 + 13.7, z * 0.31 - 2.1, SEED + 109);
 
-  const dmrDz = preset.rippleAmpCm * preset.rippleFreqZ * Math.cos(phase1)
-    + preset.ripple2AmpCm * preset.ripple2FreqZ * Math.cos(phase2);
-  const dmtDz = preset.tangentialAmpCm * preset.tangentialFreqZ
-    * Math.cos(z * preset.tangentialFreqZ + circum * preset.tangentialFreqCirc);
+  const dmrDz =
+    preset.rippleAmpCm * preset.rippleFreqZ * Math.cos(phase1) +
+    preset.ripple2AmpCm * preset.ripple2FreqZ * Math.cos(phase2);
+  const dmtDz =
+    preset.tangentialAmpCm *
+    preset.tangentialFreqZ *
+    Math.cos(z * preset.tangentialFreqZ + circum * preset.tangentialFreqCirc);
 
   return { mr, mt, dmrDz, dmtDz };
 }
@@ -351,7 +371,11 @@ function samplePores(preset, point) {
       const centerX = (ix + 0.18 + 0.64 * hash2(ix, iy, SEED + 203)) * cell;
       const centerY = (iy + 0.18 + 0.64 * hash2(ix, iy, SEED + 205)) * cell;
       const season = sampleSeason(preset, centerX, centerY);
-      const poreRadius = lerp(preset.poreRadiusLateCm, preset.poreRadiusEarlyCm, season.earlywood);
+      const poreRadius = lerp(
+        preset.poreRadiusLateCm,
+        preset.poreRadiusEarlyCm,
+        season.earlywood,
+      );
       const dx = point.x - centerX;
       const dy = point.y - centerY;
       const radius = Math.hypot(dx, dy);
@@ -384,9 +408,14 @@ function sampleRays(preset, point) {
 
       const theta0 = (it + 0.2 + 0.6 * hash2(it, iz, SEED + 253)) * thetaCell;
       const z0 = (iz + 0.2 + 0.6 * hash2(it, iz, SEED + 257)) * zCell;
-      const radialDist = Math.abs(point.x * Math.sin(theta0) - point.y * Math.cos(theta0));
+      const radialDist = Math.abs(
+        point.x * Math.sin(theta0) - point.y * Math.cos(theta0),
+      );
       const longDist = Math.abs(point.z - z0);
-      const q = Math.hypot(radialDist / preset.rayWidthCm, longDist / preset.rayLengthCm);
+      const q = Math.hypot(
+        radialDist / preset.rayWidthCm,
+        longDist / preset.rayLengthCm,
+      );
       if (q >= 1) {
         continue;
       }
@@ -411,8 +440,10 @@ function sampleFigureHighlight(fiber, rayWeight, earlywood) {
   const tangentHalf = normalize3([HALF_DIR[0], 0, HALF_DIR[2]]);
   const alignment = Math.max(0, dot3(tangentFiber, tangentHalf));
   const lift = Math.max(0, fiber[1] * HALF_DIR[1]);
-  return Math.pow(alignment, 24) * (0.35 + 0.65 * lift) * (0.55 + 0.45 * earlywood)
-    + rayWeight * 0.05;
+  return (
+    Math.pow(alignment, 24) * (0.35 + 0.65 * lift) * (0.55 + 0.45 * earlywood) +
+    rayWeight * 0.05
+  );
 }
 
 function beerShade(base, alpha) {
@@ -455,9 +486,11 @@ function lowFreqNoise(x, y, seed) {
 
 function sampleSeason(preset, x, y) {
   const polar = toPolar(x, y);
-  const widthNoise = 1 + preset.ringWidthJitter * ringNoise(polar.r * 0.33, SEED + 151);
-  const growthCoordinate = polar.r / (preset.ringSpacingCm * widthNoise)
-    + 0.08 * ringNoise(polar.r * 0.12 + 8.4, SEED + 157);
+  const widthNoise =
+    1 + preset.ringWidthJitter * ringNoise(polar.r * 0.33, SEED + 151);
+  const growthCoordinate =
+    polar.r / (preset.ringSpacingCm * widthNoise) +
+    0.08 * ringNoise(polar.r * 0.12 + 8.4, SEED + 157);
   const ringPhase = fract(growthCoordinate);
   const latewood = smoothstep(
     preset.latewoodThreshold,
@@ -487,7 +520,8 @@ function fbm(x, y, seed, octaves) {
   let norm = 0;
 
   for (let octave = 0; octave < octaves; octave += 1) {
-    sum += amplitude * valueNoise(x * frequency, y * frequency, seed + octave * 17);
+    sum +=
+      amplitude * valueNoise(x * frequency, y * frequency, seed + octave * 17);
     norm += amplitude;
     amplitude *= 0.5;
     frequency *= 2;

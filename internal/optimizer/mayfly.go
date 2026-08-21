@@ -22,24 +22,29 @@ func (o *MayflyOptimizer) Optimize(objective ObjectiveFunc, initial []float64, b
 	if objective == nil {
 		return nil, fmt.Errorf("objective cannot be nil")
 	}
+
 	if len(initial) == 0 {
 		return nil, fmt.Errorf("initial parameters cannot be empty")
 	}
+
 	if err := bounds.CheckVector(initial); err != nil {
 		return nil, err
 	}
 
 	start := time.Now()
+
 	initial, err := bounds.Clamp(initial)
 	if err != nil {
 		return nil, err
 	}
 
 	pop := o.population()
+
 	cfg, err := newMayflyConfig(o.variant(), pop, len(initial), maxInt(1, opts.MaxIterations))
 	if err != nil {
 		return nil, err
 	}
+
 	if o.Seed != 0 {
 		cfg.Rand = rand.New(rand.NewSource(o.Seed))
 	}
@@ -57,14 +62,18 @@ func (o *MayflyOptimizer) Optimize(objective ObjectiveFunc, initial []float64, b
 	cfg.ObjectiveFunc = func(pos []float64) float64 {
 		evals++
 		actual := denormalizeVector(pos, bounds)
+
 		if !deadline.IsZero() && time.Now().After(deadline) {
 			return bestCost + 1
 		}
+
 		cost := objective(actual)
 		if cost < bestCost {
 			bestCost = cost
+
 			bestParams = append(bestParams[:0], actual...)
 		}
+
 		if opts.Report != nil && opts.ReportEvery > 0 && evals-lastReportEval >= opts.ReportEvery {
 			lastReportEval = evals
 			opts.Report(Progress{
@@ -76,9 +85,11 @@ func (o *MayflyOptimizer) Optimize(objective ObjectiveFunc, initial []float64, b
 				Evaluations: evals,
 			})
 		}
+
 		if !isFinite(cost) {
 			return math.Inf(1)
 		}
+
 		return cost
 	}
 
@@ -86,12 +97,14 @@ func (o *MayflyOptimizer) Optimize(objective ObjectiveFunc, initial []float64, b
 	if err != nil {
 		return nil, err
 	}
+
 	if res != nil && res.FuncEvalCount > evals {
 		evals = res.FuncEvalCount
 	}
 
 	stopReason := "MayflyIterations"
 	converged := true
+
 	if !deadline.IsZero() && time.Now().After(deadline) {
 		stopReason = "RuntimeLimit"
 		converged = false
@@ -113,6 +126,7 @@ func (o *MayflyOptimizer) variant() string {
 	if v == "" {
 		return "desma"
 	}
+
 	return v
 }
 
@@ -120,11 +134,13 @@ func (o *MayflyOptimizer) population() int {
 	if o.Population >= 2 {
 		return o.Population
 	}
+
 	return 10
 }
 
 func newMayflyConfig(variant string, pop int, dims int, iters int) (*mayfly.Config, error) {
 	var cfg *mayfly.Config
+
 	switch variant {
 	case "ma":
 		cfg = mayfly.NewDefaultConfig()
@@ -143,6 +159,7 @@ func newMayflyConfig(variant string, pop int, dims int, iters int) (*mayfly.Conf
 	default:
 		return nil, fmt.Errorf("unsupported mayfly variant %q", variant)
 	}
+
 	cfg.ProblemSize = dims
 	cfg.LowerBound = 0.0
 	cfg.UpperBound = 1.0
@@ -151,6 +168,7 @@ func newMayflyConfig(variant string, pop int, dims int, iters int) (*mayfly.Conf
 	cfg.NPopF = pop
 	cfg.NC = 2 * pop
 	cfg.NM = maxInt(1, int(math.Round(0.05*float64(pop))))
+
 	return cfg, nil
 }
 
@@ -160,6 +178,7 @@ func runMayfly(cfg *mayfly.Config) (_ *mayfly.Result, err error) {
 			err = fmt.Errorf("mayfly panic: %v", r)
 		}
 	}()
+
 	return mayfly.Optimize(cfg)
 }
 
@@ -168,6 +187,7 @@ func denormalizeVector(pos []float64, bounds Bounds) []float64 {
 	for i, v := range pos {
 		out[i] = bounds.Ranges[i].Denormalize(v)
 	}
+
 	return out
 }
 
@@ -176,6 +196,7 @@ func normalizeVector(values []float64, bounds Bounds) []float64 {
 	for i, v := range values {
 		out[i] = bounds.Ranges[i].Normalize(v)
 	}
+
 	return out
 }
 
@@ -187,5 +208,6 @@ func maxInt(a, b int) int {
 	if a > b {
 		return a
 	}
+
 	return b
 }

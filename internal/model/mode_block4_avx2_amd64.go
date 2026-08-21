@@ -10,6 +10,7 @@ func processModeBlock4AVX2(realState, imagState, amplitude *float64, coeff *mode
 	}
 
 	processModeBlock4AVX2Asm(realState, imagState, amplitude, coeff, &input[0], &output[0])
+
 	return true
 }
 

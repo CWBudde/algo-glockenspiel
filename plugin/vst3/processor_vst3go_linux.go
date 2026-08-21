@@ -10,8 +10,8 @@ import (
 	"github.com/cwbudde/glockenspiel/internal/model"
 	frameworkbus "github.com/cwbudde/vst3go/pkg/framework/bus"
 	frameworkparam "github.com/cwbudde/vst3go/pkg/framework/param"
-	frameworkprocess "github.com/cwbudde/vst3go/pkg/framework/process"
 	frameworkplugin "github.com/cwbudde/vst3go/pkg/framework/plugin"
+	frameworkprocess "github.com/cwbudde/vst3go/pkg/framework/process"
 	"github.com/cwbudde/vst3go/pkg/midi"
 )
 
@@ -37,12 +37,12 @@ type Processor struct {
 }
 
 type activeVoice struct {
-	note          uint8
-	channel       uint8
-	age           uint64
-	bar           *model.Bar
+	note           uint8
+	channel        uint8
+	age            uint64
+	bar            *model.Bar
 	strikeVelocity int
-	quietBlocks   int
+	quietBlocks    int
 }
 
 type timedEvent struct {

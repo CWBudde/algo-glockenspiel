@@ -41,6 +41,7 @@ func TestOptimizationRecoversSyntheticReferenceWithinTolerance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncodeParams failed: %v", err)
 	}
+
 	initialCost := objective.Evaluate(initialEncoded)
 
 	result, err := (&SimpleOptimizer{
@@ -58,6 +59,7 @@ func TestOptimizationRecoversSyntheticReferenceWithinTolerance(t *testing.T) {
 	if !(result.BestCost < initialCost) {
 		t.Fatalf("expected optimization to improve cost: initial=%g best=%g", initialCost, result.BestCost)
 	}
+
 	if !(result.BestCost <= initialCost*0.98) {
 		t.Fatalf("expected material cost improvement: initial=%g best=%g", initialCost, result.BestCost)
 	}
@@ -158,11 +160,13 @@ func narrowBoundsAroundTarget(target *model.BarParams) ParamBounds {
 		DecayMs:       Range{Min: 60, Max: 220},
 		HarmonicGain:  Range{Min: model.HarmonicGainMin, Max: model.HarmonicGainMax},
 	}
+
 	return bounds
 }
 
 func assertCloseWithin(t *testing.T, got, want, tol float64, label string) {
 	t.Helper()
+
 	if math.Abs(got-want) > tol {
 		t.Fatalf("%s mismatch: got %.6f want %.6f tol %.6f", label, got, want, tol)
 	}

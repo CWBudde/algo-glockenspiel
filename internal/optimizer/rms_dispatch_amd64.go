@@ -10,8 +10,10 @@ func squaredDiffSum(synth, ref []float32) float64 {
 	if cpufeat.Detect().HasAVX2 && len(synth) >= 32 {
 		mainCount := len(synth) &^ (avx2RMSErrorBlock - 1)
 		sum := sumSquaredDiffAVX2(synth[:mainCount], ref[:mainCount])
+
 		return sum + squaredDiffSumGeneric(synth[mainCount:], ref[mainCount:])
 	}
+
 	return squaredDiffSumGeneric(synth, ref)
 }
 

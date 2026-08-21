@@ -82,11 +82,13 @@ func TestVoiceRenderMatchesRenderNote(t *testing.T) {
 
 	chunk := make([]float32, 37)
 	streamed := make([]float32, 0, len(full))
+
 	for voice.Active() {
 		n := voice.RenderInto(chunk)
 		if n == 0 {
 			break
 		}
+
 		streamed = append(streamed, chunk[:n]...)
 	}
 

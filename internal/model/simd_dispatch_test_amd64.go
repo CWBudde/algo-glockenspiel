@@ -40,6 +40,7 @@ func TestProcessBlock32AVX2DefaultStrategyMatchesModeParallelKernel(t *testing.T
 
 	def := NewQuadDecayOscillator(48000)
 	par := NewQuadDecayOscillator(48000)
+
 	for i := 0; i < NumModes; i++ {
 		freq := float64(400 + 275*i)
 		amp := 0.25 + float64(i)*0.15
@@ -52,12 +53,14 @@ func TestProcessBlock32AVX2DefaultStrategyMatchesModeParallelKernel(t *testing.T
 	for i := range input {
 		input[i] = float32(i%7) * 0.1
 	}
+
 	got := make([]float32, len(input))
 	want := make([]float32, len(input))
 
 	if !processBlock32AVX2(def, input, got) {
 		t.Fatal("expected default AVX2 oscillator path to be active")
 	}
+
 	processBlock4AVX2Asm(
 		&par.realState[0],
 		&par.imagState[0],
@@ -82,6 +85,7 @@ func TestProcessBlock32AVX2CanForceModeBlock4Strategy(t *testing.T) {
 
 	avx := NewQuadDecayOscillator(48000)
 	gen := NewQuadDecayOscillator(48000)
+
 	for i := 0; i < NumModes; i++ {
 		freq := float64(400 + 275*i)
 		amp := 0.25 + float64(i)*0.15
@@ -94,12 +98,14 @@ func TestProcessBlock32AVX2CanForceModeBlock4Strategy(t *testing.T) {
 	for i := range input {
 		input[i] = float32(i%9) * 0.07
 	}
+
 	avxOut := make([]float32, len(input))
 	genOut := make([]float32, len(input))
 
 	if !processBlock32AVX2(avx, input, avxOut) {
 		t.Fatal("expected forced mode-block AVX2 path to be active")
 	}
+
 	gen.processBlock32Generic(input, genOut)
 
 	for i := range input {
