@@ -20,7 +20,7 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | ----- | ---------------------------- | ------------------------ |
 | 0     | Unblock                      | done                     |
 | 1     | Configurable oscillator bank | done                     |
-| 2     | Real SIMD on four targets    | open — 2.1 is next       |
+| 2     | Real SIMD on three targets   | open — 2.3 is next       |
 | 3     | Optimizer                    | done                     |
 | 4     | Serve and the optimizer UI   | open — no code yet       |
 | 5     | Web app                      | open — no code yet       |
@@ -46,15 +46,10 @@ Reviewed against the goal above. What exists and works:
 What does not match the goal:
 
 - Only AVX2 is packed. arm64, WASM and pre-AVX2 amd64 all run `kernel_generic.go`, roughly 7x
-  slower. There is no NEON, no SSE, no AVX-512.
-- `model/` still carries the retired four-mode oscillator and its five `.s` files. Nothing
-  renders through them any more — `Bar` drives the bank — but `block4x4_avx2_amd64.s:81`
-  still indexes a struct by a hardcoded byte offset with nothing asserting the layout.
+  slower. There is no NEON and no SSE; AVX-512 is deferred, with the reason in `## Deferred`.
 - The backends do not agree numerically. The Chebyshev shaper is float32 in the AVX2 kernel, a
   separate float32 scalar tail, and float64 in the fallback (`model/bar.go:232`), so output
   differs by machine and even within one buffer.
-- There is no fuzzing anywhere in the repo, and no `unsafe.Offsetof`/`Sizeof` assertion for any
-  struct an `.s` file indexes.
 - Denormals are unhandled in the bank. A bank left running with no excitation decays into
   denormal state and slows down sharply; MXCSR FTZ/DAZ is never set.
 - Lanes are filled from one voice's oscillators and voices still render serially
@@ -117,23 +112,31 @@ The design, the benchmark tables, the compatibility rules and the deliberate def
 in [docs/oscillator-bank.md](docs/oscillator-bank.md). Two of those deferrals became Phase 2
 work: cross-voice lane packing (2.4) and bit-identity across backends (2.2).
 
-## Phase 2: Real SIMD On Four Targets
+## Phase 2: Real SIMD On Three Targets
 
-Goal: one kernel shape, four packed backends, one differential test suite.
+Goal: one kernel shape, three packed backends, one differential test suite.
 
 Acceptance criteria:
 
-- [ ] AVX2, AVX-512, SSE2, and NEON kernels exist, are packed, and use FMA where available.
+- [ ] AVX2, SSE2, and NEON kernels exist, are packed, and use FMA where available.
+      AVX-512 moved to `## Deferred`; the reason is recorded there.
 - [ ] Differential and fuzz tests pass for every backend on amd64 and arm64 CI.
 - [ ] A benchmark table in `docs/` records ns/op per backend against the scalar reference.
 - [ ] No allocation and no mutex acquisition on the audio path.
-- [ ] Rendered output is bit-identical across backends for a given precision.
+- [ ] Rendered output is bit-identical across every packed backend that fuses, and the
+      portable fallback stays inside the documented per-operation bound. Written up as
+      three rules in [docs/oscillator-bank.md](docs/oscillator-bank.md#the-numeric-contract):
+      fused packed backends are the reference and agree to the bit; the lane-fold order
+      is contractual, not an implementation detail; the portable kernel is held to
+      `u * E * (6*g(N,d) + folds)`, where `g` is the quadrature gain of a contraction of
+      rate `d` and `E` a no-cancellation envelope. A packed SSE2 kernel has no FMA and so
+      sits on the bounded side, not the bit-identical one.
 
 ### Phase 2.1: Clear the ground
 
 Goal: nothing dead, nothing unasserted, before four new kernels land on top of it.
 
-- [ ] Delete `model/cheby_osc_fused_avx2_amd64.{go,s}`, `cheby_osc_fused_avx2_other.go`,
+- [x] Delete `model/cheby_osc_fused_avx2_amd64.{go,s}`, `cheby_osc_fused_avx2_other.go`,
       `mode_block4_avx2_amd64.{go,s}`, `mode_block4_avx2_other.go`, `block4x4_avx2_amd64.s`,
       `decay_osc_avx2_amd64.{go,s}`, `decay_osc_avx2_other.go` and `osc_strategy.go`, together
       with `modeBlock4Coeff` (`model/decay_osc.go:31`), `block4Coeff` (`:26`) and
@@ -141,38 +144,52 @@ Goal: nothing dead, nothing unasserted, before four new kernels land on top of i
       `oscbank` (`model/bar.go:16,44,117-122`) and the rest is reachable only from tests.
       Every dead kernel is also slower than the live one — `block4x4` 37280 ns,
       `cheby_osc_fused` 49309 ns, `mode_block4` 58985 ns per 512-sample block.
-- [ ] Keep `processChebyshevBlockAVX2` (`model/bar.go:227` -> `model/cheby_avx2_amd64.go:9`);
+- [x] Keep `processChebyshevBlockAVX2` (`model/bar.go:227` -> `model/cheby_avx2_amd64.go:9`);
       it is the one live AVX2 path in `model/`.
-- [ ] Decide the fate of `QuadDecayOscillator` itself. It is the differential reference the
-      legacy regression tests compare against; either keep it deliberately and say so in a
-      comment, or move its coverage to `internal/oscbank` and delete it with the rest.
-- [ ] Add `unsafe.Offsetof`/`unsafe.Sizeof` compile-time assertions for every struct a
-      surviving `.s` file indexes. `block4x4_avx2_amd64.s:81` reads `VMOVUPD 208(DX), Y3`
-      against `modeBlock4Coeff` with nothing pinning the layout; there is currently no such
-      assertion anywhere in the repo.
+- [x] Decide the fate of `QuadDecayOscillator` itself. Deleted with the rest: its differential
+      coverage now lives in `internal/oscbank`, against a float64 reference written in the
+      test file rather than against a second production kernel nothing renders through.
+- [x] Add compile-time assertions for every layout a surviving `.s` file assumes. The struct
+      the original finding named went away with `block4x4_avx2_amd64.s`; neither survivor
+      indexes a struct at all, so what needed pinning was the constants they hardcode as byte
+      offsets. `model/cheby_avx2_amd64.go` pins the 16-byte gain array and the 32-byte vector
+      step; `internal/oscbank/kernel_amd64.go` pins `sizeof(float32)`, `LaneWidth`, the block
+      pair stride, `accLanes`, and the eight-frame stride of `reduceLanesAVX2`. Both use the
+      unsigned-`uintptr` overflow idiom, so a mismatch in either direction fails the build.
 
 ### Phase 2.2: Numeric contract and differential harness
 
 Goal: decide what "the backends agree" means, then build the harness that enforces it — before
 writing kernels the harness has to judge.
 
-- [ ] Pick the contract and write it into `docs/oscillator-bank.md`: no FMA anywhere, or an FMA
-      reference the portable kernel is allowed to miss by one ULP. Today the packed kernel fuses
-      its multiply-adds and the portable one cannot, so they agree to float32 rounding rather
-      than to the bit (`docs/oscillator-bank.md:85-87`).
+- [x] Pick the contract and write it into `docs/oscillator-bank.md`. Decided: fused packed
+      backends are the reference and must agree with each other to the bit; the lane-fold order
+      is contractual; the portable kernel may differ by a derived bound rather than by a hedge.
+      The section derives it — one FMA substitution costs six roundings per rotor step, a decay
+      factor strictly below 1 makes the recursion contractive so that error saturates instead
+      of compounding, and the tolerance that falls out is
+      `u * E * (6*g(N,d) + folds)`. Halving either constant makes the fuzz harness fail within
+      a second, so it is a bound rather than a rubber stamp.
 - [ ] Collapse the three-way Chebyshev divergence: the AVX2 kernel is float32
       (`model/cheby_avx2_amd64.s`), its tail is a second float32 implementation
       (`chebyshev4Scalar`, `model/cheby_avx2_amd64.go:22-28`), and the fallback is float64
       (`model/bar.go:206,232`).
-- [ ] Extend `internal/cpufeat.Features` — today it carries only `HasAVX2` and `HasFMA`
-      (`features.go:9-12`) — with `HasSSE2`, `HasSSE3`, `HasAVX`, `HasAVX512F`, `HasAVX512DQ`
-      and arm64 `HasASIMD`. `Detect()` is already lock-free after first use, so only the flag
-      set has to grow.
-- [ ] Add `FuzzOscBankMatchesGeneric` comparing each backend to the scalar reference over
-      random coefficients, states, inputs and lengths. There is currently no fuzzing at all.
-- [ ] Give the differential tests non-zero initial state and tighten the `1e-5` tolerances.
-      `model/decay_osc_test.go:409-411` and `:463-472` build a freshly constructed oscillator
-      and never excite it, so half the packed kernel multiplies by zero.
+- [x] Extend `internal/cpufeat.Features` with `HasSSE2`, `HasSSE3`, `HasAVX`, `HasAVX512F`,
+      `HasAVX512DQ` and arm64 `HasASIMD`. `Detect()` keeps its `atomic.Pointer` publication
+      unchanged; only the flag set grew. `features_arm64.go` reports ASIMD unconditionally,
+      because it is mandatory in ARMv8-A and the capability word is unreadable under emulation.
+      `TestSetForcedFeaturesCarriesEveryFlag` pins that every new flag survives the override,
+      which is how an SSE2-only backend gets tested on an AVX2 host.
+- [x] Add `FuzzOscBankMatchesGeneric` comparing each backend to the portable reference over
+      random coefficients, states, inputs and lengths. It drives `processRotorBlocks` directly,
+      so it can hand the kernels coefficients no `Oscillator` could produce, and its seed corpus
+      is the pathology list — decay at both extremes, zero-amplitude lanes, chunk lengths that
+      are not multiples of eight, a single-sample chunk — so CI covers all of it without
+      running the fuzzer. The first fuzzing in this repo.
+- [x] Give the differential tests non-zero initial state and tighten the `1e-5` tolerances.
+      All three now seed `re`/`im` before the render and take their tolerance from the contract
+      instead of a constant, so it scales with chunk length and decay rate rather than being
+      flat.
 
 Already true, do not redo:
 
@@ -190,14 +207,12 @@ Already true, do not redo:
 
 ### Phase 2.3: The packed backends
 
-Goal: three more packed kernels, each green under the 2.2 harness on both CI runners.
+Goal: two more packed kernels, each green under the 2.2 harness on both CI runners. AVX-512 is
+deferred — see `## Deferred` for why a green CI would not be evidence of correctness.
 
 - [ ] `internal/oscbank/oscbank_arm64.s` — `FMLA V*.S4`, 4 lanes, no runtime gate (NEON is
       arm64 baseline).
 - [ ] `internal/oscbank/oscbank_sse2_amd64.s` — XMM, 4 lanes, gated on `HasSSE2`.
-- [ ] `internal/oscbank/oscbank_avx512_amd64.s` — ZMM, 16 lanes, masked tail. The layout already
-      rounds to an even block count so this can take two blocks at a time with no separate tail
-      path (`docs/oscillator-bank.md:39-49`).
 - [ ] Extend the `docs/oscillator-bank.md` performance table with one row per backend against
       the scalar reference, and update "Known limits", which still reads "Only AVX2 is packed".
 
@@ -473,6 +488,19 @@ Goal: document what is undocumented, retire what is finished.
 
 ## Deferred
 
+- **An AVX-512 oscillator kernel** (`internal/oscbank/oscbank_avx512_amd64.s` — ZMM, 16 lanes,
+  masked tail). Moved out of Phase 2.3 by user decision, on the grounds that it cannot be
+  verified by the CI this project has. The development machine reports `avx2 fma sse2` and no
+  AVX-512 at all, so the kernel could never run locally. GitHub's `ubuntu-latest` x64 pool is
+  mixed: Ice Lake runners have AVX-512, EPYC Milan runners do not, and a job is assigned one or
+  the other with no way to ask. A runtime-gated kernel would therefore execute on some CI jobs
+  and silently take the AVX2 path on others, and a green run would not distinguish "the AVX-512
+  kernel is correct" from "the AVX-512 kernel never executed" — which is the one thing a
+  differential harness exists to tell you. The layout is already prepared for it: rotor arrays
+  round up to an even number of blocks precisely so a 16-lane kernel can consume two blocks at
+  a time with no separate tail path, and `cpufeat.Features` now carries `HasAVX512F` and
+  `HasAVX512DQ`. Revisit when a runner pool with guaranteed AVX-512 is available, or when
+  forced-feature emulation can execute the kernel on hardware that has the instructions.
 - Running the optimizer itself in WASM.
 - Richer preset library and multi-note modeling.
 - Any GUI editor for the plugin, which now lives in its own repository.
@@ -481,11 +509,11 @@ Goal: document what is undocumented, retire what is finished.
 
 Phases 0, 1 and 3 are closed. Phases 2, 4, 5, 6 and 7 are open.
 
-**Next: Phase 2.1.** Deleting the dead assembly is the cheapest subphase, it removes the only
-unasserted struct layout in the repo, and it shrinks the surface the 2.2 harness has to judge.
-2.2 must land before 2.3: the numeric contract decides what the NEON, SSE2 and AVX-512 kernels
-are allowed to do, and writing three kernels against an undecided contract means writing them
-twice.
+**Next: Phase 2.3.** 2.1 and 2.2 are closed: the dead assembly is gone, every layout an `.s`
+file assumes is pinned at compile time, and the numeric contract is written down with a harness
+that enforces it. The NEON and SSE2 kernels can now be written against a decided contract
+instead of a guess — and `availableBackends()` in `internal/oscbank/contract_test.go` is the one
+place each of them has to be registered.
 
 Two subphases are independent of the SIMD work and can be picked up whenever: **5.1** (three
 level bugs, all in Go, all unit-testable) and **7.1** (the README, which is wrong in a way a

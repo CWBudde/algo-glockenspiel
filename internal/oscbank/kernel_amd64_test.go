@@ -3,7 +3,7 @@
 package oscbank
 
 import (
-	"math"
+	"fmt"
 	"math/rand"
 	"testing"
 
@@ -11,8 +11,15 @@ import (
 )
 
 // renderWithFeatures renders the same configuration with CPU detection forced,
-// so one process can exercise both the packed kernel and the portable one.
-func renderWithFeatures(t *testing.T, features cpufeat.Features, oscillators []Oscillator, input []float32) []float32 {
+// so one process can exercise both the packed kernel and the portable one. The
+// rotor state is seeded from stateSeed before the render: a freshly constructed
+// bank starts at re = im = 0, which leaves half of every packed multiply
+// operating on zero and hides any error in the rotation itself.
+//
+// It returns the contract tolerance alongside the output, because the tolerance
+// depends on the state the render started from and that state is gone by the
+// time the render finishes.
+func renderWithFeatures(t *testing.T, features cpufeat.Features, oscillators []Oscillator, input []float32, stateSeed int64) ([]float32, float64) {
 	t.Helper()
 
 	cpufeat.SetForcedFeatures(features)
@@ -24,14 +31,18 @@ func renderWithFeatures(t *testing.T, features cpufeat.Features, oscillators []O
 		t.Fatalf("SetOscillators: %v", err)
 	}
 
+	seedBankState(bank, rand.New(rand.NewSource(stateSeed)))
+	tolerance := bankTolerance(bank, input)
+
 	out := make([]float32, len(input))
 	bank.ProcessBlock(input, out)
 
-	return out
+	return out, tolerance
 }
 
 func TestPackedKernelMatchesPortableKernel(t *testing.T) {
-	if !cpufeat.Detect().HasAVX2 || !cpufeat.Detect().HasFMA {
+	host := cpufeat.Detect()
+	if !host.HasAVX2 || !host.HasFMA {
 		t.Skip("host has no AVX2+FMA")
 	}
 
@@ -50,24 +61,14 @@ func TestPackedKernelMatchesPortableKernel(t *testing.T) {
 				input[i] = float32(rng.NormFloat64() * 0.05)
 			}
 
-			packed := renderWithFeatures(t, cpufeat.Features{HasAVX2: true, HasFMA: true}, oscillators, input)
-			portable := renderWithFeatures(t, cpufeat.Features{}, oscillators, input)
+			const stateSeed = 4242
 
-			peak := 0.0
-			for _, v := range portable {
-				peak = math.Max(peak, math.Abs(float64(v)))
-			}
+			packed, tolerance := renderWithFeatures(t, cpufeat.Features{
+				HasSSE2: true, HasSSE3: true, HasAVX: true, HasAVX2: true, HasFMA: true,
+			}, oscillators, input, stateSeed)
+			portable, _ := renderWithFeatures(t, cpufeat.Features{}, oscillators, input, stateSeed)
 
-			// The packed kernel fuses its multiply-adds and the portable one
-			// cannot, so the two agree to float32 rounding, not to the bit.
-			// Phase 2 owns the bit-identity contract.
-			tolerance := 1e-5 * peak
-			for i := range packed {
-				if math.Abs(float64(packed[i]-portable[i])) > tolerance {
-					t.Fatalf("%dx%d sample %d: packed %g, portable %g (tolerance %g)",
-						numOsc, numHarm, i, packed[i], portable[i], tolerance)
-				}
-			}
+			requireWithinContract(t, fmt.Sprintf("%dx%d", numOsc, numHarm), packed, portable, tolerance)
 		}
 	}
 }
@@ -78,20 +79,14 @@ func TestPortableKernelHandlesEveryChunkLength(t *testing.T) {
 	for _, n := range []int{1, 2, 7, 8, 9, 255, 256, 257, 512} {
 		input := strikeInput(n)
 
-		packed := renderWithFeatures(t, cpufeat.Features{HasAVX2: true, HasFMA: true}, oscillators, input)
-		portable := renderWithFeatures(t, cpufeat.Features{}, oscillators, input)
+		const stateSeed = 99
 
-		peak := 0.0
-		for _, v := range portable {
-			peak = math.Max(peak, math.Abs(float64(v)))
-		}
+		packed, tolerance := renderWithFeatures(t, cpufeat.Features{
+			HasSSE2: true, HasSSE3: true, HasAVX: true, HasAVX2: true, HasFMA: true,
+		}, oscillators, input, stateSeed)
+		portable, _ := renderWithFeatures(t, cpufeat.Features{}, oscillators, input, stateSeed)
 
-		tolerance := 1e-5 * peak
-		for i := range packed {
-			if math.Abs(float64(packed[i]-portable[i])) > tolerance {
-				t.Fatalf("length %d, sample %d: packed %g, portable %g (tolerance %g)", n, i, packed[i], portable[i], tolerance)
-			}
-		}
+		requireWithinContract(t, fmt.Sprintf("chunk of %d", n), packed, portable, tolerance)
 	}
 }
 

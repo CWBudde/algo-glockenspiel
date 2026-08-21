@@ -1,0 +1,7 @@
+go test fuzz v1
+byte('\\')
+byte('µ')
+byte('G')
+byte('>')
+uint32(65429)
+int64(28)
