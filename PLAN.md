@@ -53,8 +53,10 @@ What does not match the goal:
 
 - Cross-voice lane packing is missing. A bank fills its lanes from one voice's oscillators and
   `internal/synth/realtime.go` renders voices serially, so voice count still costs linearly.
-- The audio path still allocates. `synth.NewVoice` builds a whole transposed `model.Bar` per
-  note-on (`internal/synth/synth.go:106`), measured at 19 allocations; see Phase 2.4.
+- The audio path still allocates, and locks once. `synth.NewVoice` builds a whole transposed
+  `model.Bar` per note-on (`internal/synth/synth.go:106`), measured at 19 allocations, and
+  the first block in a process serializes on `cpufeat`'s detection mutex because nothing
+  warms it beforehand. See Phase 2.4.
 - The NEON kernel has no measured throughput. It is exercised under qemu-user, which is
   worthless for timing, so the NEON row of the benchmark table in `docs/oscillator-bank.md` is
   still `TODO` pending a native arm64 host.
@@ -98,8 +100,10 @@ Acceptance criteria:
 
 - [x] Oscillator and harmonic counts are configurable at runtime. `Bank.SetOscillators`
       takes any `N` and any per-oscillator harmonic count; `BarParams.Modes` is a slice and
-      `ModeParams.Harmonics` is optional. `NumModes` survives only as the default count and
-      as what a v1 preset must carry.
+      `ModeParams.Harmonics` is optional. The fixed `NumModes` constant survived this phase
+      only as the default count and as what a v1 preset must carry; Phase 6.1 removed it
+      outright, and what a v1 preset must carry is now `internal/preset`'s own
+      `v1ModeCount`.
 - [x] The 4x4 case benchmarks at or below 1392 ns per 512-sample block. 16 rotors in
       1128-1154 ns against 1314-1384 ns for the four-rotor kernel it replaces, read off one
       benchmark binary (`go test ./model -bench 'ProcessBlock32$|OscBank4x4'`) so both share
@@ -140,16 +144,26 @@ Acceptance criteria:
       layer, so a number taken there would be fiction; this stays open until the kernel can be
       benchmarked on a native arm64 host.
 - [ ] No allocation and no mutex acquisition on the audio path. **Not met, and not quietly
-      reworded so that it passes.** No mutex is taken — `cpufeat.Detect()` is an
-      `atomic.Pointer` load after first use and nothing else on the path locks — and
-      `RealtimeEngine.ProcessBlock` is allocation-free, pinned by
+      reworded so that it passes.** Two things are outstanding, one on each half of the
+      criterion.
+      **Allocation.** `RealtimeEngine.ProcessBlock` is allocation-free, pinned by
       `TestProcessBlockDoesNotAllocateAfterFirstBlock`. Note-on is not: `synth.NewVoice`
       calls `model.NewBar` (`internal/synth/synth.go:106`), which builds a transposed bar and
       its buffers, measured at 19 allocations per note-on.
       `TestNoteOnAllocatesNothingBeyondTheVoice` measures `NoteOn` against that cost rather
       than against zero, and says so in its own comment. What remains is to build the voice
       without allocating — reusing a `Bar` the engine already owns and reconfiguring it in
-      place rather than constructing a new one per note. Tracked in Phase 2.4.
+      place rather than constructing a new one per note.
+      **Mutex.** The steady state takes none: `cpufeat.Detect()` is an `atomic.Pointer` load
+      once the feature set is published, and nothing else on the path locks. The _first_
+      block in a process does take one. `current` starts nil, no eager call warms it —
+      there is no `init()` anywhere that calls `Detect()` — and the first caller is
+      `processRotorBlocks` (`internal/oscbank/kernel_amd64.go:60`), which is already on the
+      audio thread. So a real audio callback serializes on `detectMu` exactly once per
+      process. It is one lock, not a per-block one, but the criterion says "no mutex
+      acquisition on the audio path" and one is one. Warming detection from
+      `NewRealtimeEngine` or from an `init()` in the dispatch package closes it. Both halves
+      are tracked in Phase 2.4.
 - [x] Rendered output is bit-identical across every packed backend that fuses, and the
       portable fallback stays inside the documented per-operation bound. Written up as
       three rules in [docs/oscillator-bank.md](docs/oscillator-bank.md#the-numeric-contract):
@@ -466,9 +480,11 @@ Goal: a public model package shaped around the runtime-configurable bank, not ar
       This was the blocker — Go enforces `internal/` against the module path, so a separate
       module could not have imported it even with a `replace` directive.
 - [x] Unexport `NumModes`. Already done, in `54358ff` on the Phase 1 branch (PR #2) — this
-      line was written against the state before that commit and had gone stale. The constant
-      does not survive anywhere: `git grep NumModes` finds only the `Bar.NumModes()` accessor
-      (`model/bar.go:170`), which reports a runtime count and is not a fixed size. Both
+      line was written against the state before that commit and had gone stale. The fixed
+      constant does not survive anywhere. What `git grep NumModes` still finds is a different
+      thing with the same spelling: the `Bar.NumModes()` accessor (`model/bar.go:169-170`)
+      and its caller in `model/bank_test.go:58-59`, which report a runtime count rather than
+      declare a compile-time size. Both
       callers that genuinely need a frozen count declare their own: `v1ModeCount = 4` in
       `internal/preset/preset.go:28`, scoped to the compatibility layer, and
       `numModes = 4`/`numChebyshevGains = 4` in `plugin/vst3/params.go:11-12`, which the same
@@ -536,7 +552,11 @@ Goal: one accurate front page, built around the web app.
 
 ### Phase 7.2: Docs against the code
 
-Goal: no path in the docs points at something that moved.
+Goal: no path in the docs points at something that moved, in every document except the two
+that are being retired rather than repaired. `docs/vst3-evaluation.md` and
+`docs/vst3go-spike.md` still name `internal/model` (`docs/vst3go-spike.md:62`) and are left
+that way on purpose: they leave with the plugin in Phase 6.3, and rewriting a package list
+in a document that is about to move is work thrown away twice.
 
 - [x] Refresh `AGENTS.md`'s package list — it described `internal/model` and omitted
       `internal/oscbank` and `internal/cpufeat`.
@@ -554,7 +574,9 @@ Goal: document what is undocumented, retire what is finished.
 
 - [ ] Document the web app in `docs/`; it has no page today.
 - [ ] Retire `docs/vst3-evaluation.md` and `docs/vst3go-spike.md` with the 6.3 split, or mark
-      them historical.
+      them historical. They are the two documents Phase 7.2 deliberately left alone:
+      `docs/vst3go-spike.md:62` still lists `internal/model` in a package list, which is the
+      last stale path in `docs/` and is fixed by the move rather than by an edit.
 - [ ] Clear `out/`. It is untracked and gitignored (`.gitignore:17`), so this is local scratch —
       profiles, checkpoints and rendered WAVs — not repo content to migrate. Anything in there
       worth keeping is a benchmark number that belongs in `docs/`.
@@ -582,8 +604,9 @@ Goal: document what is undocumented, retire what is finished.
 
 Phases 0, 1 and 3 are closed. Phases 2, 4, 5, 6 and 7 are open.
 
-**Phase 2 is closed except for two items of 2.4, and they want the same thing.** 2.1, 2.2 and
-2.3 are done: the dead assembly is gone, every layout an `.s` file assumes is pinned at compile time,
+**Phase 2 has three open items: two in 2.4, which want the same thing, and one measurement
+that needs hardware nobody here has.** 2.1, 2.2 and 2.3 are done as subphases: the dead
+assembly is gone, every layout an `.s` file assumes is pinned at compile time,
 the numeric contract is written down with a harness that enforces it, and three packed kernels
 — AVX2, SSE2, NEON — are registered in `availableBackends()`
 (`internal/oscbank/contract_test.go`) and green on both CI runners. 2.4 has its denormal scope
@@ -594,14 +617,16 @@ and its per-note-on block buffers. What is left of 2.4:
   serially. This is a redesign of the voice engine, not a patch: it needs per-lane excitation
   and per-voice output separation.
 - **The note-on allocation.** `synth.NewVoice` builds a fresh `model.Bar` per note, 19
-  allocations, which is the one reason Phase 2's "no allocation on the audio path" criterion
-  is unticked. The fix is to reconfigure a bar the engine already owns instead of constructing
-  one, which is also what lane packing needs from the model.
+  allocations. The fix is to reconfigure a bar the engine already owns instead of constructing
+  one, which is also what lane packing needs from the model. Alongside it, the same criterion
+  wants the one-off `cpufeat.Detect()` lock on the first block warmed off the audio path.
+  Together they are why "no allocation and no mutex acquisition on the audio path" is
+  unticked.
 
 Both want the same thing from `model.Bar` — a bar that can be pointed at new parameters
 instead of rebuilt — so doing them independently means doing that model work twice.
 
-**Also outstanding, and not code:** the NEON row of the benchmark table in
+**The third open item, and not code:** the NEON row of the benchmark table in
 `docs/oscillator-bank.md` needs a native arm64 host. Everything here runs the kernel under
 qemu-user, which is trustworthy for correctness and worthless for timing, so the row stays
 `TODO` rather than being filled in with a translated number. Take

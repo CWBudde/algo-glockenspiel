@@ -2,7 +2,7 @@
 
 A browser-playable glockenspiel and the Go toolchain behind it.
 
-The instrument is not a physical model. Its core is a runtime-configurable oscillator bank (`internal/oscbank`): `N` independent decaying quadrature oscillators, each carrying `M` integer-multiple harmonic partials, in an AoSoA `float32` layout with packed SIMD kernels for AVX2, SSE2 and NEON. Both counts are ordinary runtime configuration, not compile-time constants. There is no `sin()` in the inner loop.
+The instrument is not a physical model. Its core is a runtime-configurable oscillator bank (`internal/oscbank`): `N` independent decaying quadrature oscillators, each carrying up to `M` integer-multiple harmonic partials, in an AoSoA `float32` layout with packed SIMD kernels for AVX2, SSE2 and NEON. Both counts are ordinary runtime configuration, not compile-time constants. `M` is a ceiling rather than a quota: every mode chooses its own partial count, and a mode with no harmonic list is a single fundamental. There is no `sin()` in the inner loop.
 
 **Play it: <https://cwbudde.github.io/algo-glockenspiel/>**
 
@@ -21,7 +21,7 @@ python3 -m http.server -d web 8080
 
 Then open `http://localhost:8080`.
 
-`scripts/build-wasm.sh` compiles `cmd/glockenspiel-wasm` to `web/dist/glockenspiel.wasm` and copies the toolchain's `wasm_exec.js` next to it. The GitHub Pages deployment runs the same script from `.github/workflows/deploy-pages.yml`.
+`scripts/build-wasm.sh` compiles `cmd/glockenspiel-wasm` to `web/dist/glockenspiel.wasm` and copies the toolchain's `wasm_exec.js` into `web/`, next to `index.html` rather than next to the `.wasm` file. The GitHub Pages deployment runs the same script from `.github/workflows/deploy-pages.yml`.
 
 See [web/README.md](web/README.md) for the front-end details.
 
@@ -41,7 +41,7 @@ Or directly:
 go build -o bin/glockenspiel ./cmd/glockenspiel
 ```
 
-Both flags of every command are documented in [docs/user-guide.md](docs/user-guide.md); what follows is the short version.
+All flags of both commands are documented in [docs/user-guide.md](docs/user-guide.md); what follows is the short version.
 
 ### `glockenspiel synth`
 
@@ -100,7 +100,7 @@ Prints the build version.
 
 Presets are JSON files holding metadata plus the full bar parameter set. The reference note stored in the preset is the scaling origin for rendering any other MIDI note.
 
-Two schema versions exist side by side. **v1** (`"version": "1.0"`) carries exactly four modes, no per-mode harmonics and a Chebyshev shaper that always sits on the excitation. **v2** (`"version": "2.0"`) adds a variable-length mode array, per-mode harmonic partials and an explicit shaper stage. A v1 document is held to the v1 rules, so a file that quietly grew v2 fields is reported rather than rendered differently than its version claims. Saving preserves the version a preset was loaded with; converting is explicit, through `preset.Upgrade`.
+Two schema versions exist side by side. **v1** (`"version": "1.0"`) carries exactly four modes, no per-mode harmonics and a Chebyshev shaper that always sits on the excitation. **v2** (`"version": "2.0"`) adds a variable-length mode array — one to 512 modes — per-mode harmonic partials of up to 64 per mode, and an explicit shaper stage. A v1 document is held to the v1 rules, so a file that quietly grew v2 fields is reported rather than rendered differently than its version claims. Saving preserves the version a preset was loaded with; converting is explicit, through `preset.Upgrade`.
 
 A v2 preset:
 

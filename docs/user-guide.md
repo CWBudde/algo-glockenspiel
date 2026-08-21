@@ -231,7 +231,7 @@ A preset declares its schema in a top-level `version` field, and the loader hold
 
 **v2 (`"2.0"`)** is what new presets are written in. It adds three things:
 
-- a mode array of any length, because the oscillator bank sizes itself at runtime
+- a mode array of one to 512 modes, because the oscillator bank sizes itself at runtime. The bounds are real and enforced on load: an empty array is rejected by the v2 rules, and more than `model.MaxModes` (512) by `ValidateBarParams`
 - `modes[i].harmonics`, a per-mode gain list that expands that mode into one rotor per integer-multiple partial
 - `chebyshev.stage`, either `"excitation"` or `"output"`, making explicit the placement v1 left implicit
 
@@ -244,7 +244,7 @@ The top-level `parameters` object holds:
 - `input_mix`: amount of dry filtered excitation mixed into the resonant output
 - `filter_frequency`: lowpass cutoff for the excitation path, in Hz
 - `base_frequency`: reference tuning for the preset note
-- `modes`: the resonant partials, four in v1 and any number in v2
+- `modes`: the resonant partials, exactly four in v1 and one to 512 in v2
 - `chebyshev.enabled`: enables harmonic shaping
 - `chebyshev.stage`: v2 only, `excitation` (the v1 behaviour, and the default) or `output`
 - `chebyshev.harmonic_gains`: gain per generated harmonic
@@ -256,7 +256,7 @@ Each mode has:
 - `amplitude`: linear mode gain
 - `frequency`: modal frequency in Hz
 - `decay_ms`: decay time in milliseconds
-- `harmonics`: v2 only, optional. Gains for the integer multiples of this mode's frequency; harmonic `k` runs at `(k+1) * frequency`, shares the mode's decay, and carries `amplitude * harmonics[k]`
+- `harmonics`: v2 only, optional, at most 64 entries (`model.MaxHarmonics`). Gains for the integer multiples of this mode's frequency; harmonic `k` runs at `(k+1) * frequency`, shares the mode's decay, and carries `amplitude * harmonics[k]`. Omitting the list leaves the mode as a single unity-gain fundamental, and different modes may carry different counts
 
 In practice:
 
