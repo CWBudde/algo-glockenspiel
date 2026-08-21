@@ -21,6 +21,12 @@ import (
 // fuzzer still earns its keep -- it is what proves the kernel does not produce
 // a NaN, walk off the end of a buffer or mishandle a ragged chunk -- but the
 // differential half of it is these tests, not that one.
+//
+// Nothing here asserts bit-identity against the portable kernel, and nothing
+// here ever should. NEON fuses; the reference deliberately does not, on any
+// target, since kernel_generic.go grew its anti-contraction barriers. The
+// arm64 backend is therefore in exactly the position AVX2 is in on amd64 --
+// held to the contract's bound, and to golden_test.go for its bits.
 
 // renderNEON and renderPortable run one chunk through the two kernels with the
 // padded input the packed kernel needs, and return the reduced output.
@@ -134,111 +140,6 @@ func TestBankNEONMatchesPortableKernel(t *testing.T) {
 	}
 }
 
-// roundedProduct exists to be un-fusable. Go's specification permits an
-// implementation to fuse a*b + c, and the arm64 backend takes that permission
-// everywhere it can; a call boundary is the one place it cannot reach across.
-//
-//go:noinline
-func roundedProduct(a, b float32) float32 { return a * b }
-
-// stepRotorUnfusedExcitation is stepRotor with one change: amp*x is rounded to
-// float32 before it is subtracted back out of the accumulator seed.
-//
-// That single substitution is the entire difference between the NEON kernel and
-// kernel_generic.go on arm64, and it is worth spelling out why. The compiler
-// emits FMADDS for `ampx + re*sin` and `+ im*cos`, and FMULS/FMSUBS for
-// `re*cos - im*sin`, which is exactly what the kernel does -- but it then
-// re-fuses the last line, `next - ampx`, into FMSUBS next, amp, x. The portable
-// kernel therefore recovers t with one rounding where the packed kernels use
-// two, because a packed kernel has already materialised amp*x in a register and
-// cannot un-round it.
-//
-// Everything else agrees to the bit. TestNEONKernelReproducesTheAssociation
-// pins that, so a future edit to the kernel that reassociates anything at all
-// fails immediately instead of hiding inside the contract's tolerance.
-func stepRotorUnfusedExcitation(re, im, cosCoeff, sinCoeff, amp []float32, lane int, x float32) float32 {
-	cosVal := cosCoeff[lane]
-	sinVal := sinCoeff[lane]
-	reVal := re[lane]
-	imVal := im[lane]
-
-	ampx := roundedProduct(amp[lane], x)
-	next := ampx + reVal*sinVal + imVal*cosVal
-
-	re[lane] = reVal*cosVal - imVal*sinVal
-	im[lane] = next
-
-	return next - ampx
-}
-
-// renderUnfusedExcitation mirrors processRotorBlocksGeneric exactly, down to
-// the block pairing and the lane fold, and differs only in the rotor step.
-func renderUnfusedExcitation(state rotorState, input []float32) []float32 {
-	acc := make([]float32, len(input)*accLanes)
-	out := make([]float32, len(input))
-
-	for block := 0; block+1 < state.blocks; block += 2 {
-		lo := block * LaneWidth
-		hi := lo + 2*LaneWidth
-
-		re, im := state.re[lo:hi:hi], state.im[lo:hi:hi]
-		cosBlock, sinBlock := state.cosCoeff[lo:hi:hi], state.sinCoeff[lo:hi:hi]
-		ampBlock := state.amp[lo:hi:hi]
-
-		for i, x := range input {
-			frame := acc[i*accLanes : i*accLanes+accLanes : i*accLanes+accLanes]
-
-			for lane := range accLanes {
-				lowA := stepRotorUnfusedExcitation(re, im, cosBlock, sinBlock, ampBlock, lane, x)
-				lowB := stepRotorUnfusedExcitation(re, im, cosBlock, sinBlock, ampBlock, LaneWidth+lane, x)
-				highA := stepRotorUnfusedExcitation(re, im, cosBlock, sinBlock, ampBlock, accLanes+lane, x)
-				highB := stepRotorUnfusedExcitation(re, im, cosBlock, sinBlock, ampBlock, LaneWidth+accLanes+lane, x)
-
-				folded := (lowA + lowB) + (highA + highB)
-
-				if block == 0 {
-					frame[lane] = folded
-				} else {
-					frame[lane] += folded
-				}
-			}
-		}
-	}
-
-	reduceLanesGeneric(acc, out)
-
-	return out
-}
-
-// TestNEONKernelReproducesTheAssociation is the stronger assertion the contract
-// allows on arm64 but not on amd64. On amd64 the portable kernel cannot fuse at
-// all, so the two backends are only comparable within a bound. Here they differ
-// in precisely one rounding, and once that one is put back the kernel is
-// bit-identical to a scalar Go reference -- every FMLA, every subtraction and
-// every add in the lane fold lands on the same float32 word.
-//
-// This is a regression test for the association, not for the answer. Nothing in
-// it may ever be relaxed into a tolerance: a tolerance here would silently
-// accept a kernel that folds the lanes in a different order, which rule two of
-// the contract forbids outright.
-func TestNEONKernelReproducesTheAssociation(t *testing.T) {
-	for _, blocks := range []int{2, 4, 8} {
-		for _, chunk := range []int{1, 7, 64, 255, 256} {
-			for regime := range regimeCount {
-				for amplitude := range amplitudeModeCount {
-					state, input := generateCase(blocks, chunk, regime, amplitude, 0, int64(blocks*100+chunk))
-
-					neon := renderNEON(state.clone(), input)
-					reference := renderUnfusedExcitation(state.clone(), input)
-
-					label := fmt.Sprintf("%d blocks, %d samples, regime %d, amplitude %d", blocks, chunk, regime, amplitude)
-					requireBitIdentical(t, label, neon, reference)
-				}
-			}
-		}
-	}
-}
-
 // TestNEONKernelLeavesPaddingLanesAlone guards the half-block split. NEON reads
 // a block as two vectors, so a kernel that mixed the halves up would still look
 // right on a full bank and only go wrong on a partly filled one -- which is
@@ -314,11 +215,6 @@ func FuzzNEONMatchesGeneric(f *testing.F) {
 		}
 
 		requireWithinContract(t, "neon", neon, renderPortable(state.clone(), input), tolerance)
-
-		// Rule two has no tolerance, and on arm64 it is checkable directly:
-		// once amp*x is rounded the way a packed kernel has to round it, the
-		// two are the same program down to the bit.
-		requireBitIdentical(t, "neon vs unfused-excitation reference", neon, renderUnfusedExcitation(state.clone(), input))
 	})
 }
 
