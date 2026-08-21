@@ -24,8 +24,10 @@ type Bar struct {
 	distortedBuf  []float32
 	outputBuf     []float32
 	filterBlock   []float64
-	chebyGains4   [4]float32
-	hasCheby4     bool
+
+	// chebyGains carries the shaper gains in float32, the precision the
+	// waveshaper actually runs at, so the audio path never converts per sample.
+	chebyGains []float32
 
 	oscillators []oscbank.Oscillator
 }
@@ -113,11 +115,11 @@ func (b *Bar) ProcessExcitation(excitation []float32) []float32 {
 
 	switch {
 	case shaping && b.params.Chebyshev.ResolvedStage() == ChebyshevStageExcitation:
-		processChebyshevBlock(b.filteredBuf[:sampleCount], b.distortedBuf[:sampleCount], b.params.Chebyshev.HarmonicGains, &b.chebyGains4, b.hasCheby4)
+		processChebyshevBlock(b.filteredBuf[:sampleCount], b.distortedBuf[:sampleCount], b.chebyGains)
 		b.bank.ProcessBlock(b.distortedBuf[:sampleCount], out)
 	case shaping:
 		b.bank.ProcessBlock(b.filteredBuf[:sampleCount], b.distortedBuf[:sampleCount])
-		processChebyshevBlock(b.distortedBuf[:sampleCount], out, b.params.Chebyshev.HarmonicGains, &b.chebyGains4, b.hasCheby4)
+		processChebyshevBlock(b.distortedBuf[:sampleCount], out, b.chebyGains)
 	default:
 		b.bank.ProcessBlock(b.filteredBuf[:sampleCount], out)
 	}
@@ -141,11 +143,9 @@ func (b *Bar) UpdateParams(params *BarParams) error {
 	b.params = params.Clone()
 	b.lowpass = newLowpassSection(params.FilterFrequency, float64(b.sampleRate))
 
-	b.hasCheby4 = len(params.Chebyshev.HarmonicGains) == 4
-	if b.hasCheby4 {
-		for i := range b.chebyGains4 {
-			b.chebyGains4[i] = float32(params.Chebyshev.HarmonicGains[i])
-		}
+	b.chebyGains = make([]float32, len(params.Chebyshev.HarmonicGains))
+	for i, gain := range params.Chebyshev.HarmonicGains {
+		b.chebyGains[i] = float32(gain)
 	}
 
 	if cap(b.oscillators) >= len(params.Modes) {
@@ -203,50 +203,8 @@ func newLowpassSection(freq, sampleRate float64) *biquad.Section {
 	return biquad.NewSection(coeff)
 }
 
-func applyChebyshev(input float64, gains []float64) float64 {
-	if len(gains) == 0 {
-		return input
-	}
-
-	clampedInput := clamp(input, -1, 1)
-
-	prevPrevTerm := 1.0
-	prevTerm := clampedInput
-	out := gains[0] * prevTerm
-
-	for i := 1; i < len(gains); i++ {
-		nextTerm := 2*clampedInput*prevTerm - prevPrevTerm
-		out += gains[i] * nextTerm
-		prevPrevTerm, prevTerm = prevTerm, nextTerm
-	}
-
-	return out
-}
-
-func processChebyshevBlock(input, output []float32, gains []float64, gains4 *[4]float32, has4 bool) {
-	if has4 && processChebyshevBlockAVX2(input, output, gains4) {
-		return
-	}
-
-	for i := range input {
-		output[i] = float32(applyChebyshev(float64(input[i]), gains))
-	}
-}
-
 func clearFloat32(buf []float32) {
 	for i := range buf {
 		buf[i] = 0
 	}
-}
-
-func clamp(value, low, high float64) float64 {
-	if value < low {
-		return low
-	}
-
-	if value > high {
-		return high
-	}
-
-	return value
 }

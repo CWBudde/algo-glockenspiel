@@ -8,16 +8,31 @@ permissions:
 
 jobs:
   test-unit:
-    # arm64 is not redundant here: the AVX2 kernels compile out on it, so this
-    # is the only job that exercises the non-amd64 fallback paths. It is also
-    # where the NEON kernels will be verified.
+    # Neither extra matrix entry is redundant.
+    #
+    # arm64: the AVX2 kernels compile out on it, so this is the only job that
+    # exercises the non-amd64 fallback paths. It is also where the NEON kernels
+    # will be verified.
+    #
+    # GOAMD64=v3: from that level upwards the compiler may contract a scalar
+    # multiply followed by an add into a single fused instruction, while the
+    # assembly rounds the two separately. That silently reopens the seam between
+    # a kernel's vectorised body and its scalar tail, and only a build at v3
+    # catches it -- see TestChebyshevBodyTailAndFallbackAgree.
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - ubuntu-latest
-          - ubuntu-24.04-arm
+        include:
+          - runner: ubuntu-latest
+            goamd64: v1
+          - runner: ubuntu-latest
+            goamd64: v3
+          - runner: ubuntu-24.04-arm
+            goamd64: ""
+    name: test-unit (${{ matrix.runner }}${{ matrix.goamd64 && format(', GOAMD64={0}', matrix.goamd64) || '' }})
     runs-on: ${{ matrix.runner }}
+    env:
+      GOAMD64: ${{ matrix.goamd64 }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6

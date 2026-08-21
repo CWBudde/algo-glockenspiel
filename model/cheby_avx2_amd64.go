@@ -2,45 +2,49 @@
 
 package model
 
-import "github.com/cwbudde/glockenspiel/internal/cpufeat"
+import (
+	"unsafe"
 
+	"github.com/cwbudde/glockenspiel/internal/cpufeat"
+)
+
+// chebyAVX2Block is the kernel's vector width in float32 samples.
 const chebyAVX2Block = 8
 
-func processChebyshevBlockAVX2(input, output []float32, gains4 *[4]float32) bool {
-	if len(input) == 0 || len(output) < len(input) || gains4 == nil || !cpufeat.Detect().HasAVX2 {
-		return false
+// The kernel broadcasts its four gains from the fixed byte offsets 0, 4, 8 and
+// 12 of the gain array, and walks input and output in 32-byte steps of eight
+// samples. Assembly is not type-checked against Go, so a change to either
+// layout would corrupt audio silently instead of failing to build. These
+// assertions are the build failure: uintptr is unsigned, so a mismatch in
+// either direction makes the constant expression overflow.
+const (
+	_ = unsafe.Sizeof([chebyshevFastGains]float32{}) - 16
+	_ = 16 - unsafe.Sizeof([chebyshevFastGains]float32{})
+
+	_ = unsafe.Sizeof(float32(0))*chebyAVX2Block - 32
+	_ = 32 - unsafe.Sizeof(float32(0))*chebyAVX2Block
+)
+
+// processChebyshev4AVX2 shapes the chebyAVX2Block-aligned body of input and
+// reports how many samples it wrote. Zero means the caller has to shape all of
+// them scalar: no AVX2, or a block too short to fill one vector.
+//
+// The caller owns the tail deliberately. The kernel evaluates the recurrence in
+// float32 in the same order chebyshevScalar does, so body and tail meet without
+// a seam.
+func processChebyshev4AVX2(input, output []float32, gains *[chebyshevFastGains]float32) int {
+	if len(input) == 0 || len(output) < len(input) || gains == nil || !cpufeat.Detect().HasAVX2 {
+		return 0
 	}
 
 	mainCount := len(input) &^ (chebyAVX2Block - 1)
 	if mainCount == 0 {
-		return false
+		return 0
 	}
 
-	processChebyshev4AVX2Asm(&input[0], &output[0], &gains4[0], mainCount)
+	processChebyshev4AVX2Asm(&input[0], &output[0], &gains[0], mainCount)
 
-	for i := mainCount; i < len(input); i++ {
-		output[i] = chebyshev4Scalar(input[i], gains4)
-	}
-
-	return true
-}
-
-func chebyshev4Scalar(input float32, gains4 *[4]float32) float32 {
-	x := input
-	if x < -1 {
-		x = -1
-	}
-
-	if x > 1 {
-		x = 1
-	}
-
-	x2 := x * x
-	t2 := 2*x2 - 1
-	t3 := 4*x*x2 - 3*x
-	t4 := 8*x2*x2 - 8*x2 + 1
-
-	return gains4[0]*x + gains4[1]*t2 + gains4[2]*t3 + gains4[3]*t4
+	return mainCount
 }
 
 //go:noescape
