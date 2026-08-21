@@ -252,8 +252,19 @@ harness. Only its lane fold has to be exact — the accumulation order is rule
 two, and rule two has no tolerance.
 
 What SSE2 _is_ required to be bit-identical to is the portable kernel on the
-same machine, if and only if it makes the same rounding choices. It does not
-have to be, and pinning that would over-constrain the kernel for nothing.
+same machine, if and only if it makes the same rounding choices. It turns out to
+make them, and deliberately: see "The SSE2 kernel" below. A packed kernel with
+no FMA rounds `im'` four times however it is written, so associating exactly as
+`kernel_generic.go` does costs it nothing — same instruction count, same
+dependency chain, same register pressure — and it upgrades the portable kernel
+from an approximate oracle for SSE2 into an exact one.
+`TestSSE2IsBitIdenticalToPortable` and the fuzz harness assert it, so the
+kernel's association cannot quietly drift away from the reference's.
+
+That is a claim about amd64 only, and it is the same wrinkle as the one below:
+it holds because the Go compiler cannot fuse `a + b*c` on a target where FMA is
+not baseline. The bound remains the contract; the bit-identity is a stronger
+property this particular backend happens to be able to offer for free.
 
 There is a matching wrinkle on arm64 that is easy to trip over. The Go
 specification permits the compiler to fuse `a + b*c` into a single rounded
@@ -265,6 +276,37 @@ section bounds is an amd64-only phenomenon. The bound holds on both; it is
 simply slack on arm64. Never write a test that requires the portable kernel to
 be bit-identical to itself across architectures.
 
+## The SSE2 kernel
+
+`oscbank_sse2_amd64.s` takes the same block pair as the AVX2 kernel and splits
+it four ways: XMM is four lanes, so sixteen rotors are four half-blocks — block
+A low, A high, B low, B high — advanced together. This is the case the even
+block count in "Layout" was rounded for, and it needs no tail path.
+
+Its one real design decision is the association, and the SSE2 corollary above is
+the answer: it evaluates `(amp*x + re*sin) + im*cos` strictly left to right,
+which is what `kernel_generic.go` compiles to on amd64, rather than seeding an
+accumulator the way the AVX2 kernel's FMA chain does. Both cost four roundings
+and one dependency chain of two adds. Only one of them is bit-identical to the
+reference. Every operand order in the kernel is load-bearing for that: `ADDPS`
+returns its destination when both operands are NaN and `SUBPS` is not
+commutative at all, so the accumulator is always the destination.
+
+Sixteen XMM registers cannot hold `re`, `im`, `cos`, `sin` and `amp` for four
+half-blocks — that is twenty — so `cos`, `sin` and `amp` are reloaded from L1
+every sample. Twelve loads at two per cycle fit comfortably inside a loop that
+is latency-bound on two dependent adds per half-block, so the reloads are free.
+The `amp*x` register for each half-block is dead the moment its half-block has
+consumed it and is reused in place to carry that half-block's `t` to the fold,
+which is what makes the whole pass fit in sixteen registers at all.
+
+`reduceLanes` has no SSE2 path and should not grow one. `VHADDPS` is SSE3, so a
+4-lane fold would have to transpose four frames with `UNPCKLPS`/`UNPCKHPS`
+first — about four uops per frame, which is what the scalar loop already costs.
+The reduction is memory-shaped, not arithmetic-shaped. A third implementation of
+a summation order that rule two pins exactly would be one more place to get rule
+two wrong, for nothing.
+
 ## Measured performance
 
 512-sample blocks, 12th Gen Intel Core i7-1255U, `taskset -c 0,1`,
@@ -275,7 +317,19 @@ they share a thermal state:
 | --------------------------------------- | ------ | --------- | ------------------ |
 | retired four-mode kernel (float64 AVX2) | 4      | 1314–1384 | 329–346            |
 | `oscbank` 4 oscillators x 4 harmonics   | 16     | 1128–1154 | 70–72              |
+| `oscbank` 4 x 4, SSE2 kernel            | 16     | 2850–3400 | 178–212            |
 | `oscbank` 4 x 4, portable kernel        | 16     | ~8000     | ~500               |
+
+The SSE2 row lands where a 4-lane unfused kernel should: about 2.1x the AVX2
+kernel and about 3x faster than the portable one. Half the lanes accounts for
+most of the gap and the missing FMA for the rest — two multiplies and two adds
+per rotor and sample where AVX2 issues two FMAs.
+
+That row was measured on a loaded machine, and the honest way to read it is as a
+ratio. The same binary in the same run reported 1336–1372 ns/block for AVX2 and
+8755–11608 for the portable kernel, both around 15% above their own rows above,
+so the absolute SSE2 figure is inflated by roughly the same amount and the
+ratios are what survive.
 
 The first row is history, not something to re-run: `QuadDecayOscillator` and its
 five `.s` files were deleted in Phase 2.1 once nothing rendered through them. It
@@ -317,8 +371,8 @@ note. It clones now, and `TestRenderingIsIndependentOfPresetState` guards it.
   voice's oscillators; the realtime engine still renders voices serially. Packing
   `voices x oscillators` needs per-lane excitation and per-voice output
   separation, which belongs with the audio-path work in Phase 2.
-- Only AVX2 is packed. Everything else runs the portable kernel, which is about
-  7x slower. NEON and SSE2 are Phase 2.3; AVX-512 is deferred, because CI cannot
+- AVX2 and SSE2 are packed. Everything else runs the portable kernel, which is
+  about 7x slower. NEON is Phase 2.3; AVX-512 is deferred, because CI cannot
   prove it correct on a runner pool that only sometimes has the instructions.
 - The recursion still costs eight cycles per sample per block pair. Stepping two
   samples at a time through the squared rotation matrix would halve that, at the
