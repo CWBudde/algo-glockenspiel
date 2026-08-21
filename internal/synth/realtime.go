@@ -1,6 +1,10 @@
 package synth
 
-import "math"
+import (
+	"math"
+
+	"github.com/cwbudde/glockenspiel/internal/oscbank"
+)
 
 const (
 	defaultRealtimeBlockFrames = 128
@@ -94,6 +98,11 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 	if frames <= 0 {
 		return nil
 	}
+
+	// One mode change per callback covers the whole block, mixing included.
+	// The per-block scopes inside the bank see the bits already set and cost a
+	// register read each.
+	defer oscbank.FlushDenormals().Restore()
 
 	required := frames * 2
 	if len(e.mixBuffer) < required {
