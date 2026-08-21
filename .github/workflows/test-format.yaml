@@ -20,7 +20,13 @@ jobs:
           cache: true
 
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+        # Install the prebuilt binary rather than `go install`: recent
+        # golangci-lint releases require a newer Go than go.mod pins, and
+        # setup-go sets GOTOOLCHAIN=local, so building it from source fails.
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh |
+            sh -s -- -b "$(go env GOPATH)/bin"
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
 
       - name: Check Go formatting
         # `fmt --diff` reports what the formatters would change and exits
