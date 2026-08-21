@@ -83,21 +83,237 @@ sample is computed one iteration ahead, which is why the kernel reads one sample
 past the end of its input and why the bank hands it a padded scratch buffer.
 
 The portable kernel in `kernel_generic.go` associates the arithmetic the same
-way. It cannot fuse its multiply-adds, so the two backends agree to float32
-rounding rather than to the bit; making that exact is Phase 2's job.
+way, and cannot fuse its multiply-adds. The next section says exactly how far
+apart that is allowed to put them.
+
+## The numeric contract
+
+Three rules, and every future backend is judged by them.
+
+**Packed kernels are the reference, and they agree with each other to the bit.**
+A backend that has FMA fuses; two backends that both have FMA must produce
+identical float32 words for identical inputs, on every sample, with no
+tolerance. Bit-identity is what makes a render reproducible across machines, and
+it is cheap to hold to as long as everyone associates the arithmetic the same
+way — which is the second rule.
+
+**The accumulation order is part of the contract, not an implementation
+detail.** `reduceLanesGeneric` sums the pairwise tree `(lane[0] + lane[1]) +
+(lane[2] + lane[3])`, and the fold-on-store inside the packed kernels must
+reproduce exactly that order. Floating-point addition is not associative, so a
+backend that folds `((l0 + l2) + l1) + l3` is a different program, not a faster
+one. `reduceLanesAVX2` pays a `VPERMPS` to undo `VHADDPS`'s per-half
+interleaving for precisely this reason.
+
+**The portable kernel is a correctness reference held to a bound, not to the
+bit.** It is not allowed to be a different algorithm — it associates and
+accumulates identically — but it must be allowed to round differently, because
+the whole point of an FMA is that `a*b + c` rounds once instead of twice, and no
+portable Go expression can ask for that. What follows derives how far apart that
+one substitution can push the two.
+
+### What one FMA costs
+
+Write `u = 2^-24 ≈ 5.96e-8` for the float32 unit roundoff. Per rotor and sample
+the two kernels compute the same three quantities, with different numbers of
+roundings:
+
+| Quantity                       | Packed                        | Portable               |
+| ------------------------------ | ----------------------------- | ---------------------- |
+| `ampx = amp*x`                 | 1 (`VMULPS`)                  | 1                      |
+| `im' = ampx + re*sin + im*cos` | 2 (two chained `VFMADD231PS`) | 4 (mul, add, mul, add) |
+| `re' = re*cos - im*sin`        | 2 (`VMULPS`, `VFNMADD231PS`)  | 3 (mul, mul, sub)      |
+| `t = im' - ampx`               | 1                             | 1                      |
+
+`ampx` and `t` are the same operation on both sides and cancel out of the
+difference. The two that differ contribute at most the sum of their own error
+budgets, so per step the two kernels can disagree about the new state by
+
+```
+|Δim'| <= 6u * (|amp*x| + |re*sin| + |im*cos|)
+|Δre'| <= 5u * (|re*cos| + |im*sin|)
+```
+
+Both bracketed sums are bounded the same way. The coefficient pair `(cos, sin)`
+is a rotation scaled by the decay factor, so `cos² + sin² = d²`, and
+Cauchy-Schwarz gives `|re*sin| + |im*cos| <= d*ρ` with `ρ = sqrt(re² + im²)` the
+rotor's state magnitude. Take the larger constant and call the per-step
+injection
+
+```
+δ(n) = 6u * (|amp*x(n)| + d*ρ(n))
+```
+
+### Why it does not compound
+
+This is the part worth stating plainly. The state update is
+`s(n+1) = d*R(φ)*s(n) + e(n)`, with `R` a rotation and `e` the excitation. An
+error `E` already present in the state therefore evolves as
+`E(n+1) = d*R(φ)*E(n) + δ(n)`. A rotation preserves magnitude exactly, so
+
+```
+||E(n+1)|| <= d*||E(n)|| + ||δ(n)||
+```
+
+and because the decay factor is _strictly_ below 1, that recursion is
+contractive. Old error is forgotten at the same rate as old signal. Summing the
+geometric series over a chunk of `N` samples gives the worst case, in which
+every rounding error happens to point the same way:
+
+```
+||E(N)|| <= δ_max * (1 - d^N) / (1 - d)
+```
+
+Rounding errors do not point the same way — their signs are uncorrelated across
+samples and across rotors — so the realistic composition is in quadrature:
+
+```
+||E(N)|| <= δ_max * g(N, d),    g(N, d) = sqrt((1 - d^2N) / (1 - d²))
+```
+
+`g` is the whole story. For a fast rotor it is small and saturates almost
+immediately: a 1 ms half-life at 48 kHz has `d = 0.9857` and `g -> 5.9`, so the
+two kernels can never drift more than about `6 * 5.9 * u ≈ 2.1e-6` apart
+relative to the signal that drives them, no matter how long the render. A 100 ms
+half-life has `d = 1 - 1.44e-4` and `g -> 59`, giving `2.1e-5`. Length only
+matters until `N ≈ 1/(1-d)`; past that the bound is flat, because the bank is
+forgetting error as fast as it makes it.
+
+At `d = 1` the same formula reads `g = sqrt(N)`, which grows without bound. That
+is the formal version of the rule the bank already enforces informally: a
+sustained rotor has no numeric contract at all, only a drift rate. Decay below 1
+is not just what keeps the recursion from needing renormalization — it is what
+makes the backends comparable in the first place.
+
+### The tolerance a test may use
+
+Scaling the bound to a bank means combining the per-rotor injection scales. They
+combine in quadrature, not in a sum — the same argument that let error compose as
+a square root over samples applies over lanes, because one rotor's rounding tells
+you nothing about its neighbour's:
+
+```
+E(n) = sqrt( Σ_r (|amp_r * x(n)| + d_r * ρ_r(n))² )
+```
+
+The distinction is worth a sentence, because on a wide bank it is the whole
+difference. An ell-1 sum is the adversarial version, larger by up to `sqrt(R)`
+for `R` similarly scaled rotors — sixteen times too generous on a 256-rotor bank
+to catch anything. `errorEnvelope` in `contract_test.go` implements the
+quadrature form above, and a backend implemented against the ell-1 version would
+be built to a bound the harness does not enforce.
+
+`E` is a no-cancellation envelope: it is deliberately not the peak of the
+rendered output. A bank whose rotors happen to cancel produces a small output
+and exactly the same absolute error, so normalizing to the realized peak turns a
+correct backend into a failing one. `contract_test.go` derives `E` from the state
+the render starts from, in one extra scalar pass, by running the magnitude
+recursion `ρ(n+1) = d*ρ(n) + |amp*x(n)|` — which is contractive for the same
+reason the error is.
+
+The reduction adds a second term that is easy to forget. Rule two makes every
+backend fold the lanes in the same order with the same number of adds, so the
+reduction cannot make two backends _disagree_ — but each of those adds re-rounds
+operands that already differ, and can round them a further ULP apart. There are
+three adds to fold a block pair's four lanes, three more in `reduceLanes`, and
+one per additional block pair accumulating into `acc`. That term is flat in `N`,
+which is why it is invisible in a long render and dominant on the first sample,
+where `g` is still 1:
+
+```
+tol = u * max_n E(n) * (6 * g(N, d_max) + 6 + pairs - 1)
+```
+
+Measured against the AVX2 kernel, the worst realized ratio is about 0.02 over the
+backend-differential grid and about 0.35 over several million fuzz executions —
+halving both constants makes the harness fail within a second. That is the
+intended calibration. The bound is not a rubber stamp: a new backend that lands
+inside it is conforming, and one that exceeds it has an actual bug rather than
+bad luck.
+
+One test asks a larger question than this and needs a larger tolerance.
+`TestBankMatchesScalarReference` compares the bank against a float64 reference
+that derives its own coefficients, so rounding `cos` and `sin` to float32
+perturbs the recursion itself rather than just its arithmetic: the decay factor
+becomes `d(1 + δ)` and after `n` steps the state is off by `(1 + δ)^n`. That bias
+is systematic — it points the same way on every step — so it composes in the
+ell-1 form rather than in quadrature, and `referenceTolerance` adds it on top.
+That term is not part of the backend contract, and no backend should be judged
+by it.
+
+### Denormals
+
+**Today the bank does not touch the floating-point mode.** `processChunk` calls
+`processRotorBlocks` and `reduceLanes` and nothing else, so the rotors run in
+whatever mode the host thread is already in. A rotor ringing down past about
+`1e-38` therefore enters the subnormal range rather than reaching zero, on every
+backend, and slows down sharply while it is there.
+
+That has a consequence for this contract, and it is the one place the derivation
+above is weaker than it looks. Every bound here is relative: it models a rounding
+as `fl(x) = x(1 + δ)` with `|δ| <= u`. That model is exact for normal results and
+wrong for subnormal ones, where the true statement carries an extra absolute term
+of up to `2^-150`. Two backends evaluating the same rotor deep in the subnormal
+range can therefore differ by more than `u` times anything, because an FMA rounds
+its product once while a separate multiply and add round a subnormal product
+first.
+
+The gap is theoretical rather than observed. The fuzz corpus drives rotors into
+that range deliberately — one whole amplitude regime seeds state at `1e-30` and
+one decay regime reaches subnormals within a few samples — and neither this
+harness nor the SSE2 kernel's bit-identity assertion has found a divergence
+there. **The tolerances in this document do not depend on flush-to-zero, and are
+not relaxed to accommodate its absence.** The unflushed subnormal range is where
+the harness is at its strictest, and it stays that way.
+
+**Pending, with Phase 2.4:** the denormal-scope work sets MXCSR FTZ+DAZ on amd64
+and FPCR FZ on arm64 for the duration of a block, restoring the thread's mode
+afterwards so a host's own policy survives being called. When it lands it closes
+the gap above by construction — a rotor ringing down reaches exactly zero on
+every backend instead of drifting through a range where the relative-error model
+does not hold — and this section loses its first three paragraphs. It does not
+change any tolerance, because flushing only ever moves a value toward zero and
+the envelope already dominates anything that small.
+
+### The SSE2 corollary
+
+SSE2 has no FMA. A packed SSE2 kernel therefore sits on the _portable_ side of
+the contract, not the packed side: it is not required to be bit-identical to
+AVX2, and it must not be tested as if it were. It is held to the same
+`6u * g(N, d)` bound as `kernel_generic.go`, for the same reason and by the same
+harness. Only its lane fold has to be exact — the accumulation order is rule
+two, and rule two has no tolerance.
+
+What SSE2 _is_ required to be bit-identical to is the portable kernel on the
+same machine, if and only if it makes the same rounding choices. It does not
+have to be, and pinning that would over-constrain the kernel for nothing.
+
+There is a matching wrinkle on arm64 that is easy to trip over. The Go
+specification permits the compiler to fuse `a + b*c` into a single rounded
+operation, and the arm64 backend does exactly that, while the amd64 backend
+cannot because FMA is not part of the amd64 baseline. So `kernel_generic.go` is
+not one program: on arm64 it already emits `FMADD`/`FMSUB` in the same places
+the AVX2 kernel emits `VFMADD231PS`/`VFNMADD231PS`, and the divergence this
+section bounds is an amd64-only phenomenon. The bound holds on both; it is
+simply slack on arm64. Never write a test that requires the portable kernel to
+be bit-identical to itself across architectures.
 
 ## Measured performance
 
 512-sample blocks, 12th Gen Intel Core i7-1255U, `taskset -c 0,1`,
-`-benchtime 4000x`. The first two rows come from the same benchmark binary
-(`go test ./model -bench 'ProcessBlock32$|OscBank4x4'`), so they share a thermal
-state:
+`-benchtime 4000x`. The first two rows were read off one benchmark binary, so
+they share a thermal state:
 
-| Kernel                                    | Rotors | ns/block  | ns per rotor-block |
-| ----------------------------------------- | ------ | --------- | ------------------ |
-| `QuadDecayOscillator` (float64 AVX2, old) | 4      | 1314–1384 | 329–346            |
-| `oscbank` 4 oscillators x 4 harmonics     | 16     | 1128–1154 | 70–72              |
-| `oscbank` 4 x 4, portable kernel          | 16     | ~8000     | ~500               |
+| Kernel                                  | Rotors | ns/block  | ns per rotor-block |
+| --------------------------------------- | ------ | --------- | ------------------ |
+| retired four-mode kernel (float64 AVX2) | 4      | 1314–1384 | 329–346            |
+| `oscbank` 4 oscillators x 4 harmonics   | 16     | 1128–1154 | 70–72              |
+| `oscbank` 4 x 4, portable kernel        | 16     | ~8000     | ~500               |
+
+The first row is history, not something to re-run: `QuadDecayOscillator` and its
+five `.s` files were deleted in Phase 2.1 once nothing rendered through them. It
+is kept because it is the number this bank had to beat, and it did — four times
+the oscillator work for 15% less time.
 
 Scaling, from `go test ./internal/oscbank -bench Bank`:
 
@@ -135,16 +351,14 @@ note. It clones now, and `TestRenderingIsIndependentOfPresetState` guards it.
   `voices x oscillators` needs per-lane excitation and per-voice output
   separation, which belongs with the audio-path work in Phase 2.
 - Only AVX2 is packed. Everything else runs the portable kernel, which is about
-  7x slower. NEON, SSE2 and AVX-512 are Phase 2.
+  7x slower. NEON and SSE2 are Phase 2.3; AVX-512 is deferred, because CI cannot
+  prove it correct on a runner pool that only sometimes has the instructions.
 - Denormals are not flushed. A bank left running with no excitation decays into
-  denormal state and slows down sharply; Phase 2 sets MXCSR FTZ/DAZ once per
-  stream.
+  denormal state and slows down sharply; Phase 2.4 sets MXCSR FTZ/DAZ once per
+  stream. The numeric consequence is in "Denormals" above.
 - The recursion still costs eight cycles per sample per block pair. Stepping two
   samples at a time through the squared rotation matrix would halve that, at the
   cost of a second coefficient set and a sample-count tail.
 - The optimizer does not search per-mode harmonic gains. `ParamCodec` sizes
   itself from the template's mode count but carries per-mode harmonics through
   unchanged.
-- `model`'s `QuadDecayOscillator` and its five `.s` files are no longer on any
-  rendering path — `Bar` drives the bank. They stay for now as the differential
-  reference; Phase 2.1 decides whether to keep or delete them.

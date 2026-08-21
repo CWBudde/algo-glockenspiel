@@ -122,35 +122,32 @@ func TestBankMatchesScalarReference(t *testing.T) {
 		{1, 1}, {4, 1}, {4, 4}, {7, 3}, {16, 4}, {64, 1},
 	}
 
-	for _, tc := range cases {
-		t.Run(fmt.Sprintf("%dx%d", tc.numOsc, tc.numHarm), func(t *testing.T) {
-			oscillators := testOscillators(tc.numOsc, tc.numHarm)
+	for _, testCase := range cases {
+		t.Run(fmt.Sprintf("%dx%d", testCase.numOsc, testCase.numHarm), func(t *testing.T) {
+			oscillators := testOscillators(testCase.numOsc, testCase.numHarm)
 
 			bank := New(sampleRate)
 			if err := bank.SetOscillators(oscillators); err != nil {
 				t.Fatalf("SetOscillators: %v", err)
 			}
 
+			rotors := newReferenceRotors(oscillators, sampleRate)
+
+			// Both sides start from the same non-zero rotor state. A bank that
+			// has never been struck holds re = im = 0, and every multiply in the
+			// rotation half of the kernel then has a zero operand for the whole
+			// render -- which is exactly the half a layout mistake would break.
+			seedBankAndReference(bank, rotors, rand.New(rand.NewSource(20260822)))
+
 			input := strikeInput(1024)
+			tolerance := referenceTolerance(bank, input)
+
 			got := make([]float32, len(input))
 			bank.ProcessBlock(input, got)
 
-			want := referenceProcess(newReferenceRotors(oscillators, sampleRate), input)
+			want := referenceProcess(rotors, input)
 
-			// float32 rotor state against a float64 reference: the tolerance
-			// tracks the peak, not each sample, because the tail decays far
-			// below the accumulated rounding of the head.
-			peak := 0.0
-			for _, v := range want {
-				peak = math.Max(peak, math.Abs(float64(v)))
-			}
-
-			tolerance := 1e-4 * peak
-			for i := range got {
-				if math.Abs(float64(got[i]-want[i])) > tolerance {
-					t.Fatalf("sample %d: got %g want %g (tolerance %g)", i, got[i], want[i], tolerance)
-				}
-			}
+			requireWithinContract(t, fmt.Sprintf("%dx%d", testCase.numOsc, testCase.numHarm), got, want, tolerance)
 		})
 	}
 }
