@@ -36,7 +36,7 @@ func TestParamCodecEncodeDecodeRoundTrip(t *testing.T) {
 	for i := range model.NumModes {
 		assertClose(t, decoded.Modes[i].Amplitude, params.Modes[i].Amplitude, 1e-12, "mode amplitude")
 		assertClose(t, decoded.Modes[i].Frequency, params.Modes[i].Frequency, 1e-9, "mode frequency")
-		assertClose(t, decoded.Modes[i].DecayMs, params.Modes[i].DecayMs, 1e-12, "mode decay")
+		assertClose(t, decoded.Modes[i].DecayMs, params.Modes[i].DecayMs, 1e-9, "mode decay")
 	}
 
 	for i := range params.Chebyshev.HarmonicGains {
@@ -87,7 +87,7 @@ func TestBoundsClamp(t *testing.T) {
 	}
 }
 
-func TestBoundsMirror(t *testing.T) {
+func TestBoundsNormalizeClampsOutOfRangeValues(t *testing.T) {
 	params := validBarParams()
 
 	codec, err := NewParamCodec(&params)
@@ -99,15 +99,49 @@ func TestBoundsMirror(t *testing.T) {
 	input := mustEncode(t, codec, &params)
 	input[0] = bounds.Ranges[0].Max + 0.25
 	input[1] = bounds.Ranges[1].Min - 0.5
-	input[len(input)-1] = bounds.Ranges[len(bounds.Ranges)-1].Max + 0.75
 
-	mirrored, err := bounds.Mirror(input)
+	normalized, err := bounds.Normalize(input)
 	if err != nil {
-		t.Fatalf("Mirror failed: %v", err)
+		t.Fatalf("Normalize failed: %v", err)
 	}
 
-	if !bounds.Contains(mirrored) {
-		t.Fatal("expected mirrored vector to be within bounds")
+	for i, v := range normalized {
+		if v < 0 || v > 1 {
+			t.Fatalf("normalized component %d escaped the unit cube: %g", i, v)
+		}
+	}
+
+	denormalized, err := bounds.Denormalize(normalized)
+	if err != nil {
+		t.Fatalf("Denormalize failed: %v", err)
+	}
+
+	if !bounds.Contains(denormalized) {
+		t.Fatal("expected denormalized vector to be within bounds")
+	}
+}
+
+// TestParamCodecEncodesDecayLogarithmically guards the log encoding: a decay
+// constant is a ratio-scale quantity, so equal ratios must be equal distances
+// in the encoded vector.
+func TestParamCodecEncodesDecayLogarithmically(t *testing.T) {
+	params := validBarParams()
+	params.Modes[0].DecayMs = 10
+	params.Modes[1].DecayMs = 20
+	params.Modes[2].DecayMs = 100
+	params.Modes[3].DecayMs = 200
+
+	codec, err := NewParamCodec(&params)
+	if err != nil {
+		t.Fatalf("NewParamCodec failed: %v", err)
+	}
+
+	encoded := mustEncode(t, codec, &params)
+	firstStep := encoded[3+1*3+2] - encoded[3+0*3+2]
+	secondStep := encoded[3+3*3+2] - encoded[3+2*3+2]
+
+	if math.Abs(firstStep-secondStep) > 1e-12 {
+		t.Fatalf("equal decay ratios must be equal encoded steps: %g vs %g", firstStep, secondStep)
 	}
 }
 
@@ -177,5 +211,32 @@ func assertClose(t *testing.T, got, want, tol float64, label string) {
 
 	if math.Abs(got-want) > tol {
 		t.Fatalf("%s mismatch: got %.12f want %.12f", label, got, want)
+	}
+}
+
+func TestNewParamCodecWithStrictBoundsDoesNotWiden(t *testing.T) {
+	params := validBarParams()
+	params.Modes[0].Amplitude = 1.99
+
+	bounds := DefaultParamBounds
+	bounds.Amplitude = Range{Min: -1, Max: 1}
+
+	strict, err := NewParamCodecWithStrictBounds(&params, bounds)
+	if err != nil {
+		t.Fatalf("NewParamCodecWithStrictBounds failed: %v", err)
+	}
+
+	amplitude := strict.EncodedBounds().Ranges[3]
+	if amplitude.Min != -1 || amplitude.Max != 1 {
+		t.Fatalf("strict bounds were widened to %+v", amplitude)
+	}
+
+	lenient, err := NewParamCodecWithBounds(&params, bounds)
+	if err != nil {
+		t.Fatalf("NewParamCodecWithBounds failed: %v", err)
+	}
+
+	if lenient.EncodedBounds().Ranges[3].Max <= 1 {
+		t.Fatal("expected the default constructor to keep widening bounds")
 	}
 }

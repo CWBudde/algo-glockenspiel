@@ -132,6 +132,7 @@ func (b *Bar) UpdateParams(params *BarParams) error {
 
 	b.params = *params
 	b.lowpass = newLowpassSection(params.FilterFrequency, float64(b.sampleRate))
+
 	b.hasCheby4 = len(params.Chebyshev.HarmonicGains) == 4
 	if b.hasCheby4 {
 		for i := range b.chebyGains4 {

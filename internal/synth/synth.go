@@ -76,12 +76,14 @@ func (s *Synthesizer) RenderNoteWithOptions(note, velocity int, duration float64
 	}
 
 	out := make([]float32, 0, voice.remainingSamples)
+
 	buf := make([]float32, s.blockSize)
 	for voice.Active() {
 		n := voice.RenderInto(buf)
 		if n == 0 {
 			break
 		}
+
 		out = append(out, buf[:n]...)
 	}
 
@@ -100,10 +102,12 @@ func (s *Synthesizer) NewVoice(note, velocity int, duration float64, options Ren
 	}
 
 	params := s.scaledParamsForNote(note)
+
 	bar, err := model.NewBar(&params, s.sampleRate)
 	if err != nil {
 		return nil, err
 	}
+
 	bar.Reset()
 
 	threshold := math.Pow(10, options.DecayDBFS/20)
@@ -168,12 +172,14 @@ func (v *Voice) RenderInto(dst []float32) int {
 	if n > v.blockSize {
 		n = v.blockSize
 	}
+
 	if n > v.remainingSamples {
 		n = v.remainingSamples
 	}
 
 	block := v.bar.Synthesize(v.strikeVelocity, n)
 	v.strikeVelocity = 0
+
 	copy(dst[:n], block)
 
 	if v.autoStop && shouldStop(block, v.threshold) {

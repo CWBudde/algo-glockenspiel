@@ -1,6 +1,7 @@
 package optimizer
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"time"
@@ -23,8 +24,8 @@ type SimpleOptimizer struct {
 	StallIterations   int
 }
 
-// Optimize runs bounded Nelder-Mead optimization over the encoded parameter space.
-func (o *SimpleOptimizer) Optimize(objective ObjectiveFunc, initial []float64, bounds Bounds, opts OptimizeOptions) (*Result, error) {
+// Optimize runs bounded Nelder-Mead optimization over the normalized parameter space.
+func (o *SimpleOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc, initial []float64, bounds Bounds, opts OptimizeOptions) (*Result, error) {
 	if objective == nil {
 		return nil, fmt.Errorf("objective cannot be nil")
 	}
@@ -37,6 +38,10 @@ func (o *SimpleOptimizer) Optimize(objective ObjectiveFunc, initial []float64, b
 		return nil, err
 	}
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	start := time.Now()
 
 	initial, err := bounds.Clamp(initial)
@@ -44,18 +49,18 @@ func (o *SimpleOptimizer) Optimize(objective ObjectiveFunc, initial []float64, b
 		return nil, err
 	}
 
-	tracker := newProgressTracker(initial, objective(initial), opts)
+	// Nelder-Mead runs in the unit cube so that SimplexSize means the same
+	// relative step on every axis; in raw encoded units the initial simplex was
+	// degenerate along the widest axis.
+	normalized, err := bounds.Normalize(initial)
+	if err != nil {
+		return nil, err
+	}
+
+	tracker := newProgressTracker(ctx, initial, objective(initial), start, opts)
 	problem := gonumoptimize.Problem{
 		Func: func(x []float64) float64 {
-			bounded, err := bounds.Mirror(x)
-			if err != nil {
-				return math.Inf(1)
-			}
-
-			cost := objective(bounded)
-			tracker.observeEval(bounded, cost)
-
-			return cost
+			return tracker.evaluate(objective, bounds, x)
 		},
 	}
 
@@ -74,32 +79,12 @@ func (o *SimpleOptimizer) Optimize(objective ObjectiveFunc, initial []float64, b
 		SimplexSize: o.simplexSize(),
 	}
 
-	rawResult, err := gonumoptimize.Minimize(problem, initial, settings, method)
-	if err != nil {
+	rawResult, err := gonumoptimize.Minimize(problem, normalized, settings, method)
+	if err != nil && ctx.Err() == nil {
 		return nil, err
 	}
 
-	bestParams, err := bounds.Mirror(rawResult.X)
-	if err != nil {
-		return nil, err
-	}
-
-	bestCost := rawResult.F
-
-	if tracker.bestParams != nil {
-		bestParams = append([]float64(nil), tracker.bestParams...)
-		bestCost = tracker.bestCost
-	}
-
-	return &Result{
-		BestParams:  bestParams,
-		BestCost:    bestCost,
-		Iterations:  rawResult.MajorIterations,
-		Elapsed:     time.Since(start),
-		Converged:   !rawResult.Status.Early(),
-		StopReason:  rawResult.Status.String(),
-		Evaluations: rawResult.FuncEvaluations,
-	}, nil
+	return tracker.result(ctx, rawResult, start), nil
 }
 
 func (o *SimpleOptimizer) simplexSize() float64 {
@@ -135,18 +120,26 @@ func (o *SimpleOptimizer) stallIterations() int {
 }
 
 type progressTracker struct {
+	ctx         context.Context
 	start       time.Time
 	reportEvery int
 	report      func(Progress)
 
+	// bestParams and bestCost are only ever written together from evaluate, so
+	// the reported cost is always a genuine evaluation of the reported params.
+	// The gonum Recorder deliberately does not touch them: its Location holds a
+	// search-space point and a penalized cost, which used to race the objective
+	// closure for ownership of these fields.
 	bestParams []float64
 	bestCost   float64
 	evals      int
+	reports    int
 }
 
-func newProgressTracker(initial []float64, initialCost float64, opts OptimizeOptions) *progressTracker {
+func newProgressTracker(ctx context.Context, initial []float64, initialCost float64, start time.Time, opts OptimizeOptions) *progressTracker {
 	return &progressTracker{
-		start:       time.Now(),
+		ctx:         ctx,
+		start:       start,
 		reportEvery: opts.ReportEvery,
 		report:      opts.Report,
 		bestParams:  append([]float64(nil), initial...),
@@ -155,16 +148,64 @@ func newProgressTracker(initial []float64, initialCost float64, opts OptimizeOpt
 	}
 }
 
+// evaluate maps a search-space point back into encoded units and scores it.
+//
+// Points outside the unit cube are clamped rather than mirrored: mirroring made
+// the objective a many-to-one folded map that Nelder-Mead reflects across,
+// chasing ghost minima outside the feasible region. Clamping alone leaves a
+// plateau, so the distance outside the cube is added as a penalty that grows
+// with the excursion and gives the simplex a gradient back inwards.
+func (t *progressTracker) evaluate(objective ObjectiveFunc, bounds Bounds, x []float64) float64 {
+	bounded, err := bounds.Denormalize(x)
+	if err != nil {
+		return math.Inf(1)
+	}
+
+	cost := objective(bounded)
+
+	t.evals++
+	if cost < t.bestCost {
+		t.bestCost = cost
+		t.bestParams = append(t.bestParams[:0], bounded...)
+	}
+
+	excess := unitCubeExcess(x)
+	if excess == 0 {
+		return cost
+	}
+
+	// Scale the penalty with the local cost so it dominates regardless of the
+	// objective's magnitude, but never vanishes when the clamped cost is zero.
+	return cost + (1+math.Abs(cost))*excess
+}
+
+// unitCubeExcess returns the squared distance from x to the unit cube.
+func unitCubeExcess(x []float64) float64 {
+	excess := 0.0
+
+	for _, v := range x {
+		switch {
+		case v < 0:
+			excess += v * v
+		case v > 1:
+			excess += (v - 1) * (v - 1)
+		}
+	}
+
+	return excess
+}
+
 func (t *progressTracker) Init() error { return nil }
 
 func (t *progressTracker) Record(loc *gonumoptimize.Location, op gonumoptimize.Operation, stats *gonumoptimize.Stats) error {
-	if op != gonumoptimize.MajorIteration {
-		return nil
+	// Gonum has no context support, so cancellation is surfaced by failing the
+	// recorder; Minimize still returns the result it has accumulated.
+	if err := t.ctx.Err(); err != nil {
+		return err
 	}
 
-	if loc != nil && loc.F < t.bestCost {
-		t.bestCost = loc.F
-		t.bestParams = append(t.bestParams[:0], loc.X...)
+	if op != gonumoptimize.MajorIteration {
+		return nil
 	}
 
 	if t.report == nil || t.reportEvery <= 0 || stats == nil || stats.MajorIterations%t.reportEvery != 0 {
@@ -176,22 +217,44 @@ func (t *progressTracker) Record(loc *gonumoptimize.Location, op gonumoptimize.O
 		currentCost = loc.F
 	}
 
+	t.reports++
+
 	t.report(Progress{
-		Iteration:   stats.MajorIterations,
-		CurrentCost: currentCost,
-		BestCost:    t.bestCost,
-		BestParams:  append([]float64(nil), t.bestParams...),
-		Elapsed:     stats.Runtime,
-		Evaluations: stats.FuncEvaluations,
+		Iteration:           t.reports,
+		OptimizerIterations: stats.MajorIterations,
+		CurrentCost:         currentCost,
+		BestCost:            t.bestCost,
+		BestParams:          append([]float64(nil), t.bestParams...),
+		Elapsed:             stats.Runtime,
+		Evaluations:         stats.FuncEvaluations,
 	})
 
 	return nil
 }
 
-func (t *progressTracker) observeEval(x []float64, cost float64) {
-	t.evals++
-	if cost < t.bestCost {
-		t.bestCost = cost
-		t.bestParams = append(t.bestParams[:0], x...)
+func (t *progressTracker) result(ctx context.Context, raw *gonumoptimize.Result, start time.Time) *Result {
+	result := &Result{
+		BestParams:  append([]float64(nil), t.bestParams...),
+		BestCost:    t.bestCost,
+		Elapsed:     time.Since(start),
+		Evaluations: t.evals,
+		StopReason:  "canceled",
 	}
+
+	if raw != nil {
+		result.Iterations = raw.MajorIterations
+		result.Converged = !raw.Status.Early()
+		result.StopReason = raw.Status.String()
+
+		if raw.FuncEvaluations > result.Evaluations {
+			result.Evaluations = raw.FuncEvaluations
+		}
+	}
+
+	if ctx.Err() != nil {
+		result.Converged = false
+		result.StopReason = "context_canceled"
+	}
+
+	return result
 }

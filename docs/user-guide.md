@@ -49,7 +49,7 @@ glockenspiel synth \
 
 ### What The Flags Do
 
-- `--preset`: preset JSON to load
+- `--preset`: preset JSON to load; omit it to use the preset built into the binary
 - `--output`: destination WAV file
 - `--note`: MIDI note number used for frequency scaling
 - `--velocity`: strike strength, `0..127`
@@ -78,7 +78,7 @@ glockenspiel fit \
   --optimizer simple \
   --metric rms \
   --max-iter 100 \
-  --time-budget 30 \
+  --time-budget 30s \
   --work-dir out/fit-a4
 ```
 
@@ -94,7 +94,7 @@ glockenspiel fit \
   --mayfly-pop 10 \
   --metric spectral \
   --max-iter 200 \
-  --time-budget 60 \
+  --time-budget 60s \
   --work-dir out/fit-a4
 ```
 
@@ -112,7 +112,8 @@ glockenspiel fit \
 ### What The Flags Do
 
 - `--reference`: mono WAV file to match
-- `--preset`: starting preset JSON
+- `--preset`: starting preset JSON; omit it to use the preset built into the binary
+- `--bounds`: JSON file narrowing the search box, see [Narrowing The Search With `--bounds`](#narrowing-the-search-with---bounds)
 - `--output`: destination fitted preset JSON
 - `--note`: note number used when rendering candidates
 - `--velocity`: strike velocity for candidate renders
@@ -120,14 +121,46 @@ glockenspiel fit \
 - `--optimizer`: `simple` or `mayfly`
 - `--metric`: `rms`, `log`, or `spectral`
 - `--max-iter`: iteration cap passed to the optimizer
-- `--time-budget`: wall-clock budget in seconds
+- `--time-budget`: wall-clock budget as a Go duration, for example `30s` or `10m`; a bare number is still read as seconds
 - `--report-every`: progress print interval
-- `--checkpoint-interval`: checkpoint write interval in progress iterations
-- `--work-dir`: stores checkpoints and `fitted_output.wav`
+- `--checkpoint-interval`: checkpoint write interval in progress reports; `0` disables checkpointing entirely, including the final checkpoint
+- `--work-dir`: stores checkpoints and `fitted_output.wav`, resolved relative to the current directory (default `out/fit`)
 - `--resume`: restart from the latest `checkpoint_*.json` in `work-dir`
 - `--mayfly-variant`: Mayfly variant selector
 - `--mayfly-pop`: Mayfly male/female population size
 - `--mayfly-seed`: random seed for Mayfly
+
+### Narrowing The Search With `--bounds`
+
+By default `fit` searches the full parameter box, which spans several decades in
+frequency. That is a lot of empty space for the optimizer to cross. When you
+already know roughly where the answer lies, pass `--bounds` with a JSON file that
+narrows the dimensions you care about:
+
+```json
+{
+  "input_mix": [0.0, 2.0],
+  "filter_freq": [500.0, 8000.0],
+  "base_frequency": [430.0, 450.0],
+  "amplitude": [-1.0, 1.0],
+  "frequency_mult": [0.5, 10.0],
+  "decay_ms": [50.0, 400.0],
+  "harmonic_gain": [0.0, 1.0]
+}
+```
+
+Every key is optional and holds a `[min, max]` pair; an omitted key keeps the
+default bound, so narrowing a single dimension needs a one-line file:
+
+```bash
+glockenspiel fit \
+  --reference testdata/reference/legacy_synth_a4.wav \
+  --output out/fitted-a4.json \
+  --bounds bounds/a4.json
+```
+
+Unknown keys, non-finite numbers and ranges whose minimum is not below their
+maximum are rejected.
 
 ### Choosing Optimizer And Metric
 

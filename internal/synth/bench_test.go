@@ -19,10 +19,12 @@ func BenchmarkRenderNoteDefaultA4(b *testing.B) {
 	}
 
 	const duration = 2.0
+
 	sampleCount := int(duration * 44100)
 
 	b.ReportAllocs()
 	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
 		_ = engine.RenderNote(69, 100, duration)
 	}
@@ -61,12 +63,15 @@ func BenchmarkRealtimeEngineRetriggeredC5(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
 		engine := NewRealtimeEngine(synthesizer)
+
 		for frame := 0; frame < totalFrames; frame += blockFrames {
 			if _, ok := triggerFrames[frame]; ok {
 				engine.NoteOn(note, velocity)
 			}
+
 			_ = engine.ProcessBlock(blockFrames)
 		}
 	}
@@ -107,12 +112,15 @@ func BenchmarkRealtimeEnginePolyphonicPattern(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
 		engine := NewRealtimeEngine(synthesizer)
+
 		for frame := 0; frame < totalFrames; frame += blockFrames {
 			if note, ok := pattern[frame]; ok {
 				engine.NoteOn(note, velocity)
 			}
+
 			_ = engine.ProcessBlock(blockFrames)
 		}
 	}

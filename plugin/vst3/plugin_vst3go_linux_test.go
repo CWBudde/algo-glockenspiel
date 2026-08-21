@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	frameworkprocess "github.com/cwbudde/vst3go/pkg/framework/process"
-	_ "github.com/cwbudde/vst3go/pkg/plugin/cbridge"
 	"github.com/cwbudde/vst3go/pkg/midi"
+	_ "github.com/cwbudde/vst3go/pkg/plugin/cbridge"
 )
 
 func TestNewProcessorRegistersAllParameters(t *testing.T) {

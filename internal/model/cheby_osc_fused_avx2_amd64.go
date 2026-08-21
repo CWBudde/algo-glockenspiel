@@ -20,6 +20,7 @@ func processChebyshev4OscillatorBlockAVX2(o *QuadDecayOscillator, input, output 
 		&output[0],
 		len(input),
 	)
+
 	return true
 }
 

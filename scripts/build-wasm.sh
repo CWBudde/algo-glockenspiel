@@ -8,9 +8,9 @@ mkdir -p "${GOCACHE:-/tmp/gocache}" "${GOMODCACHE:-/tmp/gomodcache}"
 
 echo "Compiling Go to WASM..."
 GOCACHE="${GOCACHE:-/tmp/gocache}" \
-GOMODCACHE="${GOMODCACHE:-/tmp/gomodcache}" \
-GOOS=js GOARCH=wasm \
-go build -o web/dist/glockenspiel.wasm ./cmd/glockenspiel-wasm
+	GOMODCACHE="${GOMODCACHE:-/tmp/gomodcache}" \
+	GOOS=js GOARCH=wasm \
+	go build -o web/dist/glockenspiel.wasm ./cmd/glockenspiel-wasm
 
 echo "Copying wasm_exec.js..."
 GOROOT=$(go env GOROOT)

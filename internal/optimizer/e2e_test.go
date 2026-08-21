@@ -1,10 +1,10 @@
 package optimizer
 
 import (
+	"context"
 	"math"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/cwbudde/glockenspiel/internal/model"
 	"github.com/cwbudde/glockenspiel/internal/preset"
@@ -41,15 +41,17 @@ func TestOptimizationRecoversSyntheticReferenceWithinTolerance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncodeParams failed: %v", err)
 	}
+
 	initialCost := objective.Evaluate(initialEncoded)
 
 	result, err := (&SimpleOptimizer{
 		AbsoluteTolerance: 1e-12,
 		RelativeTolerance: 1e-12,
 		StallIterations:   40,
-	}).Optimize(objective.Objective(), initialEncoded, objective.Codec().EncodedBounds(), OptimizeOptions{
+	}).Optimize(context.Background(), objective.Objective(), initialEncoded, objective.Codec().EncodedBounds(), OptimizeOptions{
+		// Bounded by iterations only: pairing a wall-clock budget with a
+		// solution-quality assertion makes the test fail on a loaded runner.
 		MaxIterations: 120,
-		TimeBudget:    2 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("Optimize failed: %v", err)
@@ -58,6 +60,7 @@ func TestOptimizationRecoversSyntheticReferenceWithinTolerance(t *testing.T) {
 	if !(result.BestCost < initialCost) {
 		t.Fatalf("expected optimization to improve cost: initial=%g best=%g", initialCost, result.BestCost)
 	}
+
 	if !(result.BestCost <= initialCost*0.98) {
 		t.Fatalf("expected material cost improvement: initial=%g best=%g", initialCost, result.BestCost)
 	}
@@ -89,10 +92,11 @@ func TestOptimizationRespectsBoundsForEdgeCaseInitialConditions(t *testing.T) {
 	}
 
 	result, err := (&SimpleOptimizer{}).Optimize(
+		context.Background(),
 		objective.Objective(),
 		initialEncoded,
 		objective.Codec().EncodedBounds(),
-		OptimizeOptions{MaxIterations: 40, TimeBudget: 1500 * time.Millisecond},
+		OptimizeOptions{MaxIterations: 40},
 	)
 	if err != nil {
 		t.Fatalf("Optimize failed: %v", err)
@@ -158,11 +162,13 @@ func narrowBoundsAroundTarget(target *model.BarParams) ParamBounds {
 		DecayMs:       Range{Min: 60, Max: 220},
 		HarmonicGain:  Range{Min: model.HarmonicGainMin, Max: model.HarmonicGainMax},
 	}
+
 	return bounds
 }
 
 func assertCloseWithin(t *testing.T, got, want, tol float64, label string) {
 	t.Helper()
+
 	if math.Abs(got-want) > tol {
 		t.Fatalf("%s mismatch: got %.6f want %.6f tol %.6f", label, got, want, tol)
 	}

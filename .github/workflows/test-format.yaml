@@ -1,0 +1,37 @@
+name: test-format
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test-format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Go-Version
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install golangci-lint
+        # Install the prebuilt binary rather than `go install`: recent
+        # golangci-lint releases require a newer Go than go.mod pins, and
+        # setup-go sets GOTOOLCHAIN=local, so building it from source fails.
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh |
+            sh -s -- -b "$(go env GOPATH)/bin"
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+
+      - name: Check Go formatting
+        # `fmt --diff` reports what the formatters would change and exits
+        # non-zero, without rewriting the tree.
+        run: golangci-lint fmt --diff
+
+      - name: Check web formatting
+        run: npx --yes prettier@3 --check "web/**/*.{js,css,html}" "plugin/**/ui/*.{js,html}"

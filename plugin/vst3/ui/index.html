@@ -10,7 +10,11 @@
     <main class="studio-shell">
       <header class="studio-topbar">
         <div class="brand">
-          <img src="../../../web/assets/glockenmark.svg" alt="" class="brand-mark" />
+          <img
+            src="../../../web/assets/glockenmark.svg"
+            alt=""
+            class="brand-mark"
+          />
           <div>
             <p class="brand-kicker">Plugin Editor Mockup</p>
             <h1>Algo Glockenspiel VST3</h1>
@@ -32,7 +36,9 @@
 
         <button type="button" class="preset-action" disabled>Save</button>
         <button type="button" class="preset-action" disabled>Load</button>
-        <p class="preset-note">Shared visual shell for the future plugin editor.</p>
+        <p class="preset-note">
+          Shared visual shell for the future plugin editor.
+        </p>
       </section>
 
       <section class="instrument-card">
@@ -41,7 +47,14 @@
             <label class="dial-control" for="gain">
               <span class="dial-label">Volume</span>
               <div class="dial-assembly">
-                <input id="gain" class="dial-input" type="range" min="10" max="100" value="70" />
+                <input
+                  id="gain"
+                  class="dial-input"
+                  type="range"
+                  min="10"
+                  max="100"
+                  value="70"
+                />
                 <div class="dial-face" data-dial-face>
                   <div class="dial-indicator"></div>
                 </div>
@@ -52,7 +65,14 @@
             <label class="dial-control" for="velocity">
               <span class="dial-label">Velocity</span>
               <div class="dial-assembly dial-assembly-small">
-                <input id="velocity" class="dial-input" type="range" min="1" max="127" value="96" />
+                <input
+                  id="velocity"
+                  class="dial-input"
+                  type="range"
+                  min="1"
+                  max="127"
+                  value="96"
+                />
                 <div class="dial-face" data-dial-face>
                   <div class="dial-indicator"></div>
                 </div>
@@ -60,10 +80,15 @@
               <output id="velocity-value" for="velocity">96</output>
             </label>
 
-            <p id="status" class="status-panel">Editor mockup. No audio engine attached.</p>
+            <p id="status" class="status-panel">
+              Editor mockup. No audio engine attached.
+            </p>
           </aside>
 
-          <section class="instrument-stage" aria-label="Glockenspiel editor view">
+          <section
+            class="instrument-stage"
+            aria-label="Glockenspiel editor view"
+          >
             <div class="rack-wrap">
               <div class="rack-shadow"></div>
               <div class="rack">
@@ -71,9 +96,19 @@
                 <div class="rail rail-sharp-front"></div>
                 <div class="rail rail-natural-back"></div>
                 <div class="rail rail-natural-front"></div>
-                <div class="note-lane note-lane-sharps" id="bars-accidental"></div>
-                <div class="note-lane note-lane-naturals" id="bars-natural"></div>
-                <img src="../../../web/assets/mallet.svg" alt="" class="mallet" />
+                <div
+                  class="note-lane note-lane-sharps"
+                  id="bars-accidental"
+                ></div>
+                <div
+                  class="note-lane note-lane-naturals"
+                  id="bars-natural"
+                ></div>
+                <img
+                  src="../../../web/assets/mallet.svg"
+                  alt=""
+                  class="mallet"
+                />
               </div>
             </div>
           </section>

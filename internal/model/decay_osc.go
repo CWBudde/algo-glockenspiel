@@ -298,6 +298,7 @@ func (o *QuadDecayOscillator) flushDenormals() {
 		if math.Abs(o.realState[i]) < flushDenormalFloor {
 			o.realState[i] = 0
 		}
+
 		if math.Abs(o.imagState[i]) < flushDenormalFloor {
 			o.imagState[i] = 0
 		}

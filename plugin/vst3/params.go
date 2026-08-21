@@ -42,14 +42,14 @@ type ParameterSpec struct {
 // Snapshot is the VST-facing parameter state that the future processor/controller
 // layer can exchange with the host.
 type Snapshot struct {
-	InputMix          float64
-	FilterFrequency   float64
-	BaseFrequency     float64
-	ChebyshevEnabled  bool
-	ChebyshevGains    [model.NumModes]float64
-	ModeAmplitude     [model.NumModes]float64
-	ModeFrequency     [model.NumModes]float64
-	ModeDecayMs       [model.NumModes]float64
+	InputMix         float64
+	FilterFrequency  float64
+	BaseFrequency    float64
+	ChebyshevEnabled bool
+	ChebyshevGains   [model.NumModes]float64
+	ModeAmplitude    [model.NumModes]float64
+	ModeFrequency    [model.NumModes]float64
+	ModeDecayMs      [model.NumModes]float64
 }
 
 var parameterSpecs = []ParameterSpec{
@@ -112,6 +112,7 @@ func SnapshotFromBarParams(params *model.BarParams) Snapshot {
 	for i := 0; i < model.NumModes; i++ {
 		snapshot.ModeAmplitude[i] = params.Modes[i].Amplitude
 		snapshot.ModeFrequency[i] = params.Modes[i].Frequency
+
 		snapshot.ModeDecayMs[i] = params.Modes[i].DecayMs
 		if i < len(params.Chebyshev.HarmonicGains) {
 			snapshot.ChebyshevGains[i] = params.Chebyshev.HarmonicGains[i]
@@ -124,6 +125,7 @@ func SnapshotFromBarParams(params *model.BarParams) Snapshot {
 // ToBarParams projects plugin-facing parameter state back into model parameters.
 func (s Snapshot) ToBarParams() model.BarParams {
 	var params model.BarParams
+
 	params.InputMix = s.InputMix
 	params.FilterFrequency = s.FilterFrequency
 	params.BaseFrequency = s.BaseFrequency

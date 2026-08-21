@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cwbudde/glockenspiel/internal/preset"
 	"github.com/cwbudde/glockenspiel/internal/synth"
 	"github.com/go-audio/audio"
 	"github.com/go-audio/wav"
@@ -26,7 +25,6 @@ type synthOptions struct {
 
 func newSynthCmd() *cobra.Command {
 	options := synthOptions{
-		presetPath: filepath.FromSlash("assets/presets/default.json"),
 		outputPath: "output.wav",
 		note:       69,
 		velocity:   100,
@@ -40,13 +38,19 @@ func newSynthCmd() *cobra.Command {
 		Use:   "synth",
 		Short: "Synthesize audio from a preset",
 		Long:  "Generate a synthesized glockenspiel note and write it as a mono WAV file.",
+		Example: `  # Render A4 from the built-in preset
+  glockenspiel synth --output a4.wav
+
+  # Render a longer note from a custom preset, trimming the silent tail
+  glockenspiel synth --preset my-preset.json --note 84 --duration 4 --auto-stop --output c6.wav`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSynth(cmd, options)
 		},
 	}
 
 	flags := cmd.Flags()
-	flags.StringVar(&options.presetPath, "preset", options.presetPath, "Path to preset JSON file")
+	flags.StringVar(&options.presetPath, "preset", options.presetPath, "Path to preset JSON file (default: built-in preset)")
 	flags.StringVar(&options.outputPath, "output", options.outputPath, "Path to output WAV file")
 	flags.IntVar(&options.note, "note", options.note, "MIDI note number to render")
 	flags.IntVar(&options.velocity, "velocity", options.velocity, "MIDI velocity (0-127)")
@@ -75,7 +79,7 @@ func runSynth(cmd *cobra.Command, options synthOptions) error {
 		return fmt.Errorf("sample-rate must be positive, got %d", options.sampleRate)
 	}
 
-	loadedPreset, err := preset.Load(options.presetPath)
+	loadedPreset, err := loadPresetOrDefault(options.presetPath)
 	if err != nil {
 		return err
 	}

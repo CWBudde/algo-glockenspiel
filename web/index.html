@@ -41,7 +41,9 @@
 
         <button type="button" class="preset-action" disabled>Save</button>
         <button type="button" class="preset-action" disabled>Load</button>
-        <p class="preset-note" id="wood-note">Preset browser wiring is still pending.</p>
+        <p class="preset-note" id="wood-note">
+          Preset browser wiring is still pending.
+        </p>
       </section>
 
       <section class="instrument-card">
@@ -50,7 +52,14 @@
             <label class="dial-control" for="gain">
               <span class="dial-label">Volume</span>
               <div class="dial-assembly">
-                <input id="gain" class="dial-input" type="range" min="10" max="100" value="70" />
+                <input
+                  id="gain"
+                  class="dial-input"
+                  type="range"
+                  min="10"
+                  max="100"
+                  value="70"
+                />
                 <div class="dial-face" data-dial-face>
                   <div class="dial-indicator"></div>
                 </div>
@@ -61,7 +70,14 @@
             <label class="dial-control" for="velocity">
               <span class="dial-label">Velocity</span>
               <div class="dial-assembly dial-assembly-small">
-                <input id="velocity" class="dial-input" type="range" min="1" max="127" value="96" />
+                <input
+                  id="velocity"
+                  class="dial-input"
+                  type="range"
+                  min="1"
+                  max="127"
+                  value="96"
+                />
                 <div class="dial-face" data-dial-face>
                   <div class="dial-indicator"></div>
                 </div>
@@ -80,8 +96,14 @@
                 <div class="rail rail-sharp-front"></div>
                 <div class="rail rail-natural-back"></div>
                 <div class="rail rail-natural-front"></div>
-                <div class="note-lane note-lane-sharps" id="bars-accidental"></div>
-                <div class="note-lane note-lane-naturals" id="bars-natural"></div>
+                <div
+                  class="note-lane note-lane-sharps"
+                  id="bars-accidental"
+                ></div>
+                <div
+                  class="note-lane note-lane-naturals"
+                  id="bars-natural"
+                ></div>
                 <img src="assets/mallet.svg" alt="" class="mallet" />
               </div>
             </div>

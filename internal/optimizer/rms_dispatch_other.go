@@ -3,5 +3,9 @@
 package optimizer
 
 func squaredDiffSum(synth, ref []float32) float64 {
-	return squaredDiffSumGeneric(synth, ref)
+	if len(ref) < len(synth) {
+		synth = synth[:len(ref)]
+	}
+
+	return squaredDiffSumGeneric(synth, ref[:len(synth)])
 }

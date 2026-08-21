@@ -52,47 +52,16 @@ func (r Range) Denormalize(value float64) float64 {
 	if r.Max == r.Min {
 		return r.Min
 	}
+
 	if value < 0 {
 		value = 0
 	}
+
 	if value > 1 {
 		value = 1
 	}
 
 	return r.Min + value*(r.Max-r.Min)
-}
-
-// Mirror reflects v into the range.
-func (r Range) Mirror(value float64) float64 {
-	if math.IsNaN(value) {
-		return r.Min
-	}
-
-	if math.IsInf(value, 0) {
-		return r.Clamp(value)
-	}
-
-	if r.Min == r.Max {
-		return r.Min
-	}
-
-	width := r.Max - r.Min
-	for value < r.Min || value > r.Max {
-		if value < r.Min {
-			value = r.Min + (r.Min - value)
-			continue
-		}
-
-		if value > r.Max {
-			value = r.Max - (value - r.Max)
-		}
-
-		if width == 0 {
-			return r.Min
-		}
-	}
-
-	return value
 }
 
 // Bounds describes the encoded vector bounds.
@@ -143,18 +112,48 @@ func (b Bounds) Clamp(values []float64) ([]float64, error) {
 	return clamped, nil
 }
 
-// Mirror returns a reflected copy of values.
-func (b Bounds) Mirror(values []float64) ([]float64, error) {
+// Normalize maps an encoded vector into the unit cube [0,1]^n.
+//
+// Both optimizer backends search the unit cube rather than raw encoded units:
+// encoded widths differ by orders of magnitude (amplitude spans 4, log-decay
+// less than 4 decades), so a single step size is meaningless in raw units and
+// degenerate along the widest axis.
+func (b Bounds) Normalize(values []float64) ([]float64, error) {
 	if err := b.CheckVector(values); err != nil {
 		return nil, err
 	}
 
-	mirrored := make([]float64, len(values))
+	normalized := make([]float64, len(values))
 	for i, v := range values {
-		mirrored[i] = b.Ranges[i].Mirror(v)
+		normalized[i] = b.Ranges[i].Normalize(v)
 	}
 
-	return mirrored, nil
+	return normalized, nil
+}
+
+// Denormalize maps a unit-cube vector back into encoded units. Components
+// outside [0,1] are clamped, so the result always satisfies the bounds.
+func (b Bounds) Denormalize(values []float64) ([]float64, error) {
+	if len(values) != len(b.Ranges) {
+		return nil, fmt.Errorf("expected vector length %d, got %d", len(b.Ranges), len(values))
+	}
+
+	denormalized := make([]float64, len(values))
+	for i, v := range values {
+		denormalized[i] = b.Ranges[i].Denormalize(v)
+	}
+
+	return denormalized, nil
+}
+
+// UnitBounds returns bounds describing the unit cube of the given dimension.
+func UnitBounds(dimension int) Bounds {
+	ranges := make([]Range, dimension)
+	for i := range ranges {
+		ranges[i] = Range{Min: 0, Max: 1}
+	}
+
+	return Bounds{Ranges: ranges}
 }
 
 // ParamBounds defines optimizer bounds in model-space.
@@ -191,8 +190,21 @@ func NewParamCodec(params *model.BarParams) (*ParamCodec, error) {
 	return NewParamCodecWithBounds(params, DefaultParamBounds)
 }
 
-// NewParamCodecWithBounds builds a codec using explicit model-space bounds.
+// NewParamCodecWithBounds builds a codec using explicit model-space bounds,
+// widening them where the template parameters fall outside.
 func NewParamCodecWithBounds(params *model.BarParams, bounds ParamBounds) (*ParamCodec, error) {
+	return newParamCodec(params, bounds, false)
+}
+
+// NewParamCodecWithStrictBounds builds a codec that treats the bounds as a hard
+// constraint. Template parameters outside the box are not allowed to widen it;
+// the encoded starting point is clamped into it instead, so the search -- and
+// the decoded result -- stay within the range the caller asked for.
+func NewParamCodecWithStrictBounds(params *model.BarParams, bounds ParamBounds) (*ParamCodec, error) {
+	return newParamCodec(params, bounds, true)
+}
+
+func newParamCodec(params *model.BarParams, bounds ParamBounds, strict bool) (*ParamCodec, error) {
 	if err := model.ValidateBarParams(params); err != nil {
 		return nil, err
 	}
@@ -201,7 +213,9 @@ func NewParamCodecWithBounds(params *model.BarParams, bounds ParamBounds) (*Para
 		return nil, err
 	}
 
-	bounds = bounds.expandToInclude(params)
+	if !strict {
+		bounds = bounds.expandToInclude(params)
+	}
 
 	return &ParamCodec{
 		harmonicCount:    len(params.Chebyshev.HarmonicGains),
@@ -230,7 +244,7 @@ func (b ParamBounds) Validate() error {
 			return fmt.Errorf("%s bounds invalid: min %g > max %g", name, valueRange.Min, valueRange.Max)
 		}
 
-		if valueRange.Min <= 0 && (name == "filter_freq" || name == "base_frequency" || name == "frequency_mult") {
+		if valueRange.Min <= 0 && (name == "filter_freq" || name == "base_frequency" || name == "frequency_mult" || name == "decay_ms") {
 			return fmt.Errorf("%s bounds must be > 0 for log encoding", name)
 		}
 	}
@@ -268,16 +282,18 @@ func (c *ParamCodec) Dimension() int {
 func (c *ParamCodec) EncodedBounds() Bounds {
 	ranges := make([]Range, 0, c.Dimension())
 
-	ranges = append(ranges,
+	ranges = append(
+		ranges,
 		c.bounds.InputMix,
 		logRange(c.bounds.FilterFreq),
 		logRange(c.bounds.BaseFrequency),
 	)
 	for range model.NumModes {
-		ranges = append(ranges,
+		ranges = append(
+			ranges,
 			c.bounds.Amplitude,
 			logRange(c.bounds.FrequencyMult),
-			c.bounds.DecayMs,
+			logRange(c.bounds.DecayMs),
 		)
 	}
 
@@ -300,20 +316,25 @@ func (c *ParamCodec) EncodeParams(params *model.BarParams) ([]float64, error) {
 
 	encoded := make([]float64, 0, c.Dimension())
 
-	encoded = append(encoded,
+	encoded = append(
+		encoded,
 		params.InputMix,
 		math.Log10(params.FilterFrequency),
 		math.Log10(params.BaseFrequency),
 	)
 	for _, mode := range params.Modes {
-		if mode.Frequency <= 0 || params.BaseFrequency <= 0 {
-			return nil, fmt.Errorf("mode frequency and base frequency must be > 0")
+		// Decay is log-encoded like the frequencies: a decay constant is a
+		// ratio-scale quantity, so 10ms->20ms must cost the same search step as
+		// 200ms->400ms.
+		if mode.Frequency <= 0 || params.BaseFrequency <= 0 || mode.DecayMs <= 0 {
+			return nil, fmt.Errorf("mode frequency, base frequency and decay must be > 0")
 		}
 
-		encoded = append(encoded,
+		encoded = append(
+			encoded,
 			mode.Amplitude,
 			math.Log10(mode.Frequency/params.BaseFrequency),
-			mode.DecayMs,
+			math.Log10(mode.DecayMs),
 		)
 	}
 
@@ -349,7 +370,7 @@ func (c *ParamCodec) DecodeParams(encoded []float64) (*model.BarParams, error) {
 		params.Modes[i] = model.ModeParams{
 			Amplitude: bounded[index],
 			Frequency: baseFrequency * math.Pow(10, bounded[index+1]),
-			DecayMs:   bounded[index+2],
+			DecayMs:   math.Pow(10, bounded[index+2]),
 		}
 		index += 3
 	}

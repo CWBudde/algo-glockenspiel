@@ -1,8 +1,11 @@
 package optimizer
 
 import (
+	"context"
 	"math"
 	"testing"
+
+	gonumoptimize "gonum.org/v1/gonum/optimize"
 )
 
 func TestSimpleOptimizerFindsKnownMinimum(t *testing.T) {
@@ -17,7 +20,7 @@ func TestSimpleOptimizerFindsKnownMinimum(t *testing.T) {
 		{Min: -10, Max: 10},
 	}}
 
-	result, err := opt.Optimize(func(x []float64) float64 {
+	result, err := opt.Optimize(context.Background(), func(x []float64) float64 {
 		return square(x[0]-1.25) + square(x[1]+2.5)
 	}, initial, bounds, OptimizeOptions{MaxIterations: 300})
 	if err != nil {
@@ -44,7 +47,7 @@ func TestSimpleOptimizerReportsProgress(t *testing.T) {
 
 	var updates []Progress
 
-	_, err := opt.Optimize(func(x []float64) float64 {
+	_, err := opt.Optimize(context.Background(), func(x []float64) float64 {
 		return square(x[0] - 3)
 	}, initial, bounds, OptimizeOptions{
 		MaxIterations: 100,
@@ -78,19 +81,105 @@ func TestSimpleOptimizerStopsAtIterationLimit(t *testing.T) {
 		{Min: -10, Max: 10},
 	}}
 
-	result, err := opt.Optimize(func(x []float64) float64 {
+	result, err := opt.Optimize(context.Background(), func(x []float64) float64 {
 		return square(x[0]-2) + 0.5*square(x[1]+1)
 	}, initial, bounds, OptimizeOptions{MaxIterations: 1})
 	if err != nil {
 		t.Fatalf("Optimize failed: %v", err)
 	}
 
-	if result.StopReason != "IterationLimit" {
+	// Compare against the typed status rather than a hand-written literal, so
+	// a gonum rename shows up as a build failure instead of a flaky assertion.
+	if result.StopReason != gonumoptimize.IterationLimit.String() {
 		t.Fatalf("expected iteration limit stop, got %q", result.StopReason)
 	}
 
 	if result.Converged {
 		t.Fatal("expected iteration limit to be non-converged")
+	}
+}
+
+// TestSimpleOptimizerResultParamsMatchCost guards the bug where the gonum
+// recorder stored an unmirrored simplex point while the objective closure
+// stored the mirrored one, so BestParams could belong to a different point than
+// BestCost - and could even be out of bounds.
+func TestSimpleOptimizerResultParamsMatchCost(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{
+		{Min: -1, Max: 1},
+		{Min: 100, Max: 600},
+	}}
+	objective := func(x []float64) float64 {
+		return square(x[0]-0.4) + square((x[1]-480)/100)
+	}
+
+	result, err := (&SimpleOptimizer{}).Optimize(context.Background(), objective,
+		[]float64{-0.9, 120}, bounds, OptimizeOptions{MaxIterations: 200})
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if !bounds.Contains(result.BestParams) {
+		t.Fatalf("result escaped bounds: %v", result.BestParams)
+	}
+
+	if recomputed := objective(result.BestParams); math.Abs(recomputed-result.BestCost) > 1e-12 {
+		t.Fatalf("BestCost does not belong to BestParams: reported=%g recomputed=%g", result.BestCost, recomputed)
+	}
+}
+
+// TestSimpleOptimizerSearchesNormalizedSpace covers the axis-scaling defect: in
+// raw encoded units the default simplex step is degenerate along a wide axis,
+// so the wide parameter never moves.
+func TestSimpleOptimizerSearchesNormalizedSpace(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{
+		{Min: 0, Max: 4},
+		{Min: 0.1, Max: 500},
+	}}
+	initial := []float64{1, 20}
+	target := []float64{2.5, 400}
+
+	objective := func(x []float64) float64 {
+		return square(x[0]-target[0]) + square(x[1]-target[1])
+	}
+
+	result, err := (&SimpleOptimizer{}).Optimize(context.Background(), objective,
+		initial, bounds, OptimizeOptions{MaxIterations: 400})
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if math.Abs(result.BestParams[1]-target[1]) > 1 {
+		t.Fatalf("wide axis barely moved: got %g want %g", result.BestParams[1], target[1])
+	}
+}
+
+func TestSimpleOptimizerStopsOnCanceledContext(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}}}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	calls := 0
+
+	result, err := (&SimpleOptimizer{}).Optimize(ctx, func(x []float64) float64 {
+		calls++
+		if calls > 10 {
+			cancel()
+		}
+
+		return square(x[0] - 3)
+	}, []float64{9}, bounds, OptimizeOptions{MaxIterations: 100000})
+
+	cancel()
+
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if result.StopReason != "context_canceled" {
+		t.Fatalf("unexpected stop reason: %q", result.StopReason)
+	}
+
+	if result.Converged {
+		t.Fatal("a canceled run has not converged")
 	}
 }
 

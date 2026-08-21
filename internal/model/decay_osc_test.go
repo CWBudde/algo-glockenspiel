@@ -193,13 +193,16 @@ func BenchmarkProcessModeBlock4AVX2(b *testing.B) {
 	osc := NewQuadDecayOscillator(48000)
 	mode := 1
 	osc.SetMode(mode, 0.41, 1275, 145)
+
 	input := [4]float32{0.35, -0.2, 0.1, 0.45}
 	output := [4]float64{}
 
 	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
 		realState := osc.realState[mode]
 		imagState := osc.imagState[mode]
+
 		amplitude := osc.amplitude[mode]
 		if !processModeBlock4AVX2(&realState, &imagState, &amplitude, &osc.block4Coeff[mode], &input, &output) {
 			b.Fatal("expected AVX2 mode-block path to be active")
@@ -222,10 +225,12 @@ func BenchmarkQuadDecayOscillatorProcessBlock32ModeBlock4PrototypeAVX2(b *testin
 	input[0] = 1
 
 	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
 		if !processBlock32ModeBlock4PrototypeAVX2(osc, input, out) {
 			b.Fatal("expected mode-block prototype path to be active")
 		}
+
 		input[0] = 0
 	}
 }
@@ -245,10 +250,12 @@ func BenchmarkQuadDecayOscillatorProcessBlock32ModeBlock4KernelAVX2(b *testing.B
 	input[0] = 1
 
 	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
 		if !processBlock32ModeBlock4KernelAVX2(osc, input, out) {
 			b.Fatal("expected mode-block kernel path to be active")
 		}
+
 		input[0] = 0
 	}
 }
@@ -260,6 +267,7 @@ func TestQuadDecayOscillatorProcessBlock32AVX2MatchesGeneric(t *testing.T) {
 
 	avx := NewQuadDecayOscillator(48000)
 	gen := NewQuadDecayOscillator(48000)
+
 	for i := 0; i < NumModes; i++ {
 		freq := float64(400 + 275*i)
 		amp := 0.25 + float64(i)*0.15
@@ -276,12 +284,14 @@ func TestQuadDecayOscillatorProcessBlock32AVX2MatchesGeneric(t *testing.T) {
 	for i := range input {
 		input[i] = float32(math.Sin(float64(i)*0.11) * 0.4)
 	}
+
 	avxOut := make([]float32, len(input))
 	genOut := make([]float32, len(input))
 
 	if !processBlock32AVX2(avx, input, avxOut) {
 		t.Fatal("expected AVX2 block path to be active")
 	}
+
 	gen.processBlock32Generic(input, genOut)
 
 	for i := range input {
@@ -294,6 +304,7 @@ func TestQuadDecayOscillatorProcessBlock32AVX2MatchesGeneric(t *testing.T) {
 		if !approxEqual(avx.realState[i], gen.realState[i], 1e-9) {
 			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, avx.realState[i], gen.realState[i])
 		}
+
 		if !approxEqual(avx.imagState[i], gen.imagState[i], 1e-9) {
 			t.Fatalf("imag state mismatch at mode %d: got %.12f want %.12f", i, avx.imagState[i], gen.imagState[i])
 		}
@@ -307,6 +318,7 @@ func TestQuadDecayOscillatorProcessBlock32ModeBlock4PrototypeMatchesGeneric(t *t
 
 	avx := NewQuadDecayOscillator(48000)
 	gen := NewQuadDecayOscillator(48000)
+
 	for i := 0; i < NumModes; i++ {
 		freq := float64(400 + 275*i)
 		amp := 0.25 + float64(i)*0.15
@@ -319,12 +331,14 @@ func TestQuadDecayOscillatorProcessBlock32ModeBlock4PrototypeMatchesGeneric(t *t
 	for i := range input {
 		input[i] = float32(math.Sin(float64(i)*0.11) * 0.4)
 	}
+
 	avxOut := make([]float32, len(input))
 	genOut := make([]float32, len(input))
 
 	if !processBlock32ModeBlock4PrototypeAVX2(avx, input, avxOut) {
 		t.Fatal("expected mode-block prototype path to be active")
 	}
+
 	gen.processBlock32Generic(input, genOut)
 
 	for i := range input {
@@ -337,6 +351,7 @@ func TestQuadDecayOscillatorProcessBlock32ModeBlock4PrototypeMatchesGeneric(t *t
 		if !approxEqual(avx.realState[i], gen.realState[i], 1e-9) {
 			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, avx.realState[i], gen.realState[i])
 		}
+
 		if !approxEqual(avx.imagState[i], gen.imagState[i], 1e-9) {
 			t.Fatalf("imag state mismatch at mode %d: got %.12f want %.12f", i, avx.imagState[i], gen.imagState[i])
 		}
@@ -350,6 +365,7 @@ func TestQuadDecayOscillatorProcessBlock32ModeBlock4KernelMatchesGeneric(t *test
 
 	avx := NewQuadDecayOscillator(48000)
 	gen := NewQuadDecayOscillator(48000)
+
 	for i := 0; i < NumModes; i++ {
 		freq := float64(400 + 275*i)
 		amp := 0.25 + float64(i)*0.15
@@ -362,12 +378,14 @@ func TestQuadDecayOscillatorProcessBlock32ModeBlock4KernelMatchesGeneric(t *test
 	for i := range input {
 		input[i] = float32(math.Sin(float64(i)*0.11) * 0.4)
 	}
+
 	avxOut := make([]float32, len(input))
 	genOut := make([]float32, len(input))
 
 	if !processBlock32ModeBlock4KernelAVX2(avx, input, avxOut) {
 		t.Fatal("expected mode-block kernel path to be active")
 	}
+
 	gen.processBlock32Generic(input, genOut)
 
 	for i := range input {
@@ -380,6 +398,7 @@ func TestQuadDecayOscillatorProcessBlock32ModeBlock4KernelMatchesGeneric(t *test
 		if !approxEqual(avx.realState[i], gen.realState[i], 1e-9) {
 			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, avx.realState[i], gen.realState[i])
 		}
+
 		if !approxEqual(avx.imagState[i], gen.imagState[i], 1e-9) {
 			t.Fatalf("imag state mismatch at mode %d: got %.12f want %.12f", i, avx.imagState[i], gen.imagState[i])
 		}
@@ -405,7 +424,9 @@ func TestProcessModeBlock4MatchesSampleBySample(t *testing.T) {
 	r, im := osc.realState[mode], osc.imagState[mode]
 	a, c, s := osc.amplitude[mode], osc.cosCoeff[mode], osc.sinCoeff[mode]
 	inputs := [4]float64{x0, x1, x2, x3}
+
 	var outputs [4]float64
+
 	for i, in := range inputs {
 		temp := im*c + r*s
 		r = r*c - im*s
@@ -416,18 +437,23 @@ func TestProcessModeBlock4MatchesSampleBySample(t *testing.T) {
 	if !approxEqual(block.out0, outputs[0], 1e-12) {
 		t.Fatalf("out0 mismatch: got %.15f want %.15f", block.out0, outputs[0])
 	}
+
 	if !approxEqual(block.out1, outputs[1], 1e-12) {
 		t.Fatalf("out1 mismatch: got %.15f want %.15f", block.out1, outputs[1])
 	}
+
 	if !approxEqual(block.out2, outputs[2], 1e-12) {
 		t.Fatalf("out2 mismatch: got %.15f want %.15f", block.out2, outputs[2])
 	}
+
 	if !approxEqual(block.out3, outputs[3], 1e-12) {
 		t.Fatalf("out3 mismatch: got %.15f want %.15f", block.out3, outputs[3])
 	}
+
 	if !approxEqual(block.real, r, 1e-12) {
 		t.Fatalf("real mismatch: got %.15f want %.15f", block.real, r)
 	}
+
 	if !approxEqual(block.imag, im, 1e-12) {
 		t.Fatalf("imag mismatch: got %.15f want %.15f", block.imag, im)
 	}
@@ -436,6 +462,7 @@ func TestProcessModeBlock4MatchesSampleBySample(t *testing.T) {
 func TestQuadDecayOscillatorProcessBlock32GenericMatchesSampleBySample(t *testing.T) {
 	gen := NewQuadDecayOscillator(48000)
 	ref := NewQuadDecayOscillator(48000)
+
 	for i := 0; i < NumModes; i++ {
 		freq := float64(410 + 235*i)
 		amp := 0.2 + float64(i)*0.17
@@ -448,10 +475,12 @@ func TestQuadDecayOscillatorProcessBlock32GenericMatchesSampleBySample(t *testin
 	for i := range input {
 		input[i] = float32(math.Sin(float64(i)*0.09) * 0.7)
 	}
+
 	got := make([]float32, len(input))
 	want := make([]float32, len(input))
 
 	gen.processBlock32Generic(input, got)
+
 	for i, in := range input {
 		want[i] = ref.ProcessSample32(in)
 	}
@@ -466,6 +495,7 @@ func TestQuadDecayOscillatorProcessBlock32GenericMatchesSampleBySample(t *testin
 		if !approxEqual(gen.realState[i], ref.realState[i], 1e-9) {
 			t.Fatalf("real state mismatch at mode %d: got %.12f want %.12f", i, gen.realState[i], ref.realState[i])
 		}
+
 		if !approxEqual(gen.imagState[i], ref.imagState[i], 1e-9) {
 			t.Fatalf("imag state mismatch at mode %d: got %.12f want %.12f", i, gen.imagState[i], ref.imagState[i])
 		}
@@ -501,6 +531,7 @@ func TestProcessModeBlock4AVX2MatchesScalar(t *testing.T) {
 	)
 
 	gotReal := realState
+
 	gotImag := imagState
 	if !processModeBlock4AVX2(&gotReal, &gotImag, &amplitude, &osc.block4Coeff[mode], &input, &output) {
 		t.Fatal("expected AVX2 mode-block path to be active")
@@ -509,18 +540,23 @@ func TestProcessModeBlock4AVX2MatchesScalar(t *testing.T) {
 	if !approxEqual(output[0], want.out0, 1e-12) {
 		t.Fatalf("out0 mismatch: got %.15f want %.15f", output[0], want.out0)
 	}
+
 	if !approxEqual(output[1], want.out1, 1e-12) {
 		t.Fatalf("out1 mismatch: got %.15f want %.15f", output[1], want.out1)
 	}
+
 	if !approxEqual(output[2], want.out2, 1e-12) {
 		t.Fatalf("out2 mismatch: got %.15f want %.15f", output[2], want.out2)
 	}
+
 	if !approxEqual(output[3], want.out3, 1e-12) {
 		t.Fatalf("out3 mismatch: got %.15f want %.15f", output[3], want.out3)
 	}
+
 	if !approxEqual(gotReal, want.real, 1e-12) {
 		t.Fatalf("real mismatch: got %.15f want %.15f", gotReal, want.real)
 	}
+
 	if !approxEqual(gotImag, want.imag, 1e-12) {
 		t.Fatalf("imag mismatch: got %.15f want %.15f", gotImag, want.imag)
 	}
