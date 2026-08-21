@@ -269,6 +269,19 @@ func TestMissingWasmExplainsTheFix(t *testing.T) {
 // they point at. net/http normalises "../" segments before the handler runs, so
 // this pins the outcome rather than the mechanism: whatever the status, the
 // content outside dist stays unreachable.
+// A subtree pattern would otherwise have ServeMux redirect "/dist" to
+// "/dist/"; the documentation promises a plain 404 for a directory.
+func TestDistDirectoryIsNotRedirected(t *testing.T) {
+	response := get(t, newTestServer(t, t.TempDir()).Handler(), "/dist")
+	defer func() {
+		_ = response.Body.Close()
+	}()
+
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", response.StatusCode)
+	}
+}
+
 func TestDistRefusesEscapingPaths(t *testing.T) {
 	distDir := t.TempDir()
 	outsideDir := filepath.Dir(distDir)
@@ -281,7 +294,19 @@ func TestDistRefusesEscapingPaths(t *testing.T) {
 
 	handler := newTestServer(t, distDir).Handler()
 
-	for _, target := range []string{"/dist/../outside.txt", "/dist/%2e%2e/outside.txt", "/dist/sub/../../outside.txt"} {
+	// The backslash forms matter on Windows, where filepath.Join would read
+	// the backslash as a separator again after net/http normalised only the
+	// forward slashes. They must be refused on every platform all the same.
+	targets := []string{
+		"/dist/../outside.txt",
+		"/dist/%2e%2e/outside.txt",
+		"/dist/sub/../../outside.txt",
+		"/dist/..%5coutside.txt",
+		"/dist/%2e%2e%5coutside.txt",
+		"/dist/%5c..%5coutside.txt",
+	}
+
+	for _, target := range targets {
 		response := get(t, handler, target)
 
 		body, err := io.ReadAll(response.Body)
@@ -447,4 +472,102 @@ func newTestServerWithRealTree(t *testing.T) *server.Server {
 	}
 
 	return srv
+}
+
+// A module rebuilt within the same second as the previous one must still be
+// downloaded again. HTTP dates carry whole seconds, so a modification-time
+// validator would answer 304 here and the browser would keep running the old
+// bytes; the ETag is derived from the content instead.
+func TestWasmRevalidatesByContentNotModTime(t *testing.T) {
+	distDir := t.TempDir()
+	wasmPath := filepath.Join(distDir, "glockenspiel.wasm")
+
+	if err := os.WriteFile(wasmPath, []byte("\x00asm-one"), 0o600); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+
+	handler := newTestServer(t, distDir).Handler()
+
+	first := get(t, handler, "/dist/glockenspiel.wasm")
+	_ = first.Body.Close()
+
+	etag := first.Header.Get("ETag")
+	if etag == "" {
+		t.Fatal("expected an ETag on the module")
+	}
+
+	// Unchanged content revalidates cheaply.
+	unchanged := getWithETag(t, handler, "/dist/glockenspiel.wasm", etag)
+	if unchanged.Code != http.StatusNotModified {
+		t.Fatalf("status = %d, want 304 for unchanged content", unchanged.Code)
+	}
+
+	// Rebuild in place, restoring the old modification time to imitate a
+	// rebuild that lands inside the same second.
+	info, err := os.Stat(wasmPath)
+	if err != nil {
+		t.Fatalf("stat wasm: %v", err)
+	}
+
+	if err := os.WriteFile(wasmPath, []byte("\x00asm-two"), 0o600); err != nil {
+		t.Fatalf("rewrite wasm: %v", err)
+	}
+
+	if err := os.Chtimes(wasmPath, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	rebuilt := getWithETag(t, handler, "/dist/glockenspiel.wasm", etag)
+	if rebuilt.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 after a same-second rebuild", rebuilt.Code)
+	}
+
+	if got := rebuilt.Body.String(); got != "\x00asm-two" {
+		t.Fatalf("body = %q, want the rebuilt module", got)
+	}
+}
+
+func getWithETag(t *testing.T, handler http.Handler, target, etag string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	request := httptest.NewRequest(http.MethodGet, target, nil)
+	request.Header.Set("If-None-Match", etag)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	return recorder
+}
+
+// Only a missing module points at `just build-web`. A module that is there but
+// unreadable is a different problem, and telling the user to rebuild it would
+// send them down the wrong path.
+func TestUnreadableWasmIsNotReportedAsMissing(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the permission bits this test relies on")
+	}
+
+	distDir := t.TempDir()
+	wasmPath := filepath.Join(distDir, "glockenspiel.wasm")
+
+	if err := os.WriteFile(wasmPath, []byte("\x00asm"), 0o000); err != nil {
+		t.Fatalf("write wasm: %v", err)
+	}
+
+	response := get(t, newTestServer(t, distDir).Handler(), "/dist/glockenspiel.wasm")
+
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	_ = response.Body.Close()
+
+	if response.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", response.StatusCode)
+	}
+
+	if strings.Contains(string(body), "just build-web") {
+		t.Fatalf("body = %q, want no rebuild advice for an unreadable module", body)
+	}
 }

@@ -51,8 +51,10 @@ const (
 	readHeaderTimeout = 10 * time.Second
 )
 
-// Config describes one server instance. The zero value is not usable; use New,
-// which validates it.
+// Config describes one server instance. The zero value is not usable: New
+// checks what it can check without opening a port -- that a static tree is
+// configured and that it carries an index page -- while Addr is only validated
+// when Run hands it to net.Listen.
 type Config struct {
 	// Addr is the listen address in net.Listen form, such as ":8080". An
 	// empty port (":0") is useful in tests: Run reports the chosen address.
@@ -142,7 +144,7 @@ func loadStaticAssets(files fs.FS) (map[string]staticAsset, error) {
 		assets[name] = staticAsset{
 			data:        data,
 			contentType: contentTypeFor(name),
-			etag:        `"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`,
+			etag:        formatETag(sum[:]),
 		}
 
 		return nil
@@ -152,6 +154,30 @@ func loadStaticAssets(files fs.FS) (map[string]staticAsset, error) {
 	}
 
 	return assets, nil
+}
+
+// etagForReader hashes the whole file and rewinds it, so that the validator
+// describes the bytes that are about to be served. One extra read pass over a
+// few megabytes is cheap next to serving them, and it is the only way to tell a
+// same-second rebuild apart from the version already in the browser cache.
+func etagForReader(file *os.File) (string, error) {
+	digest := sha256.New()
+
+	if _, err := io.Copy(digest, file); err != nil {
+		return "", fmt.Errorf("hash artifact: %w", err)
+	}
+
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("rewind artifact: %w", err)
+	}
+
+	return formatETag(digest.Sum(nil)), nil
+}
+
+// formatETag renders half a SHA-256 digest as a strong HTTP entity tag. Half is
+// plenty: the tag only has to distinguish builds, not resist forgery.
+func formatETag(sum []byte) string {
+	return `"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`
 }
 
 // MissingWasmError reports why the WebAssembly module cannot be served, or nil
@@ -180,6 +206,10 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.HandleFunc(distURLPrefix, s.handleDist)
+	// A subtree pattern makes ServeMux redirect "/dist" to "/dist/". Register
+	// the bare path as well so that a request for the directory is the plain
+	// 404 the documentation promises, rather than a 301 into a 404.
+	mux.HandleFunc(strings.TrimSuffix(distURLPrefix, "/"), http.NotFound)
 	mux.HandleFunc("/", s.handleStatic)
 
 	return mux
@@ -246,26 +276,38 @@ func (s *Server) handleDist(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	name := strings.TrimPrefix(request.URL.Path, distURLPrefix)
-	// path.Clean resolves any "." and ".." segments; net/http has already
-	// done so for the request path, and the check below refuses anything
-	// that still tries to climb out of the directory.
-	name = path.Clean("/" + name)[1:]
 
-	if name == "" || name == "." || strings.HasPrefix(name, "../") {
+	// net/http normalises "." and ".." out of the request path before a
+	// handler runs, but it only knows forward slashes. A percent-encoded
+	// backslash survives that pass, and on Windows filepath.Join would read it
+	// as a separator again, so containment is checked here with OS-native
+	// semantics rather than trusted from the URL: fs.ValidPath rejects
+	// anything that is not a clean, relative, slash-separated path,
+	// filepath.IsLocal rejects what the local OS would still read as an escape
+	// -- backslashes, drive letters, reserved device names -- and os.OpenInRoot
+	// refuses to leave the directory even through a symlink.
+	if !fs.ValidPath(name) || name == "." {
+		http.NotFound(writer, request)
+
+		return
+	}
+
+	localName := filepath.FromSlash(name)
+	if !filepath.IsLocal(localName) {
 		http.NotFound(writer, request)
 
 		return
 	}
 
 	if s.config.DistDir == "" {
-		s.writeMissingWasm(writer, request, name, errors.New("no dist directory configured"))
+		s.writeDistError(writer, request, name, fmt.Errorf("no dist directory configured: %w", fs.ErrNotExist))
 
 		return
 	}
 
-	file, err := os.Open(filepath.Join(s.config.DistDir, filepath.FromSlash(name)))
+	file, err := os.OpenInRoot(s.config.DistDir, localName)
 	if err != nil {
-		s.writeMissingWasm(writer, request, name, err)
+		s.writeDistError(writer, request, name, err)
 
 		return
 	}
@@ -281,20 +323,41 @@ func (s *Server) handleDist(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
+	// The validator is derived from the bytes, not from the modification
+	// time. scripts/build-wasm.sh rewrites the module in place under the same
+	// name, and HTTP dates have whole-second granularity, so a rebuild
+	// finished within the same second as the previous one would be answered
+	// with a 304 and the browser would keep running the old module.
+	etag, err := etagForReader(file)
+	if err != nil {
+		s.writeDistError(writer, request, name, err)
+
+		return
+	}
+
 	writer.Header().Set("Content-Type", contentTypeFor(name))
-	// The module is rebuilt in place under the same name by
-	// scripts/build-wasm.sh, so a cached copy must always be revalidated;
-	// ServeContent's Last-Modified handling makes that a 304 while the file
-	// is unchanged.
+	writer.Header().Set("ETag", etag)
 	writer.Header().Set("Cache-Control", "no-cache")
-	http.ServeContent(writer, request, name, info.ModTime(), file)
+	// A zero modtime suppresses Last-Modified, and with it the coarse
+	// If-Modified-Since path; the ETag above is the only validator.
+	http.ServeContent(writer, request, name, time.Time{}, file)
 }
 
-// writeMissingWasm answers a request for an artifact that is not on disk. For
-// the WebAssembly module itself the answer is a 503 carrying the fix, because a
-// bare 404 here means "you skipped a build step", not "wrong URL", and the
-// browser console would otherwise only show a failed fetch.
-func (s *Server) writeMissingWasm(writer http.ResponseWriter, request *http.Request, name string, cause error) {
+// writeDistError answers a request for an artifact that could not be opened.
+//
+// A missing module is the interesting case: it means a build step was skipped,
+// so it earns a 503 carrying the fix rather than a bare 404 that the browser
+// console would show as an anonymous failed fetch. Everything else -- a
+// permission problem, an I/O error, a symlink leaving the directory -- is not
+// fixed by rebuilding, so it must not send the user to `just build-web`.
+func (s *Server) writeDistError(writer http.ResponseWriter, request *http.Request, name string, cause error) {
+	if !errors.Is(cause, fs.ErrNotExist) {
+		s.logf("serving %s failed: %v", name, cause)
+		http.Error(writer, "the build artifact could not be read; see the server log", http.StatusInternalServerError)
+
+		return
+	}
+
 	if name != wasmFileName {
 		http.NotFound(writer, request)
 

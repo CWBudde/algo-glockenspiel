@@ -30,9 +30,10 @@ header. There are no directory listings: the server holds a map of known files,
 so a request for a directory is simply a `404`.
 
 Nothing is content-addressed yet, so every response carries `Cache-Control:
-no-cache`. Embedded files also carry an `ETag` derived from their content and
-the wasm carries the file's `Last-Modified`, which keeps a reload down to a
-`304` while nothing has changed. Fingerprinted asset names are Phase 5.3.
+no-cache`. Both the embedded files and the wasm additionally carry an `ETag`
+derived from their content, which keeps a reload down to a `304` while nothing
+has changed — and, unlike a modification time, still delivers a module that was
+rebuilt inside the same second. Fingerprinted asset names are Phase 5.3.
 
 ## What is embedded and what is not
 
@@ -57,6 +58,11 @@ there:
 - per request, as a `503` on `/dist/glockenspiel.wasm` carrying the same text,
   so the browser's network tab and console name the fix rather than showing an
   anonymous `404`.
+
+Only a _missing_ module is reported that way. A module that exists but cannot be
+read — wrong permissions, an I/O error, a symlink leading out of `--dist` — is a
+`500` with the real cause in the server log, because rebuilding would not fix
+any of those.
 
 The check runs per request, so a build finished while the server is running is
 picked up on the next reload; no restart is needed.
