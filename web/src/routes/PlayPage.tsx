@@ -40,12 +40,11 @@ export interface PlayPageProps {
 
 export function PlayPage({ engine, audio, gain, onGainChange }: PlayPageProps) {
   const [velocity, setVelocity] = useState(96);
-  const [species, setSpecies] = useState("beech");
   const { activeNotes, activate } = useNoteActivation();
 
   useEffect(() => {
-    applyWoodTexture(document.documentElement, species);
-  }, [species]);
+    applyWoodTexture(document.documentElement);
+  }, []);
 
   const { client } = engine;
   const { start, isReady } = audio;
@@ -141,8 +140,6 @@ export function PlayPage({ engine, audio, gain, onGainChange }: PlayPageProps) {
         onGainChange={onGainChange}
         velocity={velocity}
         onVelocityChange={setVelocity}
-        species={species}
-        onSpeciesChange={setSpecies}
         status={status}
         statusIsError={statusIsError}
       />

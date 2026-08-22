@@ -28,7 +28,23 @@ describe("wood textures", () => {
     expect(target.dataset.woodSpecies).toBe("oak");
   });
 
-  it("falls back to beech for an unknown species", () => {
+  it("uses walnut by default", () => {
+    const setProperty = vi.fn();
+    const target = {
+      style: { setProperty },
+      dataset: {},
+    } as unknown as HTMLElement;
+
+    applyWoodTexture(target);
+
+    expect(setProperty).toHaveBeenCalledWith(
+      "--wood-panel-texture",
+      expect.stringMatching(/^url\(".*walnut\.png"\)$/),
+    );
+    expect(target.dataset.woodSpecies).toBe("walnut");
+  });
+
+  it("falls back to walnut for an unknown species", () => {
     const setProperty = vi.fn();
     const target = {
       style: { setProperty },
@@ -39,8 +55,8 @@ describe("wood textures", () => {
 
     expect(setProperty).toHaveBeenCalledWith(
       "--wood-panel-texture",
-      expect.stringMatching(/^url\(".*beech\.png"\)$/),
+      expect.stringMatching(/^url\(".*walnut\.png"\)$/),
     );
-    expect(target.dataset.woodSpecies).toBe("beech");
+    expect(target.dataset.woodSpecies).toBe("walnut");
   });
 });

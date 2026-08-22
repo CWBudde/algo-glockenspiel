@@ -284,6 +284,27 @@ for (const viewport of [
   });
 }
 
+test("desktop rack caps at 1000px and stays centered", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await installStableEngine(page);
+  await page.goto("/#/play");
+
+  const rack = page.locator(".rack");
+  const card = page.locator(".instrument-card");
+  const [rackBox, cardBox] = await Promise.all([
+    rack.boundingBox(),
+    card.boundingBox(),
+  ]);
+
+  expect(rackBox).not.toBeNull();
+  expect(cardBox).not.toBeNull();
+  expect(rackBox!.width).toBeCloseTo(1000, 0);
+  expect(rackBox!.x + rackBox!.width / 2).toBeCloseTo(
+    cardBox!.x + cardBox!.width / 2,
+    0,
+  );
+});
+
 test("mobile playfield shares one aligned, reachable pitch viewport", async ({
   page,
 }) => {
@@ -418,22 +439,19 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
 
   const compactTargets = await page
     .getByRole("region", { name: "Performance controls" })
-    .locator(".dial-assembly, select")
+    .locator(".dial-assembly")
     .evaluateAll((elements) =>
       elements.map((element) => {
         const box = element.getBoundingClientRect();
         return { height: box.height, width: box.width };
       }),
     );
-  expect(compactTargets).toHaveLength(3);
+  expect(compactTargets).toHaveLength(2);
   expect(
     compactTargets.every(({ height, width }) => height >= 44 && width >= 44),
   ).toBe(true);
 
-  for (const panelSelector of [
-    ".control-deck-appearance",
-    ".control-deck-status",
-  ]) {
+  for (const panelSelector of [".control-deck-status"]) {
     const contained = await page.locator(panelSelector).evaluate((panel) => {
       const panelBox = panel.getBoundingClientRect();
       return [...panel.querySelectorAll("span, p, select")].every((element) => {
@@ -578,10 +596,6 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
   await viewport.evaluate((element) => {
     element.scrollLeft = 0;
   });
-  await page
-    .getByRole("region", { name: "Performance controls" })
-    .getByRole("combobox", { name: "Wood" })
-    .selectOption("maple");
   await expect
     .poll(() => viewport.evaluate((element) => element.scrollLeft))
     .toBe(0);
@@ -706,9 +720,17 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
   expect(rackBodyBox).not.toBeNull();
   expect(keyboardBox).not.toBeNull();
   expect(firstWhiteKeyBox).not.toBeNull();
-  expect(keyboardBox!.y - (rackBodyBox!.y + rackBodyBox!.height)).toBeLessThanOrEqual(
-    40,
-  );
+  expect(rackBodyBox!.width).toBeLessThanOrEqual(1000);
+  expect(
+    Math.abs(
+      rackBodyBox!.x +
+        rackBodyBox!.width / 2 -
+        (keyboardBox!.x + keyboardBox!.width / 2),
+    ),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    keyboardBox!.y - (rackBodyBox!.y + rackBodyBox!.height),
+  ).toBeLessThanOrEqual(40);
   expect(firstWhiteKeyBox!.y + firstWhiteKeyBox!.height).toBeLessThanOrEqual(
     768,
   );
@@ -724,9 +746,7 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
     expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(0.25);
     for (let index = 1; index < metrics.length; index += 1) {
       expect(metrics[index].top).toBeGreaterThan(metrics[index - 1].top);
-      expect(metrics[index].bottom).toBeLessThan(
-        metrics[index - 1].bottom,
-      );
+      expect(metrics[index].bottom).toBeLessThan(metrics[index - 1].bottom);
     }
     const first = metrics[0];
     const last = metrics.at(-1)!;
@@ -738,7 +758,9 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
   }
 
   const [naturalWidth, accidentalWidth] = await Promise.all([
-    naturals.first().evaluate((element) => element.getBoundingClientRect().width),
+    naturals
+      .first()
+      .evaluate((element) => element.getBoundingClientRect().width),
     accidentals
       .first()
       .evaluate((element) => element.getBoundingClientRect().width),
@@ -831,6 +853,7 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
   expect(layerOrder.mallet).toBeGreaterThan(layerOrder.accidental);
 
   const mallet = rack.locator(".mallet");
+  await expect(mallet).toHaveCSS("opacity", "1");
   const [malletBox, barBoxes, malletRackBox] = await Promise.all([
     mallet.boundingBox(),
     rack.locator(".bar").evaluateAll((elements) =>
@@ -856,9 +879,7 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
     0,
   );
   expect(
-    malletRackBox!.x +
-      malletRackBox!.width -
-      (malletBox!.x + malletBox!.width),
+    malletRackBox!.x + malletRackBox!.width - (malletBox!.x + malletBox!.width),
   ).toBeCloseTo(malletRackBox!.width * 0.03, 0);
   expect(
     barBoxes.some(
@@ -924,7 +945,6 @@ test("performance deck keeps native controls and live engine status", async ({
   const deck = page.getByRole("region", { name: "Performance controls" });
   const volume = deck.getByRole("slider", { name: "Volume" });
   const velocity = deck.getByRole("slider", { name: "Velocity" });
-  const wood = deck.getByRole("combobox", { name: "Wood" });
   const status = deck.locator(".status-panel");
 
   await expect(deck).toBeVisible();
@@ -957,11 +977,7 @@ test("performance deck keeps native controls and live engine status", async ({
   await expect(velocity).toHaveValue("110");
   await expect(deck.locator('output[for="velocity"]')).toHaveText("110");
 
-  await wood.selectOption("walnut");
-  await expect(wood).toHaveValue("walnut");
-  await expect(page.locator("#wood-description")).toHaveText(
-    "Dark semi-ring-porous walnut with restrained rays and soft curl.",
-  );
+  await expect(deck.getByRole("combobox", { name: "Wood" })).toHaveCount(0);
   await expect(page.locator("html")).toHaveAttribute(
     "data-wood-species",
     "walnut",
@@ -970,6 +986,33 @@ test("performance deck keeps native controls and live engine status", async ({
   await expect(status).toHaveAttribute("aria-live", "polite");
   await expect(status).toHaveAttribute("data-error", "false");
   await expect(status).toHaveText(ENGINE_READY);
+});
+
+test("play surface uses distinct walnut, maple, and beech layers", async ({
+  page,
+}) => {
+  await installStableEngine(page);
+  await page.goto("/#/play");
+
+  const materials = await page.evaluate(() => {
+    const topbar = document.querySelector(".studio-topbar");
+    const rack = document.querySelector(".rack");
+    if (!(topbar instanceof HTMLElement) || !(rack instanceof HTMLElement)) {
+      throw new Error("wood surfaces are missing");
+    }
+
+    return {
+      canvas: getComputedStyle(document.body).backgroundImage,
+      frame: getComputedStyle(rack).backgroundImage,
+      header: getComputedStyle(topbar).backgroundImage,
+      rackBack: getComputedStyle(rack, "::before").backgroundImage,
+    };
+  });
+
+  expect(materials.canvas).toContain("beech");
+  expect(materials.frame).toContain("walnut");
+  expect(materials.header).toContain("walnut");
+  expect(materials.rackBack).toContain("maple");
 });
 
 test("performance dials share aged brass without changing their controls", async ({

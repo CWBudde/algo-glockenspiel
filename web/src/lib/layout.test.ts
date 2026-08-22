@@ -88,9 +88,7 @@ describe("rack depth geometry", () => {
 
       const first = geometries[0];
       const last = geometries.at(-1)!;
-      expect(last.top - first.top).toBeCloseTo(
-        first.baseline - last.baseline,
-      );
+      expect(last.top - first.top).toBeCloseTo(first.baseline - last.baseline);
       expect(
         new Set(geometries.map(({ top, baseline }) => top + baseline)).size,
       ).toBe(1);
