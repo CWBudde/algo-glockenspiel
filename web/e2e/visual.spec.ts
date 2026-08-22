@@ -720,6 +720,81 @@ test("performance deck keeps native controls and live engine status", async ({
   await expect(status).toHaveText(ENGINE_READY);
 });
 
+test("performance dials share aged brass without changing their controls", async ({
+  page,
+}) => {
+  await installStableEngine(page);
+  await page.goto("/#/play");
+
+  const deck = page.getByRole("region", { name: "Performance controls" });
+  const faces = deck.locator(".dial-face");
+  const volume = deck.getByRole("slider", { name: "Volume" });
+  const velocity = deck.getByRole("slider", { name: "Velocity" });
+
+  await expect(faces).toHaveCount(2);
+  await expect(faces.nth(0)).toHaveClass(/\bdial-face-aged-brass\b/);
+  await expect(faces.nth(1)).toHaveClass(/\bdial-face-aged-brass\b/);
+
+  const materials = await faces.evaluateAll((elements) =>
+    elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+
+      return {
+        height: rect.height,
+        indicator: getComputedStyle(
+          element.querySelector(".dial-indicator") as HTMLElement,
+        ).backgroundColor,
+        inner: getComputedStyle(element, "::before").backgroundImage,
+        outer: getComputedStyle(element).backgroundImage,
+        width: rect.width,
+      };
+    }),
+  );
+
+  expect(
+    materials.every(({ width, height }) => width === 66 && height === 66),
+  ).toBe(true);
+  expect(new Set(materials.map(({ outer }) => outer)).size).toBe(1);
+  expect(new Set(materials.map(({ inner }) => inner)).size).toBe(1);
+  expect(materials[0]?.outer).toContain("repeating-conic-gradient");
+  expect(materials[0]?.outer).toContain("conic-gradient");
+  expect(materials[0]?.inner).toContain("repeating-linear-gradient");
+  expect(materials[0]?.inner).toContain("radial-gradient");
+  expect(
+    materials.every(({ indicator }) => indicator !== "rgba(0, 0, 0, 0)"),
+  ).toBe(true);
+
+  await volume.focus();
+  const focusedStyle = await faces.nth(0).evaluate((element) => {
+    const style = getComputedStyle(element);
+
+    return {
+      style: style.outlineStyle,
+      width: Number.parseFloat(style.outlineWidth),
+    };
+  });
+  expect(focusedStyle.style).toBe("solid");
+  expect(focusedStyle.width).toBeGreaterThanOrEqual(3);
+
+  const restingTransform = await faces
+    .nth(0)
+    .locator(".dial-indicator")
+    .evaluate((element) => getComputedStyle(element).transform);
+  await volume.press("ArrowUp");
+  await expect(volume).toHaveValue("71");
+  const adjustedTransform = await faces
+    .nth(0)
+    .locator(".dial-indicator")
+    .evaluate((element) => getComputedStyle(element).transform);
+  expect(adjustedTransform).not.toBe(restingTransform);
+
+  await faces.nth(1).click({ position: { x: 33, y: 5 } });
+  await expect(velocity).not.toHaveValue("96");
+  await expect(deck.locator('output[for="velocity"]')).toHaveText(
+    await velocity.inputValue(),
+  );
+});
+
 test("performance deck exposes engine failures as live errors", async ({
   page,
 }) => {

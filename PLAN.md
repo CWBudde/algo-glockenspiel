@@ -764,10 +764,12 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       foreground mallet sits below every bar at 1024px. Pure geometry tests pin width, perspective
       and mount alignment, while focused Playwright measurements pin browser geometry, z-order,
       support count/alignment and mallet clearance. Only the three Play references changed.
-- [ ] **5.5.13 — Aged-brass control knobs.** Replace the glossy brown dial faces with restrained
-      aged brass that belongs to the bar palette, keeping a high-contrast indicator and all native
-      range, keyboard and wheel semantics. Accept when both controls remain immediately readable
-      in default, focus and adjusted states without returning to a polished-plastic appearance.
+- [x] **5.5.13 — Aged-brass control knobs.** Both 66px dial faces now share a code-native aged-
+      brass material: a dark bronze rim surrounds a desaturated face with fine directional marks,
+      restrained patina and a crisp light indicator instead of the former glossy brown highlight.
+      Focus remains three pixels, and Playwright pins the common material hook and gradients, exact
+      geometry, keyboard adjustment, pointer adjustment and formatted values. Only the three Play
+      references changed; Optimize remains pixel-exact and the full 23-test Chromium suite passes.
 - [ ] **5.5.14 — Compact mobile composition.** Reduce vertical padding and rebalance the narrow
       control deck so more of the rack is visible at 390px without shrinking the shared pitch
       surface. Preserve 44px targets, the single horizontal scroller, readable status/wood text,
