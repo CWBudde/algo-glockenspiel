@@ -1,0 +1,39 @@
+name: test-web
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test-web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # `npm ci` rather than `npm install`: it installs exactly what the lock
+      # file pins and fails on a lock file that disagrees with package.json,
+      # which is the point of running it in CI at all.
+      - name: Install dependencies
+        run: npm --prefix web ci
+
+      - name: Typecheck
+        run: npm --prefix web run typecheck
+
+      - name: Lint
+        run: npm --prefix web run lint
+
+      # The build is a check in its own right: tsc does not see the CSS, the
+      # asset imports or the HTML entry, and any of the three can break a bundle
+      # that typechecks cleanly.
+      - name: Build
+        run: npm --prefix web run build

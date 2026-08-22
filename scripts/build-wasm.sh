@@ -1,8 +1,12 @@
 #!/bin/bash
 #
 # Builds the browser demo: compiles cmd/glockenspiel-wasm to web/dist and writes
-# a manifest naming the content hash of the module, which web/main.js appends to
-# the fetch URL for cache busting.
+# a manifest naming the content hash of the module, which the front end appends
+# to the fetch URL for cache busting (see web/src/audio/useWasmEngine.ts).
+#
+# It builds only the module. `just build-web` runs scripts/build-web.sh, which
+# builds the React bundle beside it; use that unless you deliberately want the
+# module on its own.
 #
 # It refuses to build when the tracked web/wasm_exec.js does not match the Go
 # toolchain in use, because the two share an ABI.
@@ -128,11 +132,11 @@ fi
 
 SIZE_FINAL=$(size_of "$WASM_OUT")
 
-# The hash is what web/main.js puts in the fetch URL, so the browser asks for a
+# The hash is what the front end puts in the fetch URL, so the browser asks for a
 # different resource whenever the bytes differ. It is deliberately not part of
 # the file name: internal/server hard-codes glockenspiel.wasm so it can tell a
 # missing build from a missing file and print the command that fixes it, and
-# web/embed.go lists the tracked files one by one. A query parameter busts the
+# web/embed.go embeds only a placeholder page. A query parameter busts the
 # cache without touching either.
 if command -v sha256sum >/dev/null 2>&1; then
 	HASH=$(sha256sum "$WASM_OUT" | cut -c1-16)
@@ -150,4 +154,4 @@ EOF
 
 echo "Build complete. Files in web/dist/"
 printf 'Module: %s bytes (%s before wasm-opt), hash %s\n' "$SIZE_FINAL" "$SIZE_RAW" "$HASH"
-echo "Run: go run ./cmd/glockenspiel serve   (or: python3 -m http.server -d web 8080)"
+echo "Run: go run ./cmd/glockenspiel serve   (or: npx serve web/dist)"

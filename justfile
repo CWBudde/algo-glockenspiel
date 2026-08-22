@@ -78,8 +78,12 @@ refit-default *ARGS:
 build:
     go build -o bin/glockenspiel ./cmd/glockenspiel
 
-# Build the WASM web demo (pass --refresh-wasm-exec to update web/wasm_exec.js)
+# Build the whole web app into web/dist: the React bundle and the WASM module
 build-web *ARGS:
+    ./scripts/build-web.sh {{ ARGS }}
+
+# Build only the WASM module (pass --refresh-wasm-exec to update web/wasm_exec.js)
+build-wasm *ARGS:
     ./scripts/build-wasm.sh {{ ARGS }}
 
 # Install the glockenspiel CLI binary

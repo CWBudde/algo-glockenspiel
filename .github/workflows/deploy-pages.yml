@@ -18,7 +18,13 @@ on:
       # signal it.
       - "model/**"
       - "scripts/build-wasm.sh"
+      - "scripts/build-web.sh"
       - "web/**"
+      # package-lock.json is under web/ and so already covered, but it is
+      # named here as well: it is the file that decides which bundle the
+      # deployment ships, and a dependency bump that changes nothing else
+      # must still redeploy.
+      - "web/package-lock.json"
   workflow_dispatch:
 
 permissions:
@@ -43,6 +49,13 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
@@ -53,13 +66,16 @@ jobs:
       - name: Install binaryen
         run: sudo apt-get update && sudo apt-get install -y binaryen
 
-      - name: Build web demo
-        run: ./scripts/build-wasm.sh
+      # Both halves: the React bundle and the WebAssembly module. web/dist is
+      # the deployable tree now, not web/ -- the sources beside it are inputs,
+      # and publishing them would put embed.go and package.json on the web.
+      - name: Build web app
+        run: ./scripts/build-web.sh
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: web
+          path: web/dist
 
   deploy:
     runs-on: ubuntu-latest

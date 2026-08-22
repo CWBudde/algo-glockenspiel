@@ -58,6 +58,13 @@ linters:
               skip-blank-lines: false
   exclusions:
     presets: []
+    # npm installs a Go package of its own: node_modules/flatted ships
+    # flatted.go. It is part of no build of ours, but `./...` walks into it
+    # all the same -- the go tool only skips directories named testdata or
+    # starting with "_" or "." -- so it is excluded here rather than being
+    # linted as if somebody here had written it.
+    paths:
+      - web/node_modules
 
 formatters:
   enable:
