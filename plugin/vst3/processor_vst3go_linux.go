@@ -381,10 +381,12 @@ func (p *Processor) rebuildVoices() error {
 	return nil
 }
 
-// scaledParamsForNote transposes a parameter set from baseNote to note. It is
-// an independent copy of synth.scaledParamsForNote and has to stay consistent
-// with it: the plugin and the standalone engine must not disagree about what a
-// preset sounds like a fifth down.
+// scaledParamsForNote transposes a parameter set from baseNote to note. It used
+// to be an independent copy of the same arithmetic and now delegates to
+// model.TransposeToNote, which the standalone engine and preset validation also
+// use: the plugin and the engine must not disagree about what a preset sounds
+// like a fifth down, and keeping that agreement by hand across three copies is
+// not a thing that stays true.
 //
 // Dividing DecayMs by the ratio is deliberate and correct -- a bar an octave
 // lower rings about twice as long -- but it means the decays this returns are
@@ -396,19 +398,17 @@ func (p *Processor) rebuildVoices() error {
 // function -- note-on and rebuildVoices -- failed for every low note, the
 // plugin returned an error, and the note never sounded.
 //
+// The plugin's base note is fixed at defaultPluginNote (69), where the
+// authoring ceiling is 743 ms, comfortably above the 500 ms the decay knobs
+// offer. The parameter table therefore needs no note-dependent range.
+//
 // The by-value params argument does not alias the caller's state despite the
 // writes to params.Modes[i]: both call sites pass p.snapshot.ToBarParams(),
 // which allocates a fresh Modes slice on every call (plugin/vst3/params.go).
 // The slice header being copied is therefore already private to this call.
 func scaledParamsForNote(params model.BarParams, note, baseNote int) model.BarParams {
-	ratio := math.Pow(2, float64(note-baseNote)/12)
-	params.BaseFrequency *= ratio
-	for i := range params.Modes {
-		params.Modes[i].Frequency *= ratio
-		if ratio > 0 {
-			params.Modes[i].DecayMs /= ratio
-		}
-	}
+	model.TransposeToNote(&params, baseNote, note)
+
 	return params
 }
 

@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/cwbudde/glockenspiel/internal/oscbank"
+	"github.com/cwbudde/glockenspiel/model"
 )
 
 const (
@@ -20,6 +21,10 @@ const (
 // web/ui.js and are the Go-side source of truth for anything that has to reason
 // about the span of the instrument.
 //
+// The values themselves live in model, because preset validation needs them:
+// whether a preset is well-formed depends on whether it survives transposition
+// to both ends of this range. These are the engine's names for them.
+//
 // The narrower FIRST_NOTE/LAST_NOTE pair in web/ui.js (60..84) describes the
 // drawn bar row, not the playable range: the on-screen keyboard below it sends
 // note-ons across the full 36..96 span, and so do incoming MIDI and the
@@ -28,8 +33,8 @@ const (
 // 60..84 instead would push everything outside it past the intended stereo
 // width, which is the class of bug this constant pair exists to prevent.
 const (
-	KeyboardFirstNote = 36
-	KeyboardLastNote  = 96
+	KeyboardFirstNote = model.KeyboardFirstNote
+	KeyboardLastNote  = model.KeyboardLastNote
 )
 
 // maxKeyboardPan is the half-width of the stereo spread, so the lowest note

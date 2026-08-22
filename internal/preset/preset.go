@@ -181,7 +181,11 @@ func Validate(preset *Preset) error {
 		return err
 	}
 
-	if err := preset.Parameters.Validate(); err != nil {
+	// Validated against the preset's own base note, not on its own: a preset is
+	// only well-formed if it is still buildable at every note the keyboard can
+	// send, and how far transposition stretches its decays depends on where that
+	// base note sits. See model.ValidateAuthoredBarParams.
+	if err := model.ValidateAuthoredBarParams(&preset.Parameters, preset.Note); err != nil {
 		return fmt.Errorf("parameters: %w", err)
 	}
 

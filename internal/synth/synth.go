@@ -129,26 +129,21 @@ func (s *Synthesizer) NewVoice(note, velocity int, duration float64, options Ren
 // optional: BarParams.Modes is a slice, so a plain struct copy would scale the
 // preset's own modes on every note.
 //
-// Dividing DecayMs by the ratio is the physically right thing and stays: a bar
-// an octave lower rings roughly twice as long, so transposing down has to
-// lengthen the decay. What it means downstream is that the decays handed to
-// model.NewBar are systematically larger than the ones the preset file holds --
-// the shipped preset's 188.2 ms first mode becomes 1266 ms at MIDI note 36 --
-// which is why model.ValidateBarParams measures against DecayMsValidationMax
-// rather than the authoring bound DecayMsSearchMax. While those two were one
-// constant at 500 ms, notes 36..52 could not be built at all.
+// The transposition itself lives in model.TransposeToNote, shared with the
+// plugin and with preset validation. Validation decides whether a preset is
+// playable by transposing it to the ends of the keyboard, so it has to compute
+// the same ratio this does, down to the last bit -- otherwise a preset could be
+// cleared for a note that then fails to build.
+//
+// What it means downstream is that the decays handed to model.NewBar are
+// systematically larger than the ones the preset file holds -- the shipped
+// preset's 188.2 ms first mode becomes 1266 ms at MIDI note 36 -- which is why
+// model.ValidateBarParams measures against DecayMsValidationMax rather than the
+// authoring bound DecayMsSearchMax. While those two were one constant at 500 ms,
+// notes 36..52 could not be built at all.
 func (s *Synthesizer) scaledParamsForNote(note int) model.BarParams {
 	scaled := s.preset.Parameters.Clone()
-	ratio := math.Pow(2, float64(note-s.preset.Note)/12)
-
-	scaled.BaseFrequency *= ratio
-
-	for i := range scaled.Modes {
-		scaled.Modes[i].Frequency *= ratio
-		if ratio > 0 {
-			scaled.Modes[i].DecayMs /= ratio
-		}
-	}
+	model.TransposeToNote(&scaled, s.preset.Note, note)
 
 	return scaled
 }

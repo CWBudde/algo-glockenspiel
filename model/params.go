@@ -38,13 +38,24 @@ const (
 	// since a bar an octave lower rings roughly twice as long. Transposing down
 	// therefore inflates the decays that reach validation.
 	//
-	// The worst case the instrument can produce: a mode sitting at the top of
-	// the optimizer's own search box (DecayMsSearchMax, 500 ms), played at the
-	// bottom of the playable keyboard. That is MIDI note 36 against a preset
-	// fitted at note 69, a ratio of 2^(-33/12) = 0.14865, so the decay reaching
-	// NewBar is 500 / 0.14865 = 3364 ms. 5000 ms clears that with about 1.5x of
-	// headroom, which also covers a preset fitted above note 69 and played at
-	// note 36 by a further four semitones before the ceiling binds again.
+	// The number is a policy, not a derivation: five seconds is the longest a
+	// struck bar may ring on this instrument, measured where the ringing actually
+	// happens, which is after transposition. Everything else follows from it.
+	// What a preset file may be *written* with follows from it too, and is
+	// therefore not a constant -- see [AuthoredDecayMsMax] and
+	// [ValidateAuthoredBarParams]. A preset at note 36 may carry the full 5000 ms,
+	// one at note 69 only 743 ms, one at note 100 only 124 ms; all three ring for
+	// the same five seconds at the bottom key.
+	//
+	// An earlier revision of this constant derived 5000 from base note 69 alone
+	// -- 500 ms at the top of the optimizer's search box, transposed from note 69
+	// to note 36, is 3364 ms, rounded up for headroom. That derivation quietly
+	// assumed the only base note that exists is 69. Preset.Note is authorable
+	// across the whole MIDI range, so it bought nothing: a preset authored at
+	// note 100 with a 500 ms decay needs 20159 ms at note 36 and its low register
+	// went dead exactly as before. The ceiling cannot guarantee playability on
+	// its own, whatever value it takes, because it does not know the base note.
+	// The base-note-aware check is what guarantees it.
 	//
 	// This constant used to be a single DecayMsMax doing both jobs at 500 ms,
 	// and the consequence was that MIDI notes 36..52 -- the bottom 17 of the 61

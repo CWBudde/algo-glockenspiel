@@ -2,8 +2,10 @@ package synth
 
 import (
 	"math"
+	"strings"
 	"testing"
 
+	"github.com/cwbudde/glockenspiel/internal/preset"
 	"github.com/cwbudde/glockenspiel/model"
 )
 
@@ -209,6 +211,122 @@ func TestSearchBoundIsUnchanged(t *testing.T) {
 
 	if got := model.DefaultParamBounds.DecayMs[1]; got != model.DecayMsSearchMax {
 		t.Fatalf("DefaultParamBounds.DecayMs upper = %g, want the search bound %g",
+			got, model.DecayMsSearchMax)
+	}
+}
+
+// presetAtBaseNote builds a preset fitted at baseNote whose first mode sits
+// exactly on the authoring ceiling for that note, i.e. the widest decay the
+// format allows a preset in that position to carry.
+func presetAtBaseNote(baseNote int, decayMs float64) *preset.Preset {
+	return &preset.Preset{
+		Version: preset.VersionV2,
+		Name:    "base-note sweep",
+		Note:    baseNote,
+		Parameters: model.BarParams{
+			InputMix:        1.0,
+			FilterFrequency: 2000,
+			BaseFrequency:   440,
+			Modes: []model.ModeParams{
+				{Amplitude: 0.5, Frequency: 440, DecayMs: decayMs},
+				{Amplitude: 0.3, Frequency: 1174, DecayMs: decayMs / 4},
+			},
+		},
+	}
+}
+
+// sweptBaseNotes spans the keyboard and past both ends of it. Note 76 is in the
+// list for a specific reason: it is the first base note at which a decay inside
+// the optimizer's own search box no longer fits under the validation ceiling at
+// the bottom key, so it is where a preset that looks entirely ordinary stops
+// being playable.
+var sweptBaseNotes = []int{36, 48, 60, 69, 75, 76, 84, 96, 100}
+
+// TestValidPresetsPlayEveryKeyboardNoteAtEveryBaseNote is the invariant the
+// authoring ceiling exists to establish: whatever base note a preset was
+// authored at, if preset.Validate accepts it then every key sounds.
+//
+// The sweep over base notes is the whole point. The previous version of this
+// suite fixed the base note at 69, which is exactly the assumption that let the
+// bug through -- DecayMsValidationMax was derived from note 69 and therefore
+// guaranteed nothing for a preset authored anywhere else. A preset at note 100
+// with a 500 ms decay passed validation and was refused at note 36, which is
+// the dead low register all over again.
+func TestValidPresetsPlayEveryKeyboardNoteAtEveryBaseNote(t *testing.T) {
+	for _, baseNote := range sweptBaseNotes {
+		p := presetAtBaseNote(baseNote, model.AuthoredDecayMsMax(baseNote))
+
+		if err := preset.Validate(p); err != nil {
+			t.Errorf("base note %d: a preset at its own ceiling was rejected: %v", baseNote, err)
+
+			continue
+		}
+
+		synthesizer, err := NewSynthesizer(p, 48000)
+		if err != nil {
+			t.Errorf("base note %d: NewSynthesizer refused a valid preset: %v", baseNote, err)
+
+			continue
+		}
+
+		for note := KeyboardFirstNote; note <= KeyboardLastNote; note++ {
+			rendered := synthesizer.RenderNote(note, 100, 0.2)
+			if len(rendered) == 0 {
+				t.Errorf("base note %d, note %d: the voice could not be built", baseNote, note)
+
+				continue
+			}
+
+			if peak := peakOf(rendered); peak < silenceThreshold {
+				t.Errorf("base note %d, note %d: rendered silence, peak %g", baseNote, note, peak)
+			}
+		}
+	}
+}
+
+// TestPresetsPastTheirBaseNoteCeilingAreRefusedAtLoad is the other half: the
+// presets the sweep above cannot cover are rejected outright, with a diagnostic,
+// rather than loading and then dropping notes silently.
+//
+// A dropped note-on is the failure mode this whole change exists to kill, and
+// refusing the file is the only way to kill it for a preset the format cannot
+// play at all. The error therefore has to name the base note, since the decay
+// the author wrote is legal for a preset positioned lower.
+func TestPresetsPastTheirBaseNoteCeilingAreRefusedAtLoad(t *testing.T) {
+	for _, baseNote := range sweptBaseNotes {
+		ceiling := model.AuthoredDecayMsMax(baseNote)
+		p := presetAtBaseNote(baseNote, ceiling*1.01)
+
+		err := preset.Validate(p)
+		if err == nil {
+			t.Errorf("base note %d: %g ms was accepted, %g ms past the ceiling",
+				baseNote, ceiling*1.01, ceiling*0.01)
+
+			continue
+		}
+
+		if !strings.Contains(err.Error(), "decay_ms") {
+			t.Errorf("base note %d: the error does not name the offending field: %v", baseNote, err)
+		}
+	}
+}
+
+// TestSearchBoundIsAuthorableOnlyUpToNote75 states, as an assertion, the fact
+// the old derivation of DecayMsValidationMax silently assumed away: the
+// optimizer's decay box and the authoring ceiling agree only over part of the
+// keyboard. Above note 75 the optimizer can propose a decay a preset at that
+// position may not carry.
+//
+// This is a real edge rather than a curiosity, and pinning it is what keeps the
+// two constants honest with each other: if either moves, this test says where
+// the crossover went.
+func TestSearchBoundIsAuthorableOnlyUpToNote75(t *testing.T) {
+	if got := model.AuthoredDecayMsMax(75); got < model.DecayMsSearchMax {
+		t.Errorf("at base note 75 the ceiling is %g ms, below the search bound %g", got, model.DecayMsSearchMax)
+	}
+
+	if got := model.AuthoredDecayMsMax(76); got >= model.DecayMsSearchMax {
+		t.Errorf("at base note 76 the ceiling is %g ms, still at or above the search bound %g",
 			got, model.DecayMsSearchMax)
 	}
 }
