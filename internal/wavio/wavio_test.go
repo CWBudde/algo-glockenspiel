@@ -296,3 +296,176 @@ func putUint32(dst []byte, value uint32) {
 	dst[2] = byte(value >> 16)
 	dst[3] = byte(value >> 24)
 }
+
+// floatWAV builds a WAVE_FORMAT_IEEE_FLOAT file by hand, because nothing in
+// this repository writes one: WriteMono is 16-bit PCM by construction, which is
+// precisely how a float reference went unread for the life of the project
+// without a single test noticing.
+//
+// The fmt chunk is the canonical 16-byte form. formatTag and bitsPerSample are
+// parameters rather than constants so the same builder covers the formats that
+// have to be refused as well as the one that has to work.
+func floatWAV(sampleRate int, samples []float32, formatTag uint16, bitsPerSample int) []byte {
+	bytesPerSample := bitsPerSample / 8
+	dataBytes := len(samples) * bytesPerSample
+
+	out := make([]byte, 0, 44+dataBytes)
+	out = append(out, "RIFF"...)
+	out = appendUint32(out, uint32(36+dataBytes))
+	out = append(out, "WAVE"...)
+
+	out = append(out, "fmt "...)
+	out = appendUint32(out, 16)
+	out = appendUint16(out, formatTag)
+	out = appendUint16(out, 1) // one channel
+	out = appendUint32(out, uint32(sampleRate))
+	out = appendUint32(out, uint32(sampleRate*bytesPerSample))
+	out = appendUint16(out, uint16(bytesPerSample))
+	out = appendUint16(out, uint16(bitsPerSample))
+
+	out = append(out, "data"...)
+	out = appendUint32(out, uint32(dataBytes))
+
+	for _, sample := range samples {
+		if bitsPerSample == 64 {
+			out = appendUint64(out, math.Float64bits(float64(sample)))
+
+			continue
+		}
+
+		out = appendUint32(out, math.Float32bits(sample))
+	}
+
+	return out
+}
+
+func appendUint16(dst []byte, v uint16) []byte {
+	return append(dst, byte(v), byte(v>>8))
+}
+
+func appendUint32(dst []byte, v uint32) []byte {
+	return append(dst, byte(v), byte(v>>8), byte(v>>16), byte(v>>24))
+}
+
+func appendUint64(dst []byte, v uint64) []byte {
+	return append(appendUint32(dst, uint32(v)), byte(v>>32), byte(v>>40), byte(v>>48), byte(v>>56))
+}
+
+// TestFloatSamplesDecodeAsValuesNotAsBitPatterns is the regression for the
+// defect this file's decoder had from the beginning.
+//
+// go-audio reads every format as an integer -- its 32-bit reader is
+// int(int32(binary.LittleEndian.Uint32(...))) -- so a float sample arrived as
+// its own bit pattern, and dividing that by 2^31 reinterpreted it rather than
+// decoding it. Every float32 in [0.06, 1.0] has an exponent that lands its bit
+// pattern near 0x3F00_0000, which is +0.492 after that division, and the sign
+// bit put the negatives near -0.508. So any recording at a sane level came back
+// as a square wave of about +-0.5 no matter what it held.
+//
+// The equality is exact rather than approximate on purpose. This is a
+// reinterpretation of bits, not an arithmetic conversion, so there is no
+// rounding to allow for and an epsilon would only hide a wrong one.
+func TestFloatSamplesDecodeAsValuesNotAsBitPatterns(t *testing.T) {
+	// Values chosen to span what the old path collapsed: both rails, both
+	// signs, a value small enough that its bit pattern is nowhere near the
+	// +-0.5 plateau, and exact zero.
+	want := []float32{0, 1, -1, 0.5, -0.5, 0.0001, -0.0001, 0.75, -0.25}
+
+	got, rate, err := wavio.DecodeMono(bytes.NewReader(floatWAV(44100, want, 3, 32)), "float32.wav")
+	if err != nil {
+		t.Fatalf("DecodeMono: %v", err)
+	}
+
+	if rate != 44100 {
+		t.Errorf("sample rate = %d, want 44100", rate)
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("decoded %d samples, want %d", len(got), len(want))
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("sample %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestTheShippedReferenceIsAStruckBarNotASquareWave asserts the same fix
+// against the file that actually matters, and states the difference in terms
+// nobody can misread.
+//
+// A struck bar and a square wave are told apart by crest factor: the reference
+// is peak 1.0 against RMS 0.193, a crest of 5.18, while the misdecode produced
+// RMS 0.5004 against peak 0.5702, a crest of 1.14. internal/cli/fit.go and
+// internal/server/fit.go both read user references through this package, so
+// what this test is really pinning is that a fit sees the recording it was
+// pointed at.
+func TestTheShippedReferenceIsAStruckBarNotASquareWave(t *testing.T) {
+	samples, rate, err := wavio.LoadMono(filepath.FromSlash("../../testdata/reference/legacy_synth_a4.wav"))
+	if err != nil {
+		t.Fatalf("LoadMono: %v", err)
+	}
+
+	if rate != 44100 {
+		t.Errorf("sample rate = %d, want 44100", rate)
+	}
+
+	peak, sumSquares := 0.0, 0.0
+
+	for _, sample := range samples {
+		magnitude := math.Abs(float64(sample))
+		if magnitude > peak {
+			peak = magnitude
+		}
+
+		sumSquares += float64(sample) * float64(sample)
+	}
+
+	rms := math.Sqrt(sumSquares / float64(len(samples)))
+
+	// A square wave sits at 1.0 and a sine at 1.41. Anything below 2 is not a
+	// struck bar, whatever else it might be.
+	if crest := peak / rms; crest < 2 {
+		t.Errorf("crest factor %.2f (peak %.4f, rms %.4f): this is not a decaying strike", crest, peak, rms)
+	}
+
+	// The old path clamped the peak to about 0.57 because that is what the
+	// largest bit pattern divided by 2^31 comes to.
+	if peak < 0.99 {
+		t.Errorf("peak %.4f, want a full-scale reference", peak)
+	}
+}
+
+// TestAmbiguousFloatFormatsAreRefusedRatherThanGuessed covers the other half of
+// the fix. Refusing is the point: PCM and float differ by about 30 dB at the
+// same bit depth, so a wrong guess is not a small error, and the failure it
+// produces is silent.
+func TestAmbiguousFloatFormatsAreRefusedRatherThanGuessed(t *testing.T) {
+	samples := []float32{0.25, -0.5, 0.75}
+
+	cases := []struct {
+		name          string
+		formatTag     uint16
+		bitsPerSample int
+	}{
+		// WAVE_FORMAT_EXTENSIBLE names its real format in a subformat GUID
+		// go-audio does not surface, so at 32 bits it could be either.
+		{"extensible at 32 bits", 0xFFFE, 32},
+
+		// 64-bit float is refused, though today go-audio's own reader rejects
+		// the byte depth before this package sees it. Either way the caller
+		// gets an error rather than a misdecode, which is what is asserted.
+		{"64-bit float", 3, 64},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			encoded := floatWAV(44100, samples, testCase.formatTag, testCase.bitsPerSample)
+
+			if _, _, err := wavio.DecodeMono(bytes.NewReader(encoded), testCase.name); err == nil {
+				t.Fatal("decoded without error, want a refusal")
+			}
+		})
+	}
+}

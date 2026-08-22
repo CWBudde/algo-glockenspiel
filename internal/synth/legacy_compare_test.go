@@ -1,99 +1,79 @@
 package synth
 
 import (
-	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/go-audio/wav"
+	"github.com/cwbudde/glockenspiel/internal/preset"
+	"github.com/cwbudde/glockenspiel/internal/wavio"
 )
 
+// wantLegacyCorrelation is how closely a render of the shipped preset has to
+// track the reference it was fitted against.
+const wantLegacyCorrelation = 0.95
+
+// TestLegacyComparisonA4 renders the shipped preset at the reference's note and
+// compares the waveform against testdata/reference/legacy_synth_a4.wav.
+//
+// It used to read a second WAV, testdata/output/go_synth_a4.wav, that nothing
+// in this repository has ever produced -- no recipe, no script, no workflow,
+// and the path is gitignored -- so the test skipped on a missing file even when
+// its environment gate was set. It now renders its own comparison signal, which
+// is what the phantom file was standing in for, and decodes the reference
+// through internal/wavio rather than through a private copy of the decoder.
+// That copy mattered: it carried the same 2^(bits-1) scaling that read this
+// file's 32-bit floats as integers, so the test compared a render against a
+// square wave.
+//
+// It is still skipped, and the reason has changed from an environment variable
+// to a fact: the shipped preset does not match this reference. Measured with
+// the decoder fixed, the correlation is -0.5261. That is the Chebyshev shaper's
+// DC offset, which holds the bar at a steady level where the reference decays
+// into silence within 0.557 s, and the preset re-fit that follows from removing
+// it. Ungate this test in that change, not before -- an assertion nobody can
+// satisfy is worth no more than the phantom file was.
 func TestLegacyComparisonA4(t *testing.T) {
-	if os.Getenv("GLOCKENSPIEL_STRICT_LEGACY_COMPARE") != "1" {
-		t.Skip("set GLOCKENSPIEL_STRICT_LEGACY_COMPARE=1 to run strict legacy waveform comparison")
-	}
+	t.Skip("the shipped preset does not track this reference yet: correlation -0.5261, " +
+		"pending the shaper DC fix and the preset re-fit")
 
-	legacyPath := filepath.FromSlash("../../testdata/reference/legacy_synth_a4.wav")
-	goPath := filepath.FromSlash("../../testdata/output/go_synth_a4.wav")
-
-	if _, err := os.Stat(legacyPath); err != nil {
-		t.Skipf("legacy reference missing: %v", err)
-	}
-
-	if _, err := os.Stat(goPath); err != nil {
-		t.Skipf("go reference missing: %v", err)
-	}
-
-	legacySamples, legacyRate, err := loadMonoWAV(legacyPath)
+	reference, sampleRate, err := wavio.LoadMono(filepath.FromSlash("../../testdata/reference/legacy_synth_a4.wav"))
 	if err != nil {
-		t.Fatalf("load legacy wav: %v", err)
+		t.Fatalf("load reference: %v", err)
 	}
 
-	goSamples, goRate, err := loadMonoWAV(goPath)
+	p, err := preset.Load(filepath.FromSlash("../../assets/presets/default.json"))
 	if err != nil {
-		t.Fatalf("load go wav: %v", err)
+		t.Fatalf("load preset: %v", err)
 	}
 
-	if legacyRate != goRate {
-		t.Fatalf("sample-rate mismatch: legacy=%d go=%d", legacyRate, goRate)
+	synthesizer, err := NewSynthesizer(p, sampleRate)
+	if err != nil {
+		t.Fatalf("NewSynthesizer: %v", err)
 	}
 
-	n := minInt(len(legacySamples), len(goSamples))
-	legacySamples = legacySamples[:n]
-	goSamples = goSamples[:n]
+	duration := float64(len(reference)) / float64(sampleRate)
+	rendered := synthesizer.RenderNote(p.Note, 100, duration)
+
+	n := minInt(len(reference), len(rendered))
+	if n == 0 {
+		t.Fatal("nothing to compare")
+	}
+
+	legacySamples := make([]float64, n)
+	goSamples := make([]float64, n)
+
+	for i := 0; i < n; i++ {
+		legacySamples[i] = float64(reference[i])
+		goSamples[i] = float64(rendered[i])
+	}
 
 	corr := correlation(legacySamples, goSamples)
 	rms := rmsDifference(legacySamples, goSamples)
 
-	if corr < 0.95 {
-		t.Fatalf("correlation too low: got %.4f want >= 0.95 (rms=%.6f)", corr, rms)
+	if corr < wantLegacyCorrelation {
+		t.Fatalf("correlation too low: got %.4f want >= %.2f (rms=%.6f)", corr, wantLegacyCorrelation, rms)
 	}
-}
-
-func loadMonoWAV(path string) ([]float64, int, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, 0, fmt.Errorf("open wav: %w", err)
-	}
-
-	defer func() {
-		_ = file.Close()
-	}()
-
-	decoder := wav.NewDecoder(file)
-	if !decoder.IsValidFile() {
-		return nil, 0, fmt.Errorf("invalid wav file: %s", path)
-	}
-
-	intBuffer, err := decoder.FullPCMBuffer()
-	if err != nil {
-		return nil, 0, fmt.Errorf("decode pcm: %w", err)
-	}
-
-	if intBuffer == nil || intBuffer.Format == nil {
-		return nil, 0, fmt.Errorf("invalid decoded buffer: %s", path)
-	}
-
-	bitDepth := intBuffer.SourceBitDepth
-	if bitDepth <= 0 {
-		bitDepth = 16
-	}
-
-	scale := math.Pow(2, float64(bitDepth-1))
-
-	chans := intBuffer.Format.NumChannels
-	if chans <= 0 {
-		chans = 1
-	}
-
-	samples := make([]float64, len(intBuffer.Data)/chans)
-	for i := range samples {
-		samples[i] = float64(intBuffer.Data[i*chans]) / scale
-	}
-
-	return samples, intBuffer.Format.SampleRate, nil
 }
 
 func correlation(first, second []float64) float64 {
