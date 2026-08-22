@@ -31,8 +31,12 @@ import {
 export interface FitFormProps {
   /** The job the page is currently watching, if any. */
   snapshot: FitSnapshot | null;
-  /** Called with the snapshot every start and cancel answers with. */
-  onSnapshot: (snapshot: FitSnapshot) => void;
+  /**
+   * Called with the snapshot every start and cancel answers with. The start
+   * call also passes the `maxIterations` it sent, because the server does not
+   * echo the request back and the progress panel reads "n of m" against it.
+   */
+  onSnapshot: (snapshot: FitSnapshot, maxIterations?: number) => void;
 }
 
 /** The scalar fields, held as strings so a half-typed number is not clobbered. */
@@ -275,7 +279,9 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
    * Validates everything and builds the multipart body, or returns the field
    * errors. Nothing is uploaded until this succeeds.
    */
-  function buildForm(): { form: FormData } | { errors: FieldErrors } {
+  function buildForm():
+    | { form: FormData; maxIterations: number }
+    | { errors: FieldErrors } {
     const found: FieldErrors = {};
 
     const reference = referenceRef.current?.files?.[0] ?? null;
@@ -438,7 +444,7 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
       form.append("mayflySeed", String(seed));
     }
 
-    return { form };
+    return { form, maxIterations: (maxIterations as { value: number }).value };
   }
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -462,7 +468,7 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
     try {
       const started = await startFit(built.form);
 
-      onSnapshot(started);
+      onSnapshot(started, built.maxIterations);
       setNotice(`Fit ${started.jobId} started.`);
     } catch (cause) {
       if (cause instanceof FitApiError) {
@@ -825,7 +831,9 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
         <p className="fit-hint">
           Every dimension is optional; one left empty keeps its default.
           Supplied bounds are a hard constraint, so the box is not widened to
-          contain the starting preset.
+          contain the starting preset. A server built before the bounds field
+          was added to the fit API ignores the document rather than refusing it,
+          so on such a server the fit runs against the default box.
         </p>
 
         {fieldError("bounds")}

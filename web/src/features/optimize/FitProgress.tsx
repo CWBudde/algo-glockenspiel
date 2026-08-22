@@ -1,3 +1,6 @@
+import { useEffect } from "react";
+
+import type { FitSnapshot } from "../../api/types";
 import { Audition } from "./Audition";
 import { CostChart } from "./CostChart";
 import { FitStatus } from "./FitStatus";
@@ -16,6 +19,13 @@ export interface FitProgressProps {
    * back -- so the form that sent it supplies it. Null when it is not known.
    */
   maxIterations: number | null;
+  /**
+   * Called with every whole snapshot the stream delivers. The page composing
+   * the tab needs them too -- the form's Start and Cancel buttons follow the
+   * job's state -- and the stream is the only thing that sees a run reach a
+   * terminal state on its own.
+   */
+  onSnapshot?: (snapshot: FitSnapshot) => void;
 }
 
 /**
@@ -27,8 +37,18 @@ export interface FitProgressProps {
  * from the snapshots the stream delivers, which are whole status objects, so
  * there is no second source of truth to keep in step.
  */
-export function FitProgress({ jobId, maxIterations }: FitProgressProps) {
+export function FitProgress({
+  jobId,
+  maxIterations,
+  onSnapshot,
+}: FitProgressProps) {
   const { snapshot, points, streaming, streamError } = useFitEvents(jobId);
+
+  useEffect(() => {
+    if (snapshot !== null) {
+      onSnapshot?.(snapshot);
+    }
+  }, [snapshot, onSnapshot]);
 
   return (
     <div className="fit-progress">

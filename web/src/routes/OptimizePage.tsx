@@ -1,10 +1,11 @@
 /**
  * The Optimize tab.
  *
- * The page composes the pieces two parallel branches fill in and owns nothing
- * but the job the tab is currently watching. The form and the API client are
- * one PR; the progress stream, the cost chart and the audition another. Each
- * remaining slot below names the file that will replace it.
+ * The page owns nothing but the job the tab is currently watching: the form
+ * starts and cancels it, and FitProgress subscribes to the server's event
+ * stream for it. Every snapshot -- from the status read on mount, from a start
+ * or a cancel, and from the stream -- is one whole status object, so there is a
+ * single shape of truth and no reconciliation to do.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -12,6 +13,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getFitStatus } from "../api/fit";
 import type { FitSnapshot } from "../api/types";
 import { FitForm } from "../features/optimize/FitForm";
+import { FitProgress } from "../features/optimize/FitProgress";
 import { useApiAvailable } from "../features/optimize/useApiAvailable";
 
 /** The command that makes the fit API reachable. */
@@ -21,8 +23,17 @@ export function OptimizePage() {
   const { availability, version } = useApiAvailable();
   const [snapshot, setSnapshot] = useState<FitSnapshot | null>(null);
 
-  const onSnapshot = useCallback((next: FitSnapshot) => {
+  // What the running fit was started with. The server does not echo the
+  // request back, so only the form knows it, and only for a fit this page
+  // started: a run picked up from the status read on mount has no known limit.
+  const [maxIterations, setMaxIterations] = useState<number | null>(null);
+
+  const onSnapshot = useCallback((next: FitSnapshot, startedWith?: number) => {
     setSnapshot(next);
+
+    if (startedWith !== undefined) {
+      setMaxIterations(startedWith);
+    }
   }, []);
 
   // A fit outlives the page: the server holds one slot and a reload lands back
@@ -51,41 +62,6 @@ export function OptimizePage() {
       cancelled = true;
     };
   }, [availability]);
-
-  /*
-   * A stopgap until the SSE hook lands: while a fit runs, re-read the status so
-   * the page notices the terminal state and re-enables Start. Cancel needs no
-   * polling -- its 200 already means the slot is free, because the handler
-   * blocks on the job's done channel -- and this whole effect is replaced by
-   * features/optimize/useFitEvents.ts, which receives a whole snapshot per
-   * event instead.
-   */
-  const running = snapshot?.state === "running";
-
-  useEffect(() => {
-    if (!running) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const timer = window.setInterval(() => {
-      getFitStatus()
-        .then((current) => {
-          if (!cancelled) {
-            setSnapshot(current);
-          }
-        })
-        .catch(() => {
-          // A transient failure is not a reason to stop watching.
-        });
-    }, 1000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [running]);
 
   return (
     <section className="optimize-panel" aria-labelledby="optimize-heading">
@@ -138,28 +114,11 @@ export function OptimizePage() {
 
           <FitForm onSnapshot={onSnapshot} snapshot={snapshot} />
 
-          <div aria-live="polite" className="optimize-status">
-            {snapshot === null ? (
-              <p className="optimize-placeholder">
-                No fit has been started yet.
-              </p>
-            ) : (
-              <p className="optimize-placeholder">
-                Fit {snapshot.jobId} is {snapshot.state}
-                {snapshot.stopReason === undefined
-                  ? ""
-                  : ` (${snapshot.stopReason})`}
-                : {snapshot.optimizerIterations} optimizer iterations,{" "}
-                {snapshot.evaluations} evaluations, best cost{" "}
-                {snapshot.bestCost.toPrecision(6)} after{" "}
-                {(snapshot.elapsedMs / 1000).toFixed(1)}s.
-                {snapshot.error === undefined ? "" : ` ${snapshot.error}`}
-              </p>
-            )}
-          </div>
-
-          {/* slot: the cost chart -- features/optimize/CostChart.tsx */}
-          {/* slot: audition and download -- features/optimize/Audition.tsx */}
+          <FitProgress
+            jobId={snapshot?.jobId ?? null}
+            maxIterations={maxIterations}
+            onSnapshot={onSnapshot}
+          />
         </>
       ) : null}
     </section>
