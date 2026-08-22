@@ -66,18 +66,24 @@ func TestDefaultPresetRendersNearMinusThreeDBFS(t *testing.T) {
 	}
 }
 
-// TestDefaultPresetModesKeepTheirSigns guards the one thing the rescale had to
-// preserve. Mode 2 is negative; scaling keeps it negative and keeps its
-// magnitude in proportion to the rest, whereas clamping a rescale to a positive
-// range would quietly change the phase relationship between the modes and with
-// it the attack transient.
+// TestDefaultPresetModesKeepTheirSigns guards the one thing a rescale of the
+// shipped preset has to preserve: a mode's sign is a phase relationship with
+// the others, and it shapes the attack transient. Clamping a rescale to a
+// positive range, or dividing by a negative factor, would change the sound
+// while leaving the peak level the test above pins exactly where it was.
+//
+// The pattern is the re-fit preset's, {+, +, +, -}, and it is not the same one
+// the preset carried before: that was {+, +, -, +}. A re-fit is entitled to
+// land on a different sign pattern, since it is solving for the waveform rather
+// than adjusting the one it was given -- so the list below moves when the
+// preset is re-fitted, and stays put for anything short of that.
 func TestDefaultPresetModesKeepTheirSigns(t *testing.T) {
 	p, err := preset.Load(filepath.FromSlash("../../assets/presets/default.json"))
 	if err != nil {
 		t.Fatalf("load default preset: %v", err)
 	}
 
-	wantSigns := []float64{1, 1, -1, 1}
+	wantSigns := []float64{1, 1, 1, -1}
 	if len(p.Parameters.Modes) != len(wantSigns) {
 		t.Fatalf("default preset mode count = %d, want %d", len(p.Parameters.Modes), len(wantSigns))
 	}

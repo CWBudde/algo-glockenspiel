@@ -165,11 +165,3 @@ func narrowBoundsAroundTarget(target *model.BarParams) ParamBounds {
 
 	return bounds
 }
-
-func assertCloseWithin(t *testing.T, got, want, tol float64, label string) {
-	t.Helper()
-
-	if math.Abs(got-want) > tol {
-		t.Fatalf("%s mismatch: got %.6f want %.6f tol %.6f", label, got, want, tol)
-	}
-}

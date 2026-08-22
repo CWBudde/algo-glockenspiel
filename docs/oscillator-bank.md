@@ -36,6 +36,19 @@ bank (`chebyshev.stage`: `excitation` or `output`). `excitation` is the v1
 placement and stays the default, which is what keeps v1 presets sounding the
 same.
 
+The shaper maps silence to silence, and that is a requirement rather than a
+happy accident. It computes the sum over k of `gains[k] * T_(k+1)(x)`, and the
+even members of that family — T2, T4 and so on — are nonzero at the origin, so
+the bare sum emits a constant for a silent input: exactly −0.3 for the gains the
+shipped preset used to carry. At the `excitation` stage that constant sits ahead
+of the bank, and the excitation lowpass has a DC gain of exactly 1.0, so it
+arrives at the rotors undiminished and drives every one of them to a steady
+state that never decays. A struck bar that never stops is the audible symptom;
+the measured one is a bar sitting at an unchanging RMS of 0.1289 from 0.4 s to
+3.8 s, with the engine's auto-stop never firing because nothing ever went quiet.
+`model.chebyshevZeroOffset` evaluates the same sum at zero and takes it off, so
+the offset falls away quadratically as a note decays rather than persisting.
+
 ## Layout
 
 State lives in five `[]float32` arrays — `re`, `im`, `cosCoeff`, `sinCoeff`,

@@ -253,7 +253,10 @@ The top-level `parameters` object holds:
 - `modes`: the resonant partials, exactly four in v1 and one to 512 in v2
 - `chebyshev.enabled`: enables harmonic shaping
 - `chebyshev.stage`: v2 only, `excitation` (the v1 behaviour, and the default) or `output`
-- `chebyshev.harmonic_gains`: gain per generated harmonic
+- `chebyshev.harmonic_gains`: gain per generated harmonic. The shaper is
+  DC-free — it subtracts its own value at zero, so silence in gives silence out —
+  which matters most at the `excitation` stage, where anything it emits for a
+  silent input becomes a DC excitation the oscillator bank never resolves
 
 ### Reading Mode Parameters
 
