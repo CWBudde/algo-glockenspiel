@@ -53,10 +53,10 @@ What does not match the goal:
 
 - Cross-voice lane packing is missing. A bank fills its lanes from one voice's oscillators and
   `internal/synth/realtime.go` renders voices serially, so voice count still costs linearly.
-- The audio path still allocates, and locks once. `synth.NewVoice` builds a whole transposed
-  `model.Bar` per note-on (`internal/synth/synth.go:106`), measured at 19 allocations, and
-  the first block in a process serializes on `cpufeat`'s detection mutex because nothing
-  warms it beforehand. See Phase 2.4.
+- The audio path still allocates. `synth.NewVoice` builds a whole transposed `model.Bar` per
+  note-on (`internal/synth/synth.go:106`), measured at 19 allocations. It no longer locks:
+  `internal/cpufeat` warms its detection cache from an `init()`, so the one-off first-block
+  acquisition of `detectMu` can no longer land on the audio thread. See Phase 2.4.
 - The NEON kernel has no measured throughput. It is exercised under qemu-user, which is
   worthless for timing, so the NEON row of the benchmark table in `docs/oscillator-bank.md` is
   still `TODO` pending a native arm64 host.
@@ -144,26 +144,30 @@ Acceptance criteria:
       layer, so a number taken there would be fiction; this stays open until the kernel can be
       benchmarked on a native arm64 host.
 - [ ] No allocation and no mutex acquisition on the audio path. **Not met, and not quietly
-      reworded so that it passes.** Two things are outstanding, one on each half of the
-      criterion.
-      **Allocation.** `RealtimeEngine.ProcessBlock` is allocation-free, pinned by
+      reworded so that it passes.** The mutex half is now closed; the allocation half is
+      still open, which is why the box stays unticked.
+      **Allocation — open.** `RealtimeEngine.ProcessBlock` is allocation-free, pinned by
       `TestProcessBlockDoesNotAllocateAfterFirstBlock`. Note-on is not: `synth.NewVoice`
       calls `model.NewBar` (`internal/synth/synth.go:106`), which builds a transposed bar and
       its buffers, measured at 19 allocations per note-on.
       `TestNoteOnAllocatesNothingBeyondTheVoice` measures `NoteOn` against that cost rather
       than against zero, and says so in its own comment. What remains is to build the voice
       without allocating — reusing a `Bar` the engine already owns and reconfiguring it in
-      place rather than constructing a new one per note.
-      **Mutex.** The steady state takes none: `cpufeat.Detect()` is an `atomic.Pointer` load
-      once the feature set is published, and nothing else on the path locks. The _first_
-      block in a process does take one. `current` starts nil, no eager call warms it —
-      there is no `init()` anywhere that calls `Detect()` — and the first caller is
-      `processRotorBlocks` (`internal/oscbank/kernel_amd64.go:60`), which is already on the
-      audio thread. So a real audio callback serializes on `detectMu` exactly once per
-      process. It is one lock, not a per-block one, but the criterion says "no mutex
-      acquisition on the audio path" and one is one. Warming detection from
-      `NewRealtimeEngine` or from an `init()` in the dispatch package closes it. Both halves
-      are tracked in Phase 2.4.
+      place rather than constructing a new one per note. That is voice/bar pooling, and it is
+      deliberately scheduled for the next wave rather than bolted on here; it is what this
+      criterion is now waiting on, and nothing else.
+      **Mutex — closed.** The steady state never took one: `cpufeat.Detect()` is an
+      `atomic.Pointer` load once the feature set is published, and nothing else on the path
+      locks. The _first_ block used to. `current` starts nil, nothing warmed it, and the
+      first caller was `processRotorBlocks` (`internal/oscbank/kernel_amd64.go:60`) — already
+      on the audio thread — so exactly one real audio callback per process serialized on
+      `detectMu`. One is one, so it counted. `internal/cpufeat` now warms the cache from its
+      own `init()`, and package initialisation is guaranteed to complete before `main` runs,
+      so the audio thread can no longer be the first caller. The warm-up is a plain `Detect()`
+      rather than a `sync.Once`, because `ResetDetection()` has to be able to force a real
+      hardware re-detect — that is what lets tests force the portable and SSE2-only kernels,
+      the numeric oracle the packed kernels are validated against — and
+      `TestDetectReDetectsAfterReset` pins it.
 - [x] Rendered output is bit-identical across every packed backend that fuses, and the
       portable fallback stays inside the documented per-operation bound. Written up as
       three rules in [docs/oscillator-bank.md](docs/oscillator-bank.md#the-numeric-contract):
@@ -648,10 +652,10 @@ and its per-note-on block buffers. What is left of 2.4:
   and per-voice output separation.
 - **The note-on allocation.** `synth.NewVoice` builds a fresh `model.Bar` per note, 19
   allocations. The fix is to reconfigure a bar the engine already owns instead of constructing
-  one, which is also what lane packing needs from the model. Alongside it, the same criterion
-  wants the one-off `cpufeat.Detect()` lock on the first block warmed off the audio path.
-  Together they are why "no allocation and no mutex acquisition on the audio path" is
-  unticked.
+  one, which is also what lane packing needs from the model. This is now the only thing
+  keeping "no allocation and no mutex acquisition on the audio path" unticked: the mutex half
+  is closed, since `internal/cpufeat` warms detection from its own `init()` and the audio
+  thread can no longer be the first caller.
 
 Both want the same thing from `model.Bar` — a bar that can be pointed at new parameters
 instead of rebuilt — so doing them independently means doing that model work twice.
