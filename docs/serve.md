@@ -117,7 +117,9 @@ Every key is optional and holds one `[min, max]` pair; an omitted key keeps the
 corresponding default bound, so a document can narrow a single dimension without
 restating the rest. Unknown keys are rejected rather than ignored — a misspelled
 dimension that was silently dropped would run the fit against the default box
-while the client believed it had narrowed one.
+while the client believed it had narrowed one, and so is anything following the
+object: a second document appended to the first would be dropped just as
+quietly.
 
 ```json
 {
@@ -135,9 +137,11 @@ Supplied bounds are a **hard constraint**, exactly as on the command line. The
 default box is widened where the starting preset falls outside it; a box the
 client asked for is not, or the fitted preset could violate the very limits that
 were requested. The starting point is clamped into the box instead. Malformed
-JSON, an unknown key, an inverted or empty range, and a range a log-encoded
-dimension cannot take (`filter_freq`, `base_frequency`, `frequency_mult` and
-`decay_ms` must stay above zero) are each a `400` before a job slot is claimed.
+JSON, trailing content after the object, an unknown key, an inverted or empty
+range, a range a log-encoded dimension cannot take (`filter_freq`,
+`base_frequency`, `frequency_mult` and `decay_ms` must stay above zero) and a
+range that leaves the model's own domain (`input_mix` beyond `[0, 2]`, say) are
+each a `400` before a job slot is claimed.
 
 Like the reference and the starting preset, the part is read from bytes in
 memory and its filename is never touched.

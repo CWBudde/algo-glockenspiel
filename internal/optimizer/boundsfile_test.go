@@ -72,6 +72,26 @@ func TestDecodeParamBounds(t *testing.T) {
 			content: `{"decay_ms": [50.0`,
 			wantErr: "decode bounds",
 		},
+		{
+			name:    "rejects a second document after the first",
+			content: `{"decay_ms": [50.0, 400.0]}{"decay_ms": [1.0, 2.0]}`,
+			wantErr: "unexpected content after the bounds object",
+		},
+		{
+			name:    "rejects junk after the object",
+			content: `{"decay_ms": [50.0, 400.0]} nonsense`,
+			wantErr: "unexpected content after the bounds object",
+		},
+		{
+			name:    "rejects a range wholly outside the model domain",
+			content: `{"input_mix": [3.0, 4.0]}`,
+			wantErr: "leaves the model range",
+		},
+		{
+			name:    "rejects a range overhanging the model domain",
+			content: `{"filter_freq": [10.0, 8000.0]}`,
+			wantErr: "leaves the model range",
+		},
 	}
 
 	for _, tc := range tests {
@@ -118,9 +138,26 @@ func TestLoadParamBoundsMissingFile(t *testing.T) {
 
 func TestBoundsKeysMatchTheDocument(t *testing.T) {
 	// Every documented key must decode, or the --bounds help text and the API
-	// error messages would advertise a key the parser rejects.
+	// error messages would advertise a key the parser rejects. The ranges are
+	// per key because they now have to sit inside the model's domain, and no
+	// single pair fits both input_mix and filter_freq.
+	ranges := map[string]string{
+		"input_mix":      "[0.5, 1.5]",
+		"filter_freq":    "[500.0, 8000.0]",
+		"base_frequency": "[400.0, 500.0]",
+		"amplitude":      "[-1.0, 1.0]",
+		"frequency_mult": "[0.5, 10.0]",
+		"decay_ms":       "[50.0, 400.0]",
+		"harmonic_gain":  "[0.0, 1.0]",
+	}
+
 	for _, key := range optimizer.BoundsKeys {
-		if _, err := optimizer.DecodeParamBounds([]byte(`{"`+key+`": [1.0, 2.0]}`), "the test document"); err != nil {
+		value, ok := ranges[key]
+		if !ok {
+			t.Fatalf("documented key %q has no test range", key)
+		}
+
+		if _, err := optimizer.DecodeParamBounds([]byte(`{"`+key+`": `+value+`}`), "the test document"); err != nil {
 			t.Fatalf("documented key %q does not decode: %v", key, err)
 		}
 	}

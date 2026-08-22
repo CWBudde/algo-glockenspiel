@@ -696,15 +696,36 @@ func TestStartRejectsBadRequests(t *testing.T) {
 			wantText:   "must be below max",
 		},
 		{
-			// Well-formed and ordered, but not encodable: the log-encoded
-			// dimensions cannot start at zero. The objective rejects it, still
-			// before a job slot is claimed.
+			// Well-formed and ordered, but the model's own floor for the
+			// dimension is above zero, and a log-encoded dimension could not
+			// start there anyway. Rejected before a job slot is claimed.
 			name:       "bounds a codec cannot encode",
 			reference:  reference,
 			fields:     shortFit(),
 			bounds:     []byte(`{"decay_ms": [0.0, 400.0]}`),
 			wantStatus: http.StatusBadRequest,
 			wantText:   "decay_ms",
+		},
+		{
+			// Ordered and finite, but no candidate inside it survives
+			// model.ValidateBarParams, so the fit could only burn its budget on
+			// +Inf scores. Rejected up front instead.
+			name:       "bounds outside the model domain",
+			reference:  reference,
+			fields:     shortFit(),
+			bounds:     []byte(`{"input_mix": [3.0, 4.0]}`),
+			wantStatus: http.StatusBadRequest,
+			wantText:   "leaves the model range",
+		},
+		{
+			// Only the first object would be applied, so the fit would run
+			// against constraints the client never asked for.
+			name:       "bounds followed by a second document",
+			reference:  reference,
+			fields:     shortFit(),
+			bounds:     []byte(`{"decay_ms": [50.0, 400.0]}{"decay_ms": [1.0, 2.0]}`),
+			wantStatus: http.StatusBadRequest,
+			wantText:   "unexpected content after the bounds object",
 		},
 	}
 

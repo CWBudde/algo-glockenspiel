@@ -3,9 +3,13 @@ package optimizer
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
+
+	"github.com/cwbudde/glockenspiel/model"
 )
 
 // The bounds file lives here rather than in internal/cli because the CLI is no
@@ -70,7 +74,14 @@ func LoadParamBounds(path string) (ParamBounds, error) {
 //
 // Unknown keys are rejected: a misspelled dimension that was silently ignored
 // would run a fit against the default box while the caller believed it had
-// narrowed one.
+// narrowed one. So is anything following the object, for the same reason: a
+// second document appended to the first would be dropped without a word, and
+// the fit would run against constraints nobody wrote.
+//
+// Each supplied range must also lie inside the model's own domain. A box the
+// model can never accept -- input_mix [3,4], say -- decodes into parameters
+// model.ValidateBarParams rejects, so every candidate would score +Inf and the
+// fit would burn its whole budget to produce nothing.
 func DecodeParamBounds(data []byte, source string) (ParamBounds, error) {
 	bounds := DefaultParamBounds
 
@@ -83,18 +94,26 @@ func DecodeParamBounds(data []byte, source string) (ParamBounds, error) {
 		return bounds, fmt.Errorf("decode bounds %q: %w", source, err)
 	}
 
+	if err := decoder.Decode(new(json.RawMessage)); !errors.Is(err, io.EOF) {
+		return bounds, fmt.Errorf("decode bounds %q: unexpected content after the bounds object", source)
+	}
+
+	// limit is the range model.ValidateBarParams enforces on the dimension.
+	// frequency_mult has none: it is a multiplier, and what the model bounds is
+	// the mode frequency it produces together with base_frequency.
 	fields := []struct {
 		name   string
 		source *BoundsRange
 		target *Range
+		limit  *Range
 	}{
-		{"input_mix", document.InputMix, &bounds.InputMix},
-		{"filter_freq", document.FilterFreq, &bounds.FilterFreq},
-		{"base_frequency", document.BaseFrequency, &bounds.BaseFrequency},
-		{"amplitude", document.Amplitude, &bounds.Amplitude},
-		{"frequency_mult", document.FrequencyMult, &bounds.FrequencyMult},
-		{"decay_ms", document.DecayMs, &bounds.DecayMs},
-		{"harmonic_gain", document.HarmonicGain, &bounds.HarmonicGain},
+		{"input_mix", document.InputMix, &bounds.InputMix, &Range{Min: model.InputMixMin, Max: model.InputMixMax}},
+		{"filter_freq", document.FilterFreq, &bounds.FilterFreq, &Range{Min: model.FilterFrequencyMinHz, Max: model.FilterFrequencyMaxHz}},
+		{"base_frequency", document.BaseFrequency, &bounds.BaseFrequency, &Range{Min: model.FrequencyMinHz, Max: model.FrequencyMaxHz}},
+		{"amplitude", document.Amplitude, &bounds.Amplitude, &Range{Min: model.AmplitudeMin, Max: model.AmplitudeMax}},
+		{"frequency_mult", document.FrequencyMult, &bounds.FrequencyMult, nil},
+		{"decay_ms", document.DecayMs, &bounds.DecayMs, &Range{Min: model.DecayMsMin, Max: model.DecayMsValidationMax}},
+		{"harmonic_gain", document.HarmonicGain, &bounds.HarmonicGain, &Range{Min: model.HarmonicGainMin, Max: model.HarmonicGainMax}},
 	}
 
 	for _, field := range fields {
@@ -109,6 +128,11 @@ func DecodeParamBounds(data []byte, source string) (ParamBounds, error) {
 
 		if low >= high {
 			return bounds, fmt.Errorf("bounds %q: %s min %g must be below max %g", source, field.name, low, high)
+		}
+
+		if field.limit != nil && (low < field.limit.Min || high > field.limit.Max) {
+			return bounds, fmt.Errorf("bounds %q: %s [%g, %g] leaves the model range [%g, %g]",
+				source, field.name, low, high, field.limit.Min, field.limit.Max)
 		}
 
 		*field.target = Range{Min: low, Max: high}
