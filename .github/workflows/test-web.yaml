@@ -32,6 +32,12 @@ jobs:
       - name: Lint
         run: npm --prefix web run lint
 
+      # The audio transport's pure core -- the queue the AudioWorklet and the
+      # ScriptProcessorNode fallback both drain, and the module URL the engine
+      # worker resolves. Everything around them needs a real audio thread.
+      - name: Test
+        run: npm --prefix web run test
+
       # The build is a check in its own right: tsc does not see the CSS, the
       # asset imports or the HTML entry, and any of the three can break a bundle
       # that typechecks cleanly.
