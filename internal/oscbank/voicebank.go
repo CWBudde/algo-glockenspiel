@@ -99,11 +99,19 @@ func (v *VoiceBank) SampleRate() float64 { return v.sampleRate }
 //
 // Reconfiguring a lane leaves every other lane's rotor state untouched, which
 // is what a note-on has to do while its neighbours are still sounding. The one
-// exception is a change of *shape*: if the new voice needs more oscillators or
-// more harmonics than the bank currently holds, rotor r stops denoting the same
-// partial and all rotor state is discarded, the same way Bank.SetOscillators
-// discards it. A polyphonic engine drives every voice from one preset, so that
-// happens on a preset change and not on a note.
+// exception is a change of *shape*, and it cuts both ways. The bank is as wide
+// as its widest lane, so the shape moves whenever this call changes that
+// maximum -- growing it with a wider voice, and equally shrinking it by
+// narrowing or clearing the lane that was the widest. Either way rotor r stops
+// denoting the same partial, so all rotor state is discarded, the same way
+// Bank.SetOscillators discards it, and every lane goes quiet rather than only
+// this one.
+//
+// Clearing a lane is therefore not automatically the cheap operation it looks
+// like: passing nil for the widest voice silences the others too. ResetVoice is
+// what silences one lane and leaves the rest ringing. A polyphonic engine
+// avoids the question entirely by pinning the shape once -- configure every
+// lane at the widest shape the preset can produce, and no note-on can move it.
 func (v *VoiceBank) SetVoice(index int, oscillators []Oscillator) error {
 	if index < 0 || index >= LaneWidth {
 		return fmt.Errorf("oscbank: voice index %d out of range [0, %d)", index, LaneWidth)

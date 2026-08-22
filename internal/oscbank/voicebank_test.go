@@ -517,3 +517,57 @@ func BenchmarkVoiceBank8Voices2x3(b *testing.B) {
 		bank.ProcessBlock(input, output)
 	}
 }
+
+// TestVoiceBankNarrowingTheWidestLaneResetsEveryLane pins the half of the shape
+// rule that is easy to miss: the bank is as wide as its widest lane, so
+// narrowing or clearing that lane moves the shape downwards just as surely as a
+// wider voice moves it upwards, and either direction discards every lane's
+// rotor state. It is the reason SetVoice(index, nil) is not the way to silence
+// one voice while its neighbours ring -- ResetVoice is.
+func TestVoiceBankNarrowingTheWidestLaneResetsEveryLane(t *testing.T) {
+	const frames = 64
+
+	bank := NewVoiceBank(48000)
+
+	// Lane 0 is the widest: two oscillators of three harmonics against one
+	// oscillator of one harmonic everywhere else.
+	if err := bank.SetVoice(0, voiceTestOscillators(0)); err != nil {
+		t.Fatalf("SetVoice(0): %v", err)
+	}
+
+	narrow := []Oscillator{{Amplitude: 0.5, Frequency: 440, DecayMs: 500}}
+
+	for voice := 1; voice < LaneWidth; voice++ {
+		if err := bank.SetVoice(voice, narrow); err != nil {
+			t.Fatalf("SetVoice(%d): %v", voice, err)
+		}
+	}
+
+	if got, want := bank.NumRotors(), 2*3; got != want {
+		t.Fatalf("NumRotors() = %d, want %d -- the bank should be as wide as lane 0", got, want)
+	}
+
+	// Ring every lane, so there is state to lose.
+	bank.ProcessBlock(interleavedExcitation(frames, 23), make([]float32, frames*LaneWidth))
+
+	if err := bank.SetVoice(0, narrow); err != nil {
+		t.Fatalf("SetVoice(0, narrow): %v", err)
+	}
+
+	if got, want := bank.NumRotors(), 1; got != want {
+		t.Fatalf("NumRotors() = %d, want %d after the widest lane narrowed", got, want)
+	}
+
+	// Every lane, not only lane 0, is silent into silence: the reshape cleared
+	// the whole bank.
+	silence := make([]float32, frames*LaneWidth)
+	output := make([]float32, frames*LaneWidth)
+
+	bank.ProcessBlock(silence, output)
+
+	for _, sample := range output {
+		if sample != 0 {
+			t.Fatalf("a lane still rings after the shape shrank; rotor state should have been discarded")
+		}
+	}
+}
