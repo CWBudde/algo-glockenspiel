@@ -23,11 +23,67 @@ func processChebyshevBlock(input, output, gains []float32) {
 	for i := shaped; i < len(input); i++ {
 		output[i] = chebyshevScalar(input[i], gains)
 	}
+
+	// The polynomial sum is not zero at zero, so a silent input leaves the
+	// shaper holding a constant. Removing it here rather than inside the
+	// recurrence keeps body and tail on the same footing: both have already
+	// been rounded to float32 and written, and both lose the same constant.
+	if offset := chebyshevZeroOffset(gains); offset != 0 {
+		for i := range input {
+			output[i] -= offset
+		}
+	}
 }
 
-// chebyshevScalar evaluates the waveshaper for one sample: the sum over k of
-// gains[k] * T_(k+1)(x), with x clamped to the interval the Chebyshev
+// chebyshevZeroOffset is what the polynomial sum evaluates to at zero.
+//
+// T_(k+1) is odd for even k and even for odd k, so the odd-indexed gains --
+// those weighting T_2, T_4 and so on -- contribute at x = 0 and the rest do
+// not. For the shipped preset's [1.0, 0.5, 0.3, 0.2] it is exactly -0.3.
+//
+// Left in, that constant is not a cosmetic offset. The default preset places
+// the shaper ahead of the oscillator bank, so it becomes a DC excitation that
+// never stops: every rotor settles at a steady state and the note sustains for
+// its whole length instead of decaying. Measured on the shipped preset before
+// this was subtracted, the bar sat at an unchanging RMS of 0.1289 from 0.4 s to
+// 3.8 s, and the auto-stop never fired because nothing ever went quiet. The
+// legacy reference render the port is checked against decays into silence
+// within 0.56 s, so the sustain was never the intended sound.
+//
+// It is evaluated per block rather than cached with the gains because it costs
+// one pass over len(gains) -- four, for every v1 preset -- against a block of
+// hundreds of samples, and a cached copy is one more thing that can go stale
+// when a bar is retuned in place.
+func chebyshevZeroOffset(gains []float32) float32 {
+	if len(gains) == 0 {
+		return 0
+	}
+
+	// The recurrence with x = 0 collapses to T_(k+1) = -T_(k-1), so the terms
+	// run 0, -1, 0, 1, 0, -1 and every one of them is exact. What is not free
+	// to be reordered is the sum: it accumulates front to back, the same way
+	// chebyshevScalar does, so the two agree bit for bit on a gain set whose
+	// partial sums do not round the same way in a different order.
+	prevPrevTerm := float32(1)
+	prevTerm := float32(0)
+	out := float32(0)
+
+	for i := 1; i < len(gains); i++ {
+		nextTerm := -prevPrevTerm
+		out += float32(gains[i] * nextTerm)
+		prevPrevTerm, prevTerm = prevTerm, nextTerm
+	}
+
+	return out
+}
+
+// chebyshevScalar evaluates the polynomial sum for one sample: the sum over k
+// of gains[k] * T_(k+1)(x), with x clamped to the interval the Chebyshev
 // polynomials are defined on.
+//
+// This is the sum alone. The shaper is this minus chebyshevZeroOffset, and
+// processChebyshevBlock is where the two meet -- the vectorised body cannot
+// subtract the constant inside the recurrence, so neither does the tail.
 //
 // The arithmetic mirrors the AVX2 kernel instruction for instruction. It is
 // float32 throughout, the recurrence is evaluated as 2*(x*T_k) - T_(k-1), and
