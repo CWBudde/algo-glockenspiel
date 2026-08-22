@@ -16,6 +16,7 @@
 # generated artifacts
 /out/
 /web/dist/
+/web/node_modules/
 /glockenspiel-vst3
 
 # build & test artifacts

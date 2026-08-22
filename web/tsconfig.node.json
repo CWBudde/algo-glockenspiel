@@ -1,0 +1,21 @@
+{
+  // The build tooling runs in Node, not in the browser: no DOM lib here, so a
+  // stray `document` in vite.config.ts is a type error rather than a runtime
+  // surprise during `vite build`.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+
+    "isolatedModules": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["vite.config.ts"]
+}

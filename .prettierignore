@@ -3,3 +3,4 @@ web/wasm_exec.js
 
 # Generated
 web/dist/
+web/node_modules/
