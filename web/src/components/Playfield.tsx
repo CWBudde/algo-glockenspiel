@@ -45,7 +45,15 @@ export function Playfield({ onStrike, activeNotes }: PlayfieldProps) {
   }, []);
 
   return (
-    <div className="playfield-viewport" ref={viewportRef}>
+    <div
+      className="playfield-viewport"
+      ref={viewportRef}
+      style={
+        {
+          "--playfield-viewport-width": `${MOBILE_LAYOUT.viewportWidth}px`,
+        } as CSSProperties
+      }
+    >
       <div
         className="playfield-track"
         style={

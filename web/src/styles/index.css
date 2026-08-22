@@ -643,35 +643,89 @@ h1 {
 
 @media (max-width: 760px) {
   .studio-shell {
-    width: min(100vw - 16px, 100%);
-    padding-top: var(--space-md);
+    width: min(100vw - 8px, 100%);
+    padding: var(--space-2xs) 0 var(--space-sm);
   }
 
   .studio-topbar {
     border-radius: var(--radius-group);
   }
 
+  .instrument-card {
+    margin-top: var(--space-xs);
+    border-radius: var(--radius-group);
+  }
+
   .control-deck {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-lg);
-    padding: var(--space-lg);
+    gap: var(--space-xs);
+    padding: var(--space-xs);
   }
 
   .control-deck .dial-control {
     justify-self: center;
+    gap: 2px;
+  }
+
+  .control-deck .dial-label {
+    font-size: 0.9rem;
+    line-height: 1;
+  }
+
+  .control-deck .dial-assembly-small {
+    width: 52px;
+    height: 52px;
+  }
+
+  .control-deck .dial-control output {
+    font-size: 0.78rem;
   }
 
   .control-deck-appearance,
   .control-deck-status {
-    grid-column: 1 / -1;
+    grid-column: auto;
+    align-self: stretch;
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-control);
+  }
+
+  .control-deck-appearance {
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    gap: var(--space-2xs);
+  }
+
+  .wood-field {
+    gap: 2px;
+    font-size: 0.76rem;
+  }
+
+  .wood-field select {
+    width: 100%;
+    padding: 0 var(--space-sm);
+    font-size: 0.78rem;
+  }
+
+  .wood-description,
+  .status-panel {
+    font-size: 0.75rem;
+    line-height: 1.25;
   }
 
   .control-deck-status {
+    align-content: start;
+    gap: 2px;
     min-height: 0;
   }
 
+  .status-label {
+    font-size: 0.7rem;
+  }
+
   .playfield-viewport {
-    width: 100%;
+    width: min(var(--playfield-viewport-width), 100%);
+    max-width: 100%;
+    margin-inline: auto;
     overflow-x: auto;
     overflow-y: hidden;
     overscroll-behavior-x: contain;
@@ -692,30 +746,35 @@ h1 {
     margin-left: calc(
       var(--playfield-rack-offset-white-units) * var(--playfield-white-unit)
     );
-    padding: var(--space-xl) 0 var(--space-sm);
+    padding: var(--space-2xs) 0;
   }
 
   .instrument-stage {
-    min-height: 410px;
+    min-height: 330px;
   }
 
   .rack-wrap {
     padding: 0;
   }
 
+  .rack {
+    min-height: 320px;
+    border-radius: var(--radius-group);
+  }
+
   .rack::before {
-    inset: 46px 18px 38px 18px;
+    inset: 20px 10px 14px;
   }
   .rack::after {
     inset: 58px 28px 48px 28px;
   }
 
   .note-lane-sharps {
-    top: 58px;
+    top: 32px;
   }
 
   .note-lane-naturals {
-    top: 140px;
+    top: 112px;
   }
 
   .note-lane {
@@ -731,18 +790,31 @@ h1 {
   }
 
   .bar-note {
-    font-size: 0.88rem;
+    font-size: 0.76rem;
+  }
+
+  .bar-key {
+    font-size: 0.65rem;
+  }
+
+  .mallet {
+    right: 1%;
+    bottom: -10px;
+    width: 84px;
   }
 
   .keyboard-panel {
     overflow: visible;
+    padding-top: var(--space-2xs);
     padding-right: 0;
+    padding-bottom: var(--space-xs);
     padding-left: 0;
   }
 
   .keyboard {
     width: 100%;
     min-width: 0;
+    height: 62px;
   }
 
   .playfield-viewport .piano-key {
@@ -752,6 +824,7 @@ h1 {
   /* Keep the quiet narrow accidental while making its touch target 44px. */
   .playfield-viewport .piano-key.black {
     width: var(--playfield-white-unit);
+    height: 44px;
     background: transparent;
     box-shadow: none;
   }
@@ -759,7 +832,7 @@ h1 {
   .playfield-viewport .piano-key.black::before {
     content: "";
     position: absolute;
-    inset: 0 22%;
+    inset: 0 22% 10px;
     border-radius: 0 0 4px 4px;
     background: linear-gradient(180deg, #625950 0%, #46403a 100%);
     box-shadow:
@@ -773,6 +846,15 @@ h1 {
 
   .playfield-viewport .piano-key.black.is-active::before {
     background: linear-gradient(180deg, #806a50 0%, #554638 100%);
+  }
+
+  .playfield-viewport .piano-key.white {
+    height: 56px;
+  }
+
+  .piano-note {
+    bottom: var(--space-2xs);
+    font-size: 0.62rem;
   }
 }
 
@@ -1400,17 +1482,40 @@ h1 {
 @media (max-width: 760px) {
   .studio-topbar {
     flex-wrap: wrap;
-    gap: var(--space-sm);
+    gap: var(--space-2xs);
+    padding: var(--space-2xs) var(--space-sm);
+  }
+
+  .brand {
+    gap: var(--space-xs);
+  }
+
+  .brand-mark {
+    width: 30px;
+    height: 30px;
+  }
+
+  .brand-kicker {
+    margin-bottom: 1px;
+    font-size: 0.52rem;
+    line-height: 1;
+  }
+
+  h1 {
+    font-size: 1.08rem;
+    line-height: 1.05;
   }
 
   .tab-bar {
     width: 100%;
+    padding: 2px;
   }
 
   .tab {
     flex: 1;
     justify-content: center;
     min-height: 44px;
+    font-size: 0.76rem;
   }
 
   .wood-field select,

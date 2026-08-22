@@ -8,6 +8,7 @@ export const LAST_NOTE = 84; // C6
 export const KEYBOARD_FIRST_NOTE = 36; // C2
 export const KEYBOARD_LAST_NOTE = 96; // C7
 export const MOBILE_WHITE_UNIT_PX = 44;
+export const MOBILE_VIEWPORT_WHITE_UNITS = 7;
 export const BAR_PERSPECTIVE_PX = 8;
 
 export type BarKind = "natural" | "accidental";
@@ -232,6 +233,10 @@ export interface PlayfieldLayout {
   rackOffsetWhiteUnits: number;
   /** Initial mobile scroll position, aligned to the rack's leading edge. */
   initialScrollLeft: number;
+  /** Number of white-key pitches framed by the compact mobile viewport. */
+  viewportWhiteUnits: number;
+  /** Compact mobile viewport width in CSS pixels. */
+  viewportWidth: number;
 }
 
 export function computeKeyboardLayout(): KeyboardLayout {
@@ -267,6 +272,7 @@ export function computeKeyboardLayout(): KeyboardLayout {
  */
 export function computePlayfieldLayout(
   whiteUnitPx = MOBILE_WHITE_UNIT_PX,
+  viewportWhiteUnits = MOBILE_VIEWPORT_WHITE_UNITS,
 ): PlayfieldLayout {
   const keyboard = computeKeyboardLayout();
   const rack = computeNoteLayout();
@@ -278,6 +284,8 @@ export function computePlayfieldLayout(
     rackWhiteUnits: rack.totalWhiteUnits,
     rackOffsetWhiteUnits,
     initialScrollLeft: rackOffsetWhiteUnits * whiteUnitPx,
+    viewportWhiteUnits,
+    viewportWidth: viewportWhiteUnits * whiteUnitPx,
   };
 }
 

@@ -341,6 +341,39 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
   expect(pianoC4Box).not.toBeNull();
   const viewportBox = await viewport.boundingBox();
   expect(viewportBox).not.toBeNull();
+  expect(viewportBox!.width).toBeCloseTo(MOBILE_PLAYFIELD.viewportWidth, 1);
+  expect(viewportBox!.width / MOBILE_PLAYFIELD.whiteUnitPx).toBeCloseTo(
+    MOBILE_PLAYFIELD.viewportWhiteUnits,
+    2,
+  );
+
+  const initiallyFramedWhites = await keyboard
+    .locator(".piano-key.white")
+    .evaluateAll(
+      (elements, frame) =>
+        elements
+          .filter((element) => {
+            const box = element.getBoundingClientRect();
+            return (
+              box.left >= frame.left - 0.5 && box.right <= frame.right + 0.5
+            );
+          })
+          .map((element) => element.getAttribute("aria-label")),
+      {
+        left: viewportBox!.x,
+        right: viewportBox!.x + viewportBox!.width,
+      },
+    );
+  expect(initiallyFramedWhites).toEqual([
+    "C4",
+    "D4",
+    "E4",
+    "F4",
+    "G4",
+    "A4",
+    "B4",
+  ]);
+
   expect(rackC4Box!.x).toBeGreaterThanOrEqual(viewportBox!.x);
   expect(rackC4Box!.x + rackC4Box!.width).toBeLessThanOrEqual(
     viewportBox!.x + viewportBox!.width,
@@ -352,6 +385,126 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
         (pianoC4Box!.x + pianoC4Box!.width / 2),
     ),
   ).toBeLessThanOrEqual(1);
+
+  const compactLandmarks = await page.evaluate(() => {
+    const boxes = [
+      ".studio-topbar",
+      ".control-deck",
+      ".instrument-stage",
+      ".keyboard-panel",
+    ].map((selector) =>
+      document.querySelector(selector)?.getBoundingClientRect(),
+    );
+    if (boxes.some((box) => box === undefined)) {
+      throw new Error("compact Play landmarks are missing");
+    }
+
+    const [topbar, deck, stage, keyboardPanel] = boxes as DOMRect[];
+    return {
+      deckHeight: deck.height,
+      keyboardBottom: keyboardPanel.bottom,
+      keyboardTop: keyboardPanel.top,
+      rackTop: stage.top,
+      topbarHeight: topbar.height,
+    };
+  });
+  expect(compactLandmarks.topbarHeight).toBeLessThanOrEqual(96);
+  expect(compactLandmarks.deckHeight).toBeLessThanOrEqual(230);
+  expect(compactLandmarks.rackTop).toBeLessThan(350);
+  expect(compactLandmarks.keyboardTop).toBeLessThan(700);
+  expect(compactLandmarks.keyboardBottom).toBeLessThanOrEqual(760);
+
+  const compactTargets = await page
+    .getByRole("region", { name: "Performance controls" })
+    .locator(".dial-assembly, select")
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const box = element.getBoundingClientRect();
+        return { height: box.height, width: box.width };
+      }),
+    );
+  expect(compactTargets).toHaveLength(3);
+  expect(
+    compactTargets.every(({ height, width }) => height >= 44 && width >= 44),
+  ).toBe(true);
+
+  for (const panelSelector of [
+    ".control-deck-appearance",
+    ".control-deck-status",
+  ]) {
+    const contained = await page.locator(panelSelector).evaluate((panel) => {
+      const panelBox = panel.getBoundingClientRect();
+      return [...panel.querySelectorAll("span, p, select")].every((element) => {
+        const box = element.getBoundingClientRect();
+        return (
+          box.left >= panelBox.left - 1 &&
+          box.right <= panelBox.right + 1 &&
+          box.top >= panelBox.top - 1 &&
+          box.bottom <= panelBox.bottom + 1
+        );
+      });
+    });
+    expect(contained).toBe(true);
+  }
+
+  for (const lane of [
+    rack.locator(".note-lane-naturals"),
+    rack.locator(".note-lane-sharps"),
+  ]) {
+    const supportAlignment = await lane.evaluate((element) => {
+      const svg = element.querySelector(".row-support");
+      const polyline = svg?.querySelector("polyline");
+      const bars = [...element.querySelectorAll<HTMLElement>(".bar")];
+      if (
+        !(svg instanceof SVGSVGElement) ||
+        !(polyline instanceof SVGPolylineElement)
+      ) {
+        throw new Error("mobile row support geometry is missing");
+      }
+
+      const svgBox = svg.getBoundingClientRect();
+      const laneBox = element.getBoundingClientRect();
+      const viewBox = svg.viewBox.baseVal;
+      const points = Array.from(polyline.points);
+      return bars.map((bar, index) => {
+        const barBox = bar.getBoundingClientRect();
+        const point = points[index];
+        return {
+          dx: Math.abs(
+            barBox.left +
+              barBox.width / 2 -
+              (svgBox.left + (point.x / viewBox.width) * svgBox.width),
+          ),
+          dy: Math.abs(
+            laneBox.top +
+              Number(bar.dataset.mountY) -
+              (svgBox.top + (point.y / viewBox.height) * svgBox.height),
+          ),
+        };
+      });
+    });
+    expect(supportAlignment.every(({ dx, dy }) => dx <= 1 && dy <= 1)).toBe(
+      true,
+    );
+  }
+
+  const mobileLayers = await rack.evaluate((element) => ({
+    accidentals: Number(
+      getComputedStyle(
+        element.querySelector(".note-lane-sharps") as HTMLElement,
+      ).zIndex,
+    ),
+    mallet: Number(
+      getComputedStyle(element.querySelector(".mallet") as HTMLElement).zIndex,
+    ),
+    naturals: Number(
+      getComputedStyle(
+        element.querySelector(".note-lane-naturals") as HTMLElement,
+      ).zIndex,
+    ),
+  }));
+  expect(mobileLayers.accidentals).toBeGreaterThan(mobileLayers.naturals);
+  expect(mobileLayers.mallet).toBeGreaterThan(mobileLayers.accidentals);
 
   const barMetrics = await bars.evaluateAll((elements) =>
     elements.map((element) => {
@@ -446,6 +599,24 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
     }, '.piano-key[data-note="96"]'),
   ).toBe(true);
 
+  const mobileMalletOverlap = await rack.evaluate((element) => {
+    const mallet = element.querySelector(".mallet")?.getBoundingClientRect();
+    if (mallet === undefined) {
+      throw new Error("mobile mallet is missing");
+    }
+
+    return [...element.querySelectorAll(".bar")].some((bar) => {
+      const box = bar.getBoundingClientRect();
+      return (
+        mallet.left < box.right &&
+        mallet.right > box.left &&
+        mallet.top < box.bottom &&
+        mallet.bottom > box.top
+      );
+    });
+  });
+  expect(mobileMalletOverlap).toBe(false);
+
   expect(
     await page
       .locator("body")
@@ -459,6 +630,8 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
           !element.contains(document.querySelector(".playfield-viewport")),
       ),
   ).toBe(true);
+  await expectNoSeriousAxeViolations(page);
+  await expectFullKeyboardTraversal(page);
 });
 
 test("rack exposes every bar with material and accessible-name hooks", async ({

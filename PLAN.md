@@ -770,10 +770,15 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       Focus remains three pixels, and Playwright pins the common material hook and gradients, exact
       geometry, keyboard adjustment, pointer adjustment and formatted values. Only the three Play
       references changed; Optimize remains pixel-exact and the full 23-test Chromium suite passes.
-- [ ] **5.5.14 — Compact mobile composition.** Reduce vertical padding and rebalance the narrow
-      control deck so more of the rack is visible at 390px without shrinking the shared pitch
-      surface. Preserve 44px targets, the single horizontal scroller, readable status/wood text,
-      focus traversal and full C2-C7 reachability.
+- [x] **5.5.14 — Compact mobile composition.** At 760px and below, the shorter shared masthead,
+      52px aged-brass dials, paired wood/status panels, tighter rack bed and 56px keyboard put the
+      complete C4-B4 frame and keyboard inside 390x844 without shrinking the 44px pitch unit. The
+      centered viewport is derived as exactly seven white pitches (308px), initializes at C4 once,
+      and still pans across the complete C2-C7 keyboard and C4-C6 rack. Browser coverage pins the
+      compact vertical landmarks, effective targets, readable contained copy, one scroller, exact
+      octave frame, pitch/support alignment, layering, mallet clearance, edge reachability, full
+      keyboard traversal and Axe result. Only the 390px Play reference changed; desktop Play and
+      Optimize remain pixel-exact.
 
 ## Phase 6: Split Out VST3
 

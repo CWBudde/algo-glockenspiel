@@ -35,11 +35,16 @@ describe("mobile playfield geometry", () => {
       rackWhiteUnits: 15,
       rackOffsetWhiteUnits: 14,
       initialScrollLeft: 616,
+      viewportWhiteUnits: 7,
+      viewportWidth: 308,
     });
   });
 
   it("derives the initial scroll from the requested pitch width", () => {
-    expect(computePlayfieldLayout(52).initialScrollLeft).toBe(728);
+    const layout = computePlayfieldLayout(52, 8);
+
+    expect(layout.initialScrollLeft).toBe(728);
+    expect(layout.viewportWidth).toBe(416);
   });
 });
 
