@@ -6,9 +6,15 @@ import (
 )
 
 // chebyshevOracleFloat64 is the float64 recurrence the shaper used to run in
-// the audio path, kept as a test-only oracle: it says what the polynomial sum
-// is mathematically, independent of the float32 rounding every live path now
+// the audio path, kept as a test-only oracle: it says what the shaper computes
+// mathematically, independent of the float32 rounding every live path now
 // shares.
+//
+// The subtraction at the end is the shaper's defining property rather than a
+// correction bolted onto it: a waveshaper has to map silence to silence, and
+// the bare polynomial sum does not, because T_2, T_4 and every other even
+// member are nonzero at the origin. Evaluating the same sum at zero and taking
+// it off is the whole of it.
 func chebyshevOracleFloat64(input float64, gains []float64) float64 {
 	if len(gains) == 0 {
 		return input
@@ -16,12 +22,17 @@ func chebyshevOracleFloat64(input float64, gains []float64) float64 {
 
 	clampedInput := math.Max(-1, math.Min(1, input))
 
+	return chebyshevSumFloat64(clampedInput, gains) - chebyshevSumFloat64(0, gains)
+}
+
+// chebyshevSumFloat64 evaluates sum over k of gains[k] * T_(k+1)(x).
+func chebyshevSumFloat64(x float64, gains []float64) float64 {
 	prevPrevTerm := 1.0
-	prevTerm := clampedInput
+	prevTerm := x
 	out := gains[0] * prevTerm
 
 	for i := 1; i < len(gains); i++ {
-		nextTerm := 2*clampedInput*prevTerm - prevPrevTerm
+		nextTerm := 2*x*prevTerm - prevPrevTerm
 		out += gains[i] * nextTerm
 		prevPrevTerm, prevTerm = prevTerm, nextTerm
 	}
@@ -123,5 +134,69 @@ func BenchmarkProcessChebyshevBlock(b *testing.B) {
 
 	for range b.N {
 		processChebyshevBlock(input, output, gains)
+	}
+}
+
+// TestTheShaperMapsSilenceToSilence is the property the shaper lacked, and the
+// reason a shipped preset sustained forever instead of decaying.
+//
+// The default preset puts the shaper ahead of the oscillator bank, so whatever
+// it emits for a silent input is a DC excitation the bank keeps resolving long
+// after the strike is over. For the shipped gains that constant was -0.3, the
+// bar settled at an unchanging RMS and the auto-stop never fired. Zero in, zero
+// out is not a nicety here; it is what makes a struck bar stop.
+//
+// Both paths are covered: the block is long enough to give the AVX2 kernel a
+// full body and still leave it a scalar tail.
+func TestTheShaperMapsSilenceToSilence(t *testing.T) {
+	gainSets := [][]float64{
+		{1.0, 0.5, 0.3, 0.2}, // the shipped preset's gains, whose sum at zero is -0.3
+		{1.0},
+		{1.0, 0.5},
+		{0.4, -0.9, 0.25},
+		{1.0, 0.5, 0.3, 0.2, -0.1, 0.05},
+	}
+
+	for _, gains := range gainSets {
+		const length = chebyAVX2Block*3 + 3
+
+		input := make([]float32, length)
+		output := make([]float32, length)
+
+		processChebyshevBlock(input, output, float32Gains(gains))
+
+		for i, got := range output {
+			if got != 0 {
+				t.Errorf("gains %v, sample %d: silent input shaped to %v, want 0", gains, i, got)
+
+				break
+			}
+		}
+	}
+}
+
+// TestTheShaperOnlyRemovesAConstant pins the other half: subtracting the value
+// at zero must not otherwise disturb the transfer curve, so the difference
+// between any two shaped samples is what it was before.
+func TestTheShaperOnlyRemovesAConstant(t *testing.T) {
+	gains := float32Gains([]float64{1.0, 0.5, 0.3, 0.2})
+
+	const length = chebyAVX2Block*4 + 5
+
+	input := chebyshevTestInput(length)
+	output := make([]float32, length)
+
+	processChebyshevBlock(input, output, gains)
+
+	offset := chebyshevZeroOffset(gains)
+	if offset == 0 {
+		t.Fatal("these gains are supposed to have a nonzero value at zero")
+	}
+
+	for i := range input {
+		want := chebyshevScalar(input[i], gains) - offset
+		if output[i] != want {
+			t.Fatalf("sample %d: got %v, want %v", i, output[i], want)
+		}
 	}
 }
