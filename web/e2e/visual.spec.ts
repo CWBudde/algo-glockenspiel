@@ -988,6 +988,33 @@ test("performance deck keeps native controls and live engine status", async ({
   await expect(status).toHaveText(ENGINE_READY);
 });
 
+test("play surface uses distinct walnut, maple, and beech layers", async ({
+  page,
+}) => {
+  await installStableEngine(page);
+  await page.goto("/#/play");
+
+  const materials = await page.evaluate(() => {
+    const topbar = document.querySelector(".studio-topbar");
+    const rack = document.querySelector(".rack");
+    if (!(topbar instanceof HTMLElement) || !(rack instanceof HTMLElement)) {
+      throw new Error("wood surfaces are missing");
+    }
+
+    return {
+      canvas: getComputedStyle(document.body).backgroundImage,
+      frame: getComputedStyle(rack).backgroundImage,
+      header: getComputedStyle(topbar).backgroundImage,
+      rackBack: getComputedStyle(rack, "::before").backgroundImage,
+    };
+  });
+
+  expect(materials.canvas).toContain("beech");
+  expect(materials.frame).toContain("walnut");
+  expect(materials.header).toContain("walnut");
+  expect(materials.rackBack).toContain("maple");
+});
+
 test("performance dials share aged brass without changing their controls", async ({
   page,
 }) => {

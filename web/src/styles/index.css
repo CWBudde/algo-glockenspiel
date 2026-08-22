@@ -1,9 +1,6 @@
 :root {
   /* Workshop palette: quiet surfaces, structural wood, and metal accents. */
   --canvas: #ded7ca;
-  --canvas-highlight: #f5f2eb;
-  --canvas-mid: #e5ded2;
-  --canvas-deep: #cfc4b4;
   --parchment: #efe4d1;
   --parchment-light: #fffaf1;
   --charcoal: #3d2415;
@@ -25,19 +22,9 @@
   --surface-border-strong: #89572e;
 
   /* Material recipes keep texture subordinate to readable flat surfaces. */
-  --wood-panel-texture: url("../../assets/wood-panel.svg");
-  --canvas-material:
-    radial-gradient(
-      circle at 18% 0,
-      rgba(255, 253, 247, 0.78),
-      rgba(255, 253, 247, 0) 34%
-    ),
-    linear-gradient(
-      180deg,
-      var(--canvas-highlight) 0%,
-      var(--canvas-mid) 58%,
-      var(--canvas-deep) 100%
-    );
+  --wood-panel-texture: url("../../assets/wood/walnut.png");
+  --rack-back-texture: url("../../assets/wood/maple.png");
+  --canvas-wood-texture: url("../../assets/wood/beech.png");
   --parchment-material:
     linear-gradient(
       180deg,
@@ -105,7 +92,24 @@ body {
 }
 
 body {
-  background: var(--canvas-material);
+  background-color: var(--canvas);
+  background-image:
+    radial-gradient(
+      circle at 18% 0,
+      rgba(255, 253, 247, 0.72),
+      rgba(255, 253, 247, 0) 34%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(245, 242, 235, 0.58) 0%,
+      rgba(229, 222, 210, 0.58) 58%,
+      rgba(207, 196, 180, 0.58) 100%
+    ),
+    var(--canvas-wood-texture);
+  background-position: center top;
+  background-size: auto, auto, 1024px 576px;
+  background-repeat: no-repeat, no-repeat, repeat;
+  background-attachment: fixed;
   color: var(--charcoal);
   font-family: var(--font-body);
 }
@@ -381,8 +385,16 @@ h1 {
   inset: 28px 24px 24px 24px;
   border: 1px solid rgba(77, 59, 43, 0.14);
   border-radius: 16px;
-  background: #e8e2d8;
-  box-shadow: none;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 251, 243, 0.58),
+      rgba(232, 218, 198, 0.48)
+    ),
+    var(--rack-back-texture) center/cover no-repeat;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 252, 244, 0.66),
+    inset 0 0 20px rgba(109, 76, 43, 0.08);
 }
 
 .rack::after {
