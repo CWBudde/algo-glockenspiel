@@ -42,7 +42,8 @@ export function FitProgress({
   maxIterations,
   onSnapshot,
 }: FitProgressProps) {
-  const { snapshot, points, streaming, streamError } = useFitEvents(jobId);
+  const { snapshot, points, revision, streaming, streamError } =
+    useFitEvents(jobId);
 
   useEffect(() => {
     if (snapshot !== null) {
@@ -52,7 +53,7 @@ export function FitProgress({
 
   return (
     <div className="fit-progress">
-      <CostChart points={points} />
+      <CostChart points={points} revision={revision} />
 
       <FitStatus
         snapshot={snapshot}

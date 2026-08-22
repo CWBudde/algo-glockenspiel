@@ -33,7 +33,14 @@ Chart.register(
 );
 
 export interface CostChartProps {
+  /**
+   * The whole curve. `useFitEvents` grows this array in place rather than
+   * replacing it, so its identity changes only when the watched job does and
+   * it is `revision` that says a sample has arrived.
+   */
   points: CostPoint[];
+  /** How many samples have been recorded into `points`. */
+  revision: number;
 }
 
 /** Reads one of the palette's custom properties, with a fallback for SSR-less safety. */
@@ -114,7 +121,7 @@ function formatCost(cost: number): string {
  * Re-rendering the dataset on every event would rebuild the scales and the
  * element cache each time for a chart whose shape has not changed.
  */
-export function CostChart({ points }: CostChartProps) {
+export function CostChart({ points, revision }: CostChartProps) {
   const chartRef = useRef<Chart<"line", Point[]> | null>(null);
 
   const prefersReducedMotion = useMemo(
@@ -210,6 +217,10 @@ export function CostChart({ points }: CostChartProps) {
   const foldedRef = useRef(0);
   const frameRef = useRef<number | null>(null);
 
+  // `revision` is the dependency that moves: `points` is mutated in place, and
+  // the last sample is overwritten rather than appended when the optimizer's
+  // iteration count has not changed, so neither the array's identity nor its
+  // length can be relied on to say that there is something new to draw.
   useEffect(() => {
     const chart = chartRef.current;
 
@@ -246,7 +257,7 @@ export function CostChart({ points }: CostChartProps) {
       frameRef.current = null;
       chart.update("none");
     });
-  }, [points]);
+  }, [points, revision]);
 
   // Only on unmount: cancelling the pending frame between events would keep
   // rescheduling a redraw that never happens while samples keep arriving.

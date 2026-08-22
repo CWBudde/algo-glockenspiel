@@ -476,7 +476,10 @@ Goal: the browser side of the same loop.
       `state === "succeeded"`, because a run cancelled after its first report still has a best
       preset — so the audition gates on the former. There is no polling anywhere in the tab:
       the one non-stream read is a single `GET api/fit` on mount, so a reload lands back on a
-      running fit with Cancel reachable instead of stranding the server's single slot.
+      running fit with Cancel reachable instead of stranding the server's single slot. At
+      `reportEvery: 1` a run produces up to 100,000 samples, so neither the hook nor the chart
+      walks the history per event: the points array is grown in place beside a sample counter,
+      and the chart folds in only the samples it has not drawn, one redraw per animation frame.
 - [x] The Pages build detects the missing API and explains that Optimize needs the local CLI.
       `useApiAvailable.ts`, and the served root moved with it: a Vite bundle is a build
       artifact with hashed names and cannot be `go:embed`ed without making the binary's

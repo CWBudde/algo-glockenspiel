@@ -12,8 +12,23 @@ export interface CostPoint {
 export interface FitEvents {
   /** The most recent whole snapshot, or null before the first event arrives. */
   snapshot: FitSnapshot | null;
-  /** The curve so far. Replaced, never mutated, so a memo on it fires. */
+  /**
+   * The curve so far.
+   *
+   * The array is grown in place rather than replaced. A fit at `reportEvery: 1`
+   * runs to the supported limit of 100,000 iterations, and copying the history
+   * once per event to hand out a fresh array would make building the curve
+   * quadratic -- billions of element copies -- for a consumer that only ever
+   * folds in the samples it has not seen. Its identity therefore changes only
+   * when the watched job does; `revision` is what moves per sample.
+   */
   points: CostPoint[];
+  /**
+   * How many samples have been recorded into `points`, counting a sample that
+   * overwrote the last one in place. It restarts at zero for a new job, and it
+   * is the value a consumer watches to learn that the curve has moved.
+   */
+  revision: number;
   /** Whether a stream is currently open. */
   streaming: boolean;
   /**
@@ -23,9 +38,16 @@ export interface FitEvents {
   streamError: string | null;
 }
 
+/**
+ * The state before anything has arrived.
+ *
+ * Its `points` is never the array the stream grows -- each job gets a fresh one
+ * -- so this shared value stays safe to hand out.
+ */
 const empty: FitEvents = {
   snapshot: null,
   points: [],
+  revision: 0,
   streaming: false,
   streamError: null,
 };
@@ -68,7 +90,8 @@ export function useFitEvents(jobId: string | null): FitEvents {
 
   // The points array is accumulated here rather than read back out of state, so
   // that a burst of events at reportEvery: 1 cannot interleave two functional
-  // updates against a stale array.
+  // updates against a stale array. Each job gets a fresh array and every event
+  // then grows that one array; what state carries is the reference to it.
   const pointsRef = useRef<CostPoint[]>([]);
 
   useEffect(() => {
@@ -101,11 +124,12 @@ export function useFitEvents(jobId: string | null): FitEvents {
         return;
       }
 
-      pointsRef.current = appendPoint(pointsRef.current, snapshot);
+      recordPoint(pointsRef.current, snapshot);
 
-      setState(() => ({
+      setState((previous) => ({
         snapshot,
         points: pointsRef.current,
+        revision: previous.revision + 1,
         streaming: !terminal,
         streamError: null,
       }));
@@ -172,7 +196,7 @@ export function useFitEvents(jobId: string | null): FitEvents {
 }
 
 /**
- * Adds one snapshot to the curve.
+ * Adds one snapshot to the curve, in place.
  *
  * Under a slow reader the server coalesces intermediate reports away -- a
  * subscriber is woken, not queued -- so consecutive events can jump several
@@ -180,8 +204,12 @@ export function useFitEvents(jobId: string | null): FitEvents {
  * of the report before it. Points are therefore appended when the count has
  * moved and overwritten when it has not, which keeps the x axis monotonic
  * without dropping the final, most accurate reading.
+ *
+ * The array is mutated rather than rebuilt because it is the whole history and
+ * this runs once per report: rebuilding it would cost O(n) per event and O(n^2)
+ * over a run.
  */
-function appendPoint(points: CostPoint[], snapshot: FitSnapshot): CostPoint[] {
+function recordPoint(points: CostPoint[], snapshot: FitSnapshot): void {
   const point: CostPoint = {
     iteration: snapshot.optimizerIterations,
     best: snapshot.bestCost,
@@ -191,8 +219,10 @@ function appendPoint(points: CostPoint[], snapshot: FitSnapshot): CostPoint[] {
   const last = points[points.length - 1];
 
   if (last !== undefined && point.iteration <= last.iteration) {
-    return [...points.slice(0, -1), point];
+    points[points.length - 1] = point;
+
+    return;
   }
 
-  return [...points, point];
+  points.push(point);
 }

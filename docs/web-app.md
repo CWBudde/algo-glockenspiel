@@ -212,6 +212,13 @@ the snapshot returned by `POST api/fit/start` reports `bestCost: 0` on every run
 before any candidate has been evaluated. Such a sample is dropped rather than
 clamped to an invented epsilon that would draw a floor which is not in the data.
 
+A run at `reportEvery: 1` may produce 100,000 samples, so nothing on the path
+from the stream to the canvas walks the history: `useFitEvents` grows one array
+in place and counts the samples it has recorded, and `CostChart` folds in only
+what it has not seen yet and coalesces the redraws into one per animation frame.
+Rebuilding either the array or the datasets per event would make drawing the
+curve quadratic in the number of samples.
+
 The curve has been watched filling live from the stream, at `reportEvery: 1`,
 with the coalescing the server documents visible in the gap between the sample
 count and the iteration count. It has **not** been watched falling against a real
