@@ -714,9 +714,13 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       the native range bounds, keyboard and wheel changes, formatted outputs, species application,
       and both polite ready and error announcements. The three Play references were intentionally
       updated; Optimize remains pixel-exact and the full six-test Chromium suite passes.
-- [ ] **5.5.6 — Refine the physical instrument.** Give bars a restrained metal finish, simplify
-      rails and fasteners, reduce glossy highlights, and bring the mallet inside the composition.
-      Define consistent hover, pressed and sounding-note states without changing note activation.
+- [x] **5.5.6 — Refine the physical instrument.** Naturals now use a brushed satin-brass face and
+      dark labels; accidentals use smoked bronze with light labels, and both carry restrained brush
+      lines and layered metal fasteners. Neutral support rails replace the cream/wood rods, and the
+      smaller translucent mallet sits fully inside and behind the playable composition. Hover,
+      pointer press and sounding-note feedback are separate subtle states without activation-code
+      changes. Playwright now pins all 25 named buttons plus the 15/10 material split; the three
+      Play references were intentionally updated while Optimize remains unchanged.
 - [ ] **5.5.7 — Make the keyboard supporting, not competing.** Reduce its height and contrast while
       keeping every piano key clickable, named and visibly focusable. Preserve its C2–C7 range and
       active-note synchronization with the bars.

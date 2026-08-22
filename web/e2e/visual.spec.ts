@@ -110,6 +110,36 @@ for (const viewport of [
   });
 }
 
+test("rack exposes every bar with material and accessible-name hooks", async ({
+  page,
+}) => {
+  await installStableEngine(page);
+  await page.goto("/#/play");
+
+  const rack = page.getByRole("region", { name: "Playable glockenspiel" });
+  const bars = rack.getByRole("button");
+  const naturals = rack.locator(".bar.natural");
+  const accidentals = rack.locator(".bar.accidental");
+
+  await expect(bars).toHaveCount(25);
+  await expect(naturals).toHaveCount(15);
+  await expect(accidentals).toHaveCount(10);
+  await expect(naturals.first()).toHaveCSS(
+    "background-image",
+    /^url\("data:image\/svg\+xml/,
+  );
+  await expect(accidentals.first()).toHaveCSS(
+    "background-image",
+    /^url\("data:image\/svg\+xml/,
+  );
+
+  const names = await bars.evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute("aria-label")),
+  );
+  expect(names.every((name) => name !== null && name.length > 0)).toBe(true);
+  expect(new Set(names).size).toBe(25);
+});
+
 test("performance deck keeps native controls and live engine status", async ({
   page,
 }) => {

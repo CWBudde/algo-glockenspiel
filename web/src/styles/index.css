@@ -379,14 +379,13 @@ h1 {
 .rail {
   position: absolute;
   width: 84%;
-  height: 12px;
+  height: 8px;
+  border: 1px solid rgba(48, 44, 40, 0.34);
   border-radius: var(--radius-pill);
-  background:
-    linear-gradient(180deg, rgba(255, 248, 236, 0.55), rgba(255, 248, 236, 0)),
-    var(--wood-panel-texture) center/cover no-repeat;
+  background: linear-gradient(180deg, #928a7e, #625c54);
   box-shadow:
-    inset 0 1px 0 rgba(255, 251, 244, 0.6),
-    0 3px 8px rgba(95, 66, 37, 0.16);
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 2px 4px rgba(40, 34, 29, 0.14);
   z-index: 3;
 }
 
@@ -450,30 +449,42 @@ h1 {
   background: transparent center bottom/contain no-repeat;
   color: var(--text-on-metal);
   cursor: pointer;
-  filter: drop-shadow(0 10px 9px rgba(78, 40, 17, 0.22));
+  filter: drop-shadow(0 5px 5px rgba(47, 36, 27, 0.2));
   transform: translateX(-50%);
   transform-origin: center bottom;
   transition:
-    transform 150ms ease,
-    filter 150ms ease;
+    transform 120ms ease,
+    filter 120ms ease;
 }
 
 .bar.natural {
   bottom: 0;
   background-image: url("../../assets/bar-natural.svg");
+  color: #3b3023;
 }
 
 .bar.accidental {
   bottom: 0;
   --aspect: 102 / 360;
   background-image: url("../../assets/bar-accidental.svg");
+  color: #f4eadc;
   z-index: 1;
 }
 
-.bar:hover,
+.bar:hover {
+  transform: translateX(-50%) translateY(-2px) scale(1.008);
+  filter: drop-shadow(0 7px 7px rgba(47, 36, 27, 0.22));
+}
+
 .bar.is-active {
-  transform: translateX(-50%) translateY(-4px) scale(1.015);
-  filter: drop-shadow(0 12px 12px rgba(73, 34, 12, 0.28)) saturate(1.03);
+  transform: translateX(-50%) translateY(-1px) scale(1.004);
+  filter: drop-shadow(0 6px 7px rgba(47, 36, 27, 0.22)) brightness(1.1)
+    saturate(1.06);
+}
+
+.bar:active {
+  transform: translateX(-50%) translateY(1px) scale(0.995);
+  filter: drop-shadow(0 2px 3px rgba(47, 36, 27, 0.16)) brightness(0.98);
 }
 
 .bar-note,
@@ -483,6 +494,16 @@ h1 {
   right: 10%;
   text-align: center;
   text-shadow: 0 2px 6px rgba(39, 10, 2, 0.24);
+}
+
+.bar.natural .bar-note,
+.bar.natural .bar-key {
+  text-shadow: 0 1px 0 rgba(255, 244, 216, 0.38);
+}
+
+.bar.accidental .bar-note,
+.bar.accidental .bar-key {
+  text-shadow: 0 1px 3px rgba(18, 13, 10, 0.56);
 }
 
 .bar-note {
@@ -499,20 +520,25 @@ h1 {
 
 .bar-key {
   bottom: 8%;
-  color: rgba(255, 245, 237, 0.76);
+  color: rgba(58, 45, 31, 0.72);
   font-size: var(--type-xs);
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
+.bar.accidental .bar-key {
+  color: rgba(244, 234, 219, 0.72);
+}
+
 .mallet {
   position: absolute;
-  right: -2%;
-  bottom: -54px;
-  width: min(34vw, 360px);
+  right: 3%;
+  bottom: 12px;
+  width: clamp(160px, 25vw, 280px);
+  opacity: 0.62;
   pointer-events: none;
-  filter: drop-shadow(0 10px 12px rgba(101, 73, 44, 0.18));
-  z-index: 5;
+  filter: drop-shadow(0 3px 4px rgba(55, 43, 32, 0.16));
+  z-index: 2;
 }
 
 .keyboard-panel {
