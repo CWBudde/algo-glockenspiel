@@ -723,13 +723,14 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
   expect(rackBodyBox!.width).toBeLessThanOrEqual(1000);
   expect(
     Math.abs(
-      rackBodyBox!.x + rackBodyBox!.width / 2 -
+      rackBodyBox!.x +
+        rackBodyBox!.width / 2 -
         (keyboardBox!.x + keyboardBox!.width / 2),
     ),
   ).toBeLessThanOrEqual(1);
-  expect(keyboardBox!.y - (rackBodyBox!.y + rackBodyBox!.height)).toBeLessThanOrEqual(
-    40,
-  );
+  expect(
+    keyboardBox!.y - (rackBodyBox!.y + rackBodyBox!.height),
+  ).toBeLessThanOrEqual(40);
   expect(firstWhiteKeyBox!.y + firstWhiteKeyBox!.height).toBeLessThanOrEqual(
     768,
   );
@@ -745,9 +746,7 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
     expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(0.25);
     for (let index = 1; index < metrics.length; index += 1) {
       expect(metrics[index].top).toBeGreaterThan(metrics[index - 1].top);
-      expect(metrics[index].bottom).toBeLessThan(
-        metrics[index - 1].bottom,
-      );
+      expect(metrics[index].bottom).toBeLessThan(metrics[index - 1].bottom);
     }
     const first = metrics[0];
     const last = metrics.at(-1)!;
@@ -759,7 +758,9 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
   }
 
   const [naturalWidth, accidentalWidth] = await Promise.all([
-    naturals.first().evaluate((element) => element.getBoundingClientRect().width),
+    naturals
+      .first()
+      .evaluate((element) => element.getBoundingClientRect().width),
     accidentals
       .first()
       .evaluate((element) => element.getBoundingClientRect().width),
@@ -878,9 +879,7 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
     0,
   );
   expect(
-    malletRackBox!.x +
-      malletRackBox!.width -
-      (malletBox!.x + malletBox!.width),
+    malletRackBox!.x + malletRackBox!.width - (malletBox!.x + malletBox!.width),
   ).toBeCloseTo(malletRackBox!.width * 0.03, 0);
   expect(
     barBoxes.some(

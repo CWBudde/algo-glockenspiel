@@ -107,7 +107,10 @@ body {
     ),
     var(--canvas-wood-texture);
   background-position: center top;
-  background-size: auto, auto, 1024px 576px;
+  background-size:
+    auto,
+    auto,
+    1024px 576px;
   background-repeat: no-repeat, no-repeat, repeat;
   background-attachment: fixed;
   color: var(--charcoal);
@@ -481,7 +484,11 @@ h1 {
   border: 1px solid rgba(59, 50, 38, 0.92);
   border-radius: 50%;
   background:
-    radial-gradient(circle at 38% 34%, rgba(255, 247, 226, 0.78) 0 8%, transparent 10%),
+    radial-gradient(
+      circle at 38% 34%,
+      rgba(255, 247, 226, 0.78) 0 8%,
+      transparent 10%
+    ),
     radial-gradient(circle, #4d4942 0 20%, #cfc09d 23% 62%, #69543a 65% 100%);
   box-shadow: 0 1px 1px rgba(39, 31, 24, 0.28);
   pointer-events: none;
@@ -495,7 +502,11 @@ h1 {
 .bar.accidental .bar-mount {
   border-color: rgba(31, 28, 25, 0.96);
   background:
-    radial-gradient(circle at 38% 34%, rgba(247, 238, 220, 0.68) 0 8%, transparent 10%),
+    radial-gradient(
+      circle at 38% 34%,
+      rgba(247, 238, 220, 0.68) 0 8%,
+      transparent 10%
+    ),
     radial-gradient(circle, #343536 0 20%, #a59273 23% 62%, #2c2824 65% 100%);
 }
 
