@@ -14,9 +14,36 @@ const (
 	minRealtimeGain            = 0.1
 )
 
+// KeyboardFirstNote and KeyboardLastNote are the MIDI range the player can
+// actually strike. They mirror KEYBOARD_FIRST_NOTE and KEYBOARD_LAST_NOTE in
+// web/ui.js and are the Go-side source of truth for anything that has to reason
+// about the span of the instrument.
+//
+// The narrower FIRST_NOTE/LAST_NOTE pair in web/ui.js (60..84) describes the
+// drawn bar row, not the playable range: the on-screen keyboard below it sends
+// note-ons across the full 36..96 span, and so do incoming MIDI and the
+// computer-keyboard bindings. Panning has to cover every note that can reach
+// NoteOn, so it spans the keyboard range rather than the bar row -- spanning
+// 60..84 instead would push everything outside it past the intended stereo
+// width, which is the class of bug this constant pair exists to prevent.
+const (
+	KeyboardFirstNote = 36
+	KeyboardLastNote  = 96
+)
+
+// maxKeyboardPan is the half-width of the stereo spread, so the lowest note
+// sits at -maxKeyboardPan and the highest at +maxKeyboardPan. Well short of a
+// hard-panned 1.0: the bars should read as laid out in front of the listener,
+// not as two separate mono instruments.
+const maxKeyboardPan = 0.6
+
 type realtimeVoice struct {
 	note   int
 	stream *Voice
+	// left and right are unit-gain pan coefficients, master gain excluded.
+	// Baking the master gain in here instead is what used to make SetMasterGain
+	// silently miss every note that was already ringing; ProcessBlock applies
+	// the engine's current gain on top of these per block.
 	left   float32
 	right  float32
 	buffer []float32
@@ -100,7 +127,7 @@ func (e *RealtimeEngine) NoteOn(note, velocity int) {
 		return
 	}
 
-	left, right := gainsForNote(note, e.masterGain)
+	left, right := gainsForNote(note)
 
 	for i := range e.voices {
 		if e.voices[i].note == note {
@@ -179,6 +206,13 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 
 	writeIndex := 0
 
+	// Read the master gain once per block. Folding it into the per-voice pan
+	// coefficients here rather than at note-on is what makes a gain change
+	// audible on notes that are already sounding, and hoisting it out of the
+	// inner loop keeps the mix at the same two multiplies per sample it cost
+	// when the gain was baked into the slot.
+	gain := e.masterGain
+
 	// Indexing rather than ranging by value is load-bearing: over a copy, the
 	// buffer growth below is written to the copy and discarded, so a block
 	// larger than the buffer reallocates on every block instead of once.
@@ -189,11 +223,14 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 			v.buffer = make([]float32, frames)
 		}
 
+		left := v.left * gain
+		right := v.right * gain
+
 		n := v.stream.RenderInto(v.buffer[:frames])
 		for j := 0; j < n; j++ {
 			sample := v.buffer[j]
-			buf[j*2] += sample * v.left
-			buf[j*2+1] += sample * v.right
+			buf[j*2] += sample * left
+			buf[j*2+1] += sample * right
 		}
 
 		if !v.stream.Active() {
@@ -225,17 +262,35 @@ func (e *RealtimeEngine) ActiveVoices() int {
 	return len(e.voices)
 }
 
-func gainsForNote(note int, gain float32) (float32, float32) {
-	const (
-		firstNote = 72
-		semitones = 24
-	)
+// gainsForNote maps a note to its unit-gain stereo pair: the bar's position on
+// the keyboard becomes its position in the stereo field, low notes to the left.
+// The returned pair carries no master gain -- ProcessBlock applies that per
+// block so a gain change reaches notes that are already ringing.
+//
+// The position is clamped before it becomes a pan, which is what keeps the
+// result a pan rather than a gain change. The previous mapping spanned 24
+// semitones from note 72 and clamped nothing, so a note-on below 72 -- ordinary
+// on a keyboard that starts at 36 -- ran off the end of the scale: note 36 came
+// out at pan -2.48, which is a left channel boosted to 1.74x and a right
+// channel multiplied by -0.74, i.e. over unity and phase-inverted against the
+// left. Clamping keeps both gains inside [0, 1] for every MIDI value, including
+// the 0..35 and 97..127 a stray note-on can carry.
+func gainsForNote(note int) (float32, float32) {
+	const span = KeyboardLastNote - KeyboardFirstNote
 
-	relative := float32(note-firstNote) / float32(semitones-1)
-	pan := relative*1.2 - 0.6
+	relative := float32(note-KeyboardFirstNote) / float32(span)
 
-	left := gain * (1 - pan) * 0.5
-	right := gain * (1 + pan) * 0.5
+	switch {
+	case relative < 0:
+		relative = 0
+	case relative > 1:
+		relative = 1
+	}
+
+	pan := (relative*2 - 1) * maxKeyboardPan
+
+	left := (1 - pan) * 0.5
+	right := (1 + pan) * 0.5
 
 	return left, right
 }
