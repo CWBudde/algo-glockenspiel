@@ -24,12 +24,16 @@ func sameBuffer(a, b []float32) bool {
 	return &a[0] == &b[0]
 }
 
-// TestProcessBlockDoesNotAllocateAfterFirstBlock pins the buffer growth: a
-// block wider than the voice buffer must allocate once, not once per block.
+// TestProcessBlockDoesNotAllocateAfterFirstBlock pins the audio path against a
+// callback wider than the engine's own block: it costs one growth of the mix
+// buffer and nothing per block thereafter.
 //
-// The growth used to be written to a per-iteration copy of the voice struct,
-// and survived only because the compaction wrote that copy back into the slice
-// afterwards. This is the assertion that keeps it surviving on purpose.
+// The voice buffers do not grow with it. A callback wider than the
+// synthesizer's block size is rendered as several passes of at most that size,
+// so a slot buffer sized at construction is always large enough and the growth
+// branch in mapLanes stays a guard rather than a thing that fires. The second
+// assertion is that guard's other half: whatever the callback width, the slots
+// must still be holding the buffers the constructor gave them.
 func TestProcessBlockDoesNotAllocateAfterFirstBlock(t *testing.T) {
 	engine := newTestEngine(t)
 
@@ -53,12 +57,10 @@ func TestProcessBlockDoesNotAllocateAfterFirstBlock(t *testing.T) {
 		t.Fatal("all voices retired during the run, so the measurement covered nothing")
 	}
 
-	// The direct form of the same claim, and the one that still catches the bug
-	// on a compiler that manages to keep the discarded buffer on the stack:
-	// after a wide block the growth has to be visible in the engine's own slots.
 	for i := range engine.voices {
-		if got := cap(engine.voices[i].buffer); got < frames {
-			t.Fatalf("voice %d still carries a %d-frame buffer after a %d-frame block", i, got, frames)
+		if got := cap(engine.voices[i].buffer); got != defaultRealtimeBlockFrames {
+			t.Fatalf("voice %d carries a %d-frame buffer after a %d-frame block, want %d",
+				i, got, frames, defaultRealtimeBlockFrames)
 		}
 	}
 }

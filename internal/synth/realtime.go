@@ -627,7 +627,19 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 	buf := e.mixBuffer[:required]
 	clear(buf)
 
-	e.renderBanks(frames, buf)
+	// A voice renders at most its own block size per pass, so a callback wider
+	// than that is covered by several passes rather than by one that leaves the
+	// tail silent. Getting this wrong is not subtle: at the demo's 512-frame
+	// callback and a 128-sample block, three quarters of every buffer stayed at
+	// zero and the output was a 94 Hz gate rather than a note.
+	for offset := 0; offset < frames; {
+		segment := min(frames-offset, e.synth.blockSize)
+
+		e.renderBanks(segment, buf[offset*2:(offset+segment)*2])
+
+		offset += segment
+	}
+
 	e.retireVoices()
 
 	for i := range buf {
@@ -638,14 +650,18 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 }
 
 // renderBanks runs one pass of every bank that holds a sounding voice and mixes
-// the result into buf.
-func (e *RealtimeEngine) renderBanks(frames int, buf []float32) {
-	// A voice never renders more than its own block size in one call, which is
-	// what the serial path did too, so the bank pass is that long and a wider
-	// callback block leaves its tail silent exactly as before.
-	segment := min(frames, e.synth.blockSize)
-
-	highest := e.mapLanes(frames)
+// segment frames of the result into buf.
+//
+// segment must not exceed the synthesizer's block size, and buf must hold
+// segment interleaved stereo frames. ProcessBlock is the only caller and
+// derives both from the same min, so the bound lives there rather than being
+// re-applied here: a second cap would silently render less than buf was sized
+// for, which is the failure this whole change set exists to remove. Exceeding
+// it would desynchronise the bank from the voices feeding it -- startBlock caps
+// itself at the voice's block size, so the rotors would advance further than
+// the excitation gathered for them.
+func (e *RealtimeEngine) renderBanks(segment int, buf []float32) {
+	highest := e.mapLanes(segment)
 	if highest == noLane {
 		return
 	}
@@ -680,6 +696,14 @@ func (e *RealtimeEngine) renderBanks(frames int, buf []float32) {
 
 			src := e.voices[slot].stream.startBlock(segment)
 			lengths[lane] = len(src)
+
+			if len(src) == 0 {
+				// The lane is held by a voice that has finished but has not
+				// been released yet, because retirement runs once per callback
+				// rather than once per pass. It contributes nothing, so it must
+				// not be what keeps the bank pass alive.
+				continue
+			}
 
 			for i, x := range src {
 				excitation[i*width+lane] = x
