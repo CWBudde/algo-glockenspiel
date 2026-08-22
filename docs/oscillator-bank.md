@@ -461,26 +461,67 @@ two wrong, for nothing.
 
 ## Measured performance
 
-512-sample blocks, 12th Gen Intel Core i7-1255U, `taskset -c 0,1`,
-`-benchtime 4000x`. The first two rows were read off one benchmark binary, so
-they share a thermal state:
+512-sample blocks. The amd64 rows are a 12th Gen Intel Core i7-1255U,
+`taskset -c 0,1`, `-benchtime 4000x`; the first two of those were read off one
+benchmark binary, so they share a thermal state. The two arm64 rows are an Apple
+M5 and came out of one run of their own; the paragraph after the table says
+which run and under what conditions. Rows from different hosts are not
+comparable to each other, only within a host:
 
-| Kernel                                  | Rotors | ns/block  | ns per rotor-block |
-| --------------------------------------- | ------ | --------- | ------------------ |
-| retired four-mode kernel (float64 AVX2) | 4      | 1314–1384 | 329–346            |
-| `oscbank` 4 oscillators x 4 harmonics   | 16     | 1128–1154 | 70–72              |
-| `oscbank` 4 x 4, SSE2 kernel            | 16     | 2850–3400 | 178–212            |
-| `oscbank` 4 x 4, portable kernel        | 16     | ~8000     | ~500               |
-| `oscbank` 4 x 4, NEON kernel            | 16     | TODO      | TODO               |
+| Kernel                                       | Host     | Rotors | ns/block  | ns per rotor-block |
+| -------------------------------------------- | -------- | ------ | --------- | ------------------ |
+| retired four-mode kernel (float64 AVX2)      | i7-1255U | 4      | 1314–1384 | 329–346            |
+| `oscbank` 4 oscillators x 4 harmonics (AVX2) | i7-1255U | 16     | 1128–1154 | 70–72              |
+| `oscbank` 4 x 4, SSE2 kernel                 | i7-1255U | 16     | 2850–3400 | 178–212            |
+| `oscbank` 4 x 4, portable kernel             | i7-1255U | 16     | ~8000     | ~500               |
+| `oscbank` 4 x 4, NEON kernel                 | Apple M5 | 16     | 1319      | 82                 |
+| `oscbank` 4 x 4, portable kernel             | Apple M5 | 16     | 7009      | 438                |
 
-The NEON row is deliberately empty. The kernel is exercised under qemu-user,
-which is a translation layer: trustworthy for correctness and instruction
-validity, worthless for timing. Fill it in from `go test -bench Bank` on a
-native arm64 host — an Apple silicon MacBook is the intended source — and take
-`BenchmarkBank4x4Portable` in the same run, because the interesting number is
-the ratio and it will not be the amd64 ratio. Expect it to be wider than it
-would have been a month ago: the reference gave up FMA on arm64 when it grew its
-rounding barriers, so the portable side of that ratio got slower there.
+The two arm64 rows replace a `TODO` that stood as long as the only arm64 this
+repository could reach was qemu-user, which is a translation layer: trustworthy
+for correctness and instruction validity, worthless for timing. They were taken
+on a native Apple M5 (4 performance and 6 efficiency cores, macOS 26.6.1,
+Go 1.26.5 darwin/arm64) through `scripts/bench-remote.sh`, which rsyncs the
+working tree to the host over ssh and runs, in one invocation:
+
+```
+go test -run '^$' \
+  -bench '^(BenchmarkBank4x4|BenchmarkBank4x4Portable|BenchmarkBank16x4|BenchmarkBank64x4|BenchmarkReduceLanes4x4)$' \
+  -benchmem -count 10 ./internal/oscbank
+```
+
+Both rows are medians of those ten iterations, and both come out of that one
+binary, so they share a thermal state. On arm64 `BenchmarkBank4x4` _is_ the NEON
+path — Advanced SIMD is mandatory in ARMv8-A, so there is no runtime gate to
+turn off and no `…NEON`-suffixed benchmark. `BenchmarkBank4x4Portable` in
+`kernel_arm64_test.go` drives the reference kernel directly for the comparison.
+
+The ratio is 5.3x, which is the number worth carrying, and it is wider than the
+amd64 SSE2-to-portable ratio of about 3x for the reason this section predicted:
+both kernels are four lanes wide, but the NEON kernel issues `FMLA`/`FMLS` while
+the portable reference gave up FMA on arm64 when it grew its rounding barriers.
+The gap widened because the portable side got slower, not because the packed
+side got faster.
+
+Two caveats, both real. macOS offers no CPU pinning — there is no `taskset` —
+so which core the benchmark lands on is the scheduler's choice, and a
+performance core and an efficiency core are far apart on this part. And the
+machine was not idle: it is somebody's logged-in laptop, `uptime` reported load
+averages of 4.2 entering the run and 3.1 leaving it, and `ps` showed a Steam
+process taking a whole core for part of it. A second run of the same command
+some minutes later reproduced 4 x 4 within 1% and the portable kernel within 5%,
+but ran the larger banks 20–25% slower, which is what background load on an
+unpinned scheduler looks like. Treat the 5.3x as the result and the absolute
+nanoseconds as an upper bound.
+
+Two more numbers from the same run, for the parts of the arm64 backend that have
+no amd64 counterpart to be read against. `BenchmarkReduceLanes4x4` folds a
+256-sample, 4-lane accumulator in a median of 33.5 ns, about 0.13 ns per frame:
+the `FADDP` pairwise fold does four frames in three instructions where the
+scalar loop does one frame in three adds. Scaling on the M5, in ns per
+rotor-block: 82 at 4 x 4 (16 rotors), 68 at 16 x 4 (64 rotors), 64 at 64 x 4
+(256 rotors) — the same downward drift as the amd64 scaling table below, from
+the same cause, on a host that has nothing to do with it.
 
 The SSE2 row lands where a 4-lane unfused kernel should: about 2.1x the AVX2
 kernel and about 3x faster than the portable one. Half the lanes accounts for
@@ -501,7 +542,7 @@ five `.s` files were deleted in Phase 2.1 once nothing rendered through them. It
 is kept because it is the number this bank had to beat, and it did — four times
 the oscillator work for 15% less time.
 
-Scaling, from `go test ./internal/oscbank -bench Bank`:
+Scaling on the i7-1255U, from `go test ./internal/oscbank -bench Bank`:
 
 | Configuration | Rotors | Blocks | ns/block | ns per rotor-block |
 | ------------- | ------ | ------ | -------- | ------------------ |
@@ -537,8 +578,12 @@ note. It clones now, and `TestRenderingIsIndependentOfPresetState` guards it.
   `voices x oscillators` needs per-lane excitation and per-voice output
   separation, which belongs with the audio-path work in Phase 2.
 - AVX2, SSE2 and NEON are packed. Everything else runs the portable kernel,
-  which is about 7x slower. AVX-512 is deferred, because CI cannot
-  prove it correct on a runner pool that only sometimes has the instructions.
+  which is about 7x slower on amd64. The arm64 measurement above put NEON at
+  5.3x its portable reference rather than 7x, and the two are not the same
+  comparison: the amd64 figure is eight lanes with FMA against a portable kernel
+  that still has FMA, the arm64 figure four lanes with FMA against a portable
+  kernel that has none. AVX-512 is deferred, because CI cannot prove it correct
+  on a runner pool that only sometimes has the instructions.
 - Denormals are flushed per block on amd64 and arm64, and not at all on
   `GOARCH=wasm`, which has no control register to reach. The numeric consequence,
   and why the contract is still measured unflushed, is in "Denormals" above.

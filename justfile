@@ -45,6 +45,10 @@ test-coverage:
 bench:
     go test -run=^$ -bench=. -benchmem ./...
 
+# Run the oscbank benchmarks on a remote native arm64 host (see scripts/bench-remote.sh)
+bench-arm64 *ARGS:
+    ./scripts/bench-remote.sh {{ ARGS }}
+
 # Build the glockenspiel CLI binary
 build:
     go build -o bin/glockenspiel ./cmd/glockenspiel
