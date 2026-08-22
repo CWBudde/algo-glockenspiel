@@ -467,10 +467,25 @@ Goal: fix the three level bugs. All of them live in Go and are unit-testable wit
 - [x] Fix `gainsForNote`. It spans `KeyboardFirstNote`..`KeyboardLastNote` (36..96) and clamps
       the position before it becomes a pan, so every MIDI value — including the 0..35 and 97..127
       a stray note-on can carry — yields two gains inside [0, 1] and no phase inversion.
-- [x] Resolve the default preset's level, carried over from Phase 3. The amplitudes were divided
-      by 8.72, and `TestDefaultPresetRendersNearMinusThreeDBFS` pins the result at −3 dBFS at
-      44.1 kHz so it cannot drift back. This closes the item as written, at the preset's own
-      note; levelling the rest of the keyboard is the separate item below.
+- [x] Resolve the default preset's level, carried over from Phase 3. `TestDefaultPresetRenders`
+      `NearMinusThreeDBFS` pins the result at −3 dBFS at 44.1 kHz so it cannot drift back. This
+      closes the item as written, at the preset's own note; levelling the rest of the keyboard
+      is the separate item below.
+
+      **Redone.** The first pass divided the amplitudes by 8.72 to bring a +15.8 dBFS render
+      down, and that 6.174 peak was almost entirely the Chebyshev shaper's DC offset rather
+      than the instrument: the shaper summed `gains[k] * T_(k+1)(x)`, whose even members are
+      nonzero at the origin, so it emitted a constant −0.3 for silence, and at the excitation
+      stage that drove the bank forever. With the shaper made DC-free the same preset rendered
+      at −38.07 dBFS, its oscillator bank 18 dB *below* the dry `input_mix` path, and no
+      rescale could reach −3 dBFS: at velocity 100 the excitation reaching the bank peaks at
+      −31.5 dBFS, and with `AmplitudeMax = 2` the ceiling was about −31.7 dBFS. The preset was
+      re-fitted against `testdata/reference/legacy_synth_a4.wav` instead — readable at last,
+      see the decoder note below — which moved `filter_frequency` from 523 Hz to 1304 Hz and
+      bought the missing level there. It renders at −3.19 dBFS at 44.1 kHz, correlates 0.9655
+      with its reference against −0.5261 before, and its note decays to silence in 1.85 s
+      rather than sustaining for the full four. `just refit-default` is the command.
+
 - [x] Un-mute the low register. `scaledParamsForNote` divides `DecayMs` by the transposition
       ratio, which is correct, but the single `DecayMsMax = 500` served both as the validation
       ceiling and as the optimizer's search bound: the shipped preset's 188.2 ms mode becomes
@@ -486,9 +501,14 @@ Goal: fix the three level bugs. All of them live in Go and are unit-testable wit
       default gain, 33425 samples on note 36 alone. `RealtimeEngine` now measures the loaded
       preset once per playable note at construction and normalises every note to the level of
       the preset's own note. The law is measured rather than written down because it is not a
-      property of transposition: the shipped preset tilts −0.46 dB/semitone because its four
-      modes beat against each other, while single-mode `testdata/presets/minimal` is flat, so
-      any fixed curve is wrong for one of them. Realtime spread is now 4.08 dB and no note
+      property of transposition: the shipped preset tilts −0.485 dB/semitone because its four
+      modes beat against each other, while single-mode `testdata/presets/minimal` tilts
+      −0.134 dB/semitone, so any fixed curve is wrong for one of them. (The −0.46 recorded
+      here before the re-fit was not that: it was the DC offset driving each rotor to a
+      note-dependent steady state. Removing the DC flattened the old preset to
+      −0.071 dB/semitone, and the tilt only came back once the modes carried the signal
+      again — so the conclusion held, but not for the stated reason.) Realtime spread is now
+      4.08 dB and no note
       clips at maximum velocity and maximum master gain. The remaining 4.08 dB is the stereo
       pan alone — 20·log10(0.8/0.5) exactly — and is energy-preserving by construction, so it
       is not a level error and is not a target for further reduction. The offline path
@@ -724,6 +744,29 @@ rsyncs the tree to that host and runs the benchmark set there, so re-taking the 
 command. It is worth re-taking on a quieter machine: macOS has no `taskset`, the host was in
 use, and the doc says so.
 
-Independent of all of that, and pickable in any order: **5.1** (three level bugs, all in Go,
-all unit-testable), **4.1** (the `serve` skeleton) and **7.3** (a docs page for the web app,
-which has none).
+Three defects behind the web demo's buzzing were fixed after Phase 2 closed, and two of them
+were not where they looked. `RealtimeEngine.ProcessBlock` rendered only the first
+`blockSize` frames of a wider callback, so the demo's 512-frame `ScriptProcessor` got 128
+samples of note and 384 of silence — a 93.75 Hz gate. What was being gated was a DC offset:
+the Chebyshev shaper summed `gains[k] * T_(k+1)(x)` without subtracting its own value at
+zero, which is −0.3 for the shipped gains, and at the excitation stage that drove the
+oscillator bank forever. Both are closed, and Phase 5.1's two level bullets are annotated
+with what the DC had been hiding.
+
+The third was `internal/wavio`: `go-audio/wav` decodes every sample format as an integer, so
+a 32-bit IEEE float WAV came back as its own bit patterns divided by 2^31, which is a square
+wave at about ±0.5 for any recording at a sane level. `glockenspiel fit --reference` reads
+user references through that function, so every fit against a float WAV — what a DAW exports
+by default — was fitting a square wave, and so was every legacy-reference regression test.
+Fixed, with the fixture documented in `testdata/reference/README.md`.
+
+Two things they left behind, both worth a look and neither blocking: the re-fitted preset
+sits on three parameter bounds (`input_mix` at 2.0 and three amplitudes at ±2), which says
+the model has no gain of its own and the fit spends the amplitude bound on level; and the
+per-parameter recovery assertions in `TestOptimizationImprovesFitAgainstLegacyReference` had
+to go, because a time-domain objective over a preset whose modes actually carry the signal is
+sharp enough in mode frequency that a local search cannot walk a perturbation back.
+
+Independent of all of that, and pickable in any order: **4.3** (the Optimize tab), **5.2**
+(getting synthesis off the main thread) and **7.3** (a docs page for the web app, which has
+none).

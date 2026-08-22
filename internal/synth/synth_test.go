@@ -59,6 +59,21 @@ func TestRenderDifferentDurations(t *testing.T) {
 	}
 }
 
+// TestVoiceRenderMatchesRenderNote pins that streaming a voice yourself gives
+// the same audio as asking the synthesizer for the whole note, and that this
+// holds at a chunk size the synthesizer would never pick for itself.
+//
+// The 37 below is the load-bearing part. RenderNoteWithOptions renders 128 at a
+// time, so an equivalence tested at 128 would only be comparing the same code
+// path with itself. At any other chunk size the two halves of the block rule
+// have to agree: blockLength, which has always been in samples, and the
+// auto-stop rule, which used to be in blocks. That second half made this
+// assertion false for every chunk size but 128 -- 8 quiet blocks of 37 is 296
+// samples of quiet against 1024, measured over different-length windows -- and
+// the test only passed because the shipped preset's shaper emits a DC offset
+// that kept it from ever going quiet. See TestAutoStopDoesNotDependOnThe
+// CallersChunkSize, which measures the same property against a preset that
+// does fall silent.
 func TestVoiceRenderMatchesRenderNote(t *testing.T) {
 	p := loadTestPreset(t)
 

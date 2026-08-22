@@ -91,15 +91,30 @@ var parameterSpecs = []ParameterSpec{
 	{ID: ParamMode4DecayMs, Key: "mode_4_decay_ms", Name: "Mode 4 Decay", Unit: "ms", Min: model.DecayMsMin, Max: model.DecayMsSearchMax, Default: 100},
 }
 
+// defaultSnapshot is assets/presets/default.json, transcribed.
+//
+// Transcribed rather than loaded, because this package depends on model and
+// nothing else on purpose -- it is the surface Phase 6 splits into its own
+// module, and reaching for assets would drag internal/preset along with it,
+// which an external module cannot import at all. The cost of that choice is
+// that the numbers can drift, and they had:
+// TestDefaultSnapshotMatchesTheShippedPreset is what makes the drift a failing
+// test rather than a quiet one.
+//
+// It had drifted twice before that test existed. 5d7af10 divided every mode
+// amplitude by 8.72 and this copy kept the old values, so a plugin instance
+// started 18.8 dB louder than the CLI; then the shaper fix removed the DC those
+// values had been leaning on and the same copy rendered at -37.42 dBFS against
+// the shipped preset's -3.19, a 34 dB gap in the other direction.
 var defaultSnapshot = Snapshot{
-	InputMix:         0.472433640370972,
-	FilterFrequency:  522.935295651445,
+	InputMix:         2.0,
+	FilterFrequency:  1303.6960400974592,
 	BaseFrequency:    440.0,
 	ChebyshevEnabled: true,
-	ChebyshevGains:   [numChebyshevGains]float64{1.0, 0.5, 0.3, 0.2},
-	ModeAmplitude:    [numModes]float64{0.885860562324524, 1.99459731578827, -0.464719623327255, 0.363913357257843},
-	ModeFrequency:    [numModes]float64{1756.64123535156, 4768.10693359375, 38.241283416748, 32.6347961425781},
-	ModeDecayMs:      [numModes]float64{188.223281860352, 1.60327112674713, 5.55945539474487, 8.6815824508667},
+	ChebyshevGains:   [numChebyshevGains]float64{1.3710558525404255, 0.0, 0.20036314305373643, 0.0},
+	ModeAmplitude:    [numModes]float64{2.0, 2.0, 2.0, -2.0},
+	ModeFrequency:    [numModes]float64{1756.5243235169935, 4516.145411643994, 1328.9984749886657, 1855.0239239312777},
+	ModeDecayMs:      [numModes]float64{170.44361397312102, 3.4763848726009345, 0.5604835696794853, 1.7888034585370858},
 }
 
 // ParameterSpecs returns the stable parameter definitions for the first VST3 spike.
