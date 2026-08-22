@@ -284,6 +284,27 @@ for (const viewport of [
   });
 }
 
+test("desktop rack caps at 1000px and stays centered", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await installStableEngine(page);
+  await page.goto("/#/play");
+
+  const rack = page.locator(".rack");
+  const card = page.locator(".instrument-card");
+  const [rackBox, cardBox] = await Promise.all([
+    rack.boundingBox(),
+    card.boundingBox(),
+  ]);
+
+  expect(rackBox).not.toBeNull();
+  expect(cardBox).not.toBeNull();
+  expect(rackBox!.width).toBeCloseTo(1000, 0);
+  expect(rackBox!.x + rackBox!.width / 2).toBeCloseTo(
+    cardBox!.x + cardBox!.width / 2,
+    0,
+  );
+});
+
 test("mobile playfield shares one aligned, reachable pitch viewport", async ({
   page,
 }) => {
@@ -706,6 +727,13 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
   expect(rackBodyBox).not.toBeNull();
   expect(keyboardBox).not.toBeNull();
   expect(firstWhiteKeyBox).not.toBeNull();
+  expect(rackBodyBox!.width).toBeLessThanOrEqual(1000);
+  expect(
+    Math.abs(
+      rackBodyBox!.x + rackBodyBox!.width / 2 -
+        (keyboardBox!.x + keyboardBox!.width / 2),
+    ),
+  ).toBeLessThanOrEqual(1);
   expect(keyboardBox!.y - (rackBodyBox!.y + rackBodyBox!.height)).toBeLessThanOrEqual(
     40,
   );

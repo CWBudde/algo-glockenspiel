@@ -382,7 +382,9 @@ h1 {
 
 .rack-wrap {
   position: relative;
+  width: min(100%, calc(1000px + 2 * var(--space-3xl)));
   height: 100%;
+  margin-inline: auto;
   padding: var(--space-sm) var(--space-3xl) 0;
 }
 
