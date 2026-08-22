@@ -690,10 +690,26 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
   await expect(page.getByText(ENGINE_READY, { exact: true })).toBeVisible();
 
   const rack = page.getByRole("region", { name: "Playable glockenspiel" });
+  const keyboard = page.getByRole("region", { name: "Piano alignment" });
   const naturalLane = rack.locator(".note-lane-naturals");
   const accidentalLane = rack.locator(".note-lane-sharps");
   const naturals = naturalLane.locator(".bar.natural");
   const accidentals = accidentalLane.locator(".bar.accidental");
+
+  const [rackBodyBox, keyboardBox, firstWhiteKeyBox] = await Promise.all([
+    rack.locator(".rack").boundingBox(),
+    keyboard.boundingBox(),
+    keyboard.locator(".piano-key.white").first().boundingBox(),
+  ]);
+  expect(rackBodyBox).not.toBeNull();
+  expect(keyboardBox).not.toBeNull();
+  expect(firstWhiteKeyBox).not.toBeNull();
+  expect(keyboardBox!.y - (rackBodyBox!.y + rackBodyBox!.height)).toBeLessThanOrEqual(
+    40,
+  );
+  expect(firstWhiteKeyBox!.y + firstWhiteKeyBox!.height).toBeLessThanOrEqual(
+    768,
+  );
 
   for (const bars of [naturals, accidentals]) {
     const metrics = await bars.evaluateAll((elements) =>
