@@ -513,9 +513,17 @@ func readPresetPart(request *http.Request) (*preset.Preset, error) {
 // from here.
 func readBoundsPart(request *http.Request) (*optimizer.ParamBounds, error) {
 	file, _, err := request.FormFile("bounds")
-	if err != nil {
+
+	// Only a missing field means "no bounds". Any other failure -- a part that
+	// cannot be opened, say -- would otherwise be answered with a fit against
+	// the default box while the client believed its own box was in force.
+	if errors.Is(err, http.ErrMissingFile) {
 		//nolint:nilnil // an absent field is not an error: the default box applies.
 		return nil, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("the bounds could not be read: %w", err)
 	}
 
 	defer func() {
