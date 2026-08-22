@@ -88,6 +88,17 @@ async function installStableFitApi(page: Page): Promise<void> {
   });
 }
 
+/** Makes Optimize render the static-host guidance instead of the fit form. */
+async function installUnavailableFitApi(page: Page): Promise<void> {
+  await page.route("**/api/version", async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "not found" }),
+    });
+  });
+}
+
 async function waitForStablePaint(page: Page): Promise<void> {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.evaluate(async () => {
@@ -436,6 +447,118 @@ test("performance deck exposes engine failures as live errors", async ({
   await expect(status).toHaveText("visual engine failure");
 });
 
+test("Optimize exposes ordered setup and compact service states", async ({
+  page,
+}) => {
+  await installStableEngine(page);
+
+  let releaseProbe = (): void => undefined;
+  const probeGate = new Promise<void>((resolve) => {
+    releaseProbe = resolve;
+  });
+
+  await page.route("**/api/version", async (route) => {
+    await probeGate;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ version: "visual-test" }),
+    });
+  });
+  await page.route("**/api/fit", async (route) => {
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "no fit has been started" }),
+    });
+  });
+
+  await page.goto("/#/optimize");
+
+  const service = page.getByRole("status", { name: "Checking fit service" });
+  await expect(service).toHaveAttribute("data-state", "probing");
+
+  releaseProbe();
+  await expect(
+    page.getByRole("status", {
+      name: "Fit service connected · visual-test",
+    }),
+  ).toHaveAttribute("data-state", "available");
+
+  const form = page.locator(".fit-form");
+  const mainSections = form.locator(":scope > fieldset.fit-group");
+  await expect(mainSections).toHaveCount(3);
+  await expect(mainSections.nth(0)).toContainText("1Reference");
+  await expect(mainSections.nth(1)).toContainText("2Note");
+  await expect(mainSections.nth(2)).toContainText("3Fit setup");
+
+  const advanced = form.locator("details.fit-advanced");
+  await expect(advanced).toHaveCount(1);
+  await expect(advanced).toHaveJSProperty("open", false);
+
+  const unavailablePage = await page.context().newPage();
+  await installStableEngine(unavailablePage);
+  await installUnavailableFitApi(unavailablePage);
+  await unavailablePage.goto("/#/optimize");
+  await expect(
+    unavailablePage.getByRole("status", {
+      name: "Fit service unavailable",
+    }),
+  ).toHaveAttribute("data-state", "unavailable");
+  await expect(
+    unavailablePage.getByText("glockenspiel serve", { exact: true }),
+  ).toBeVisible();
+  await unavailablePage.close();
+});
+
+test("Optimize reopens Advanced when one of its fields is invalid", async ({
+  page,
+}) => {
+  await installStableEngine(page);
+  await installStableFitApi(page);
+  await page.goto("/#/optimize");
+  await expect(
+    page.getByRole("status", {
+      name: "Fit service connected · visual-test",
+    }),
+  ).toBeVisible();
+
+  const form = page.locator(".fit-form");
+  const advanced = form.locator("details.fit-advanced");
+  const summary = form.getByText("Advanced settings", { exact: true });
+
+  await summary.click();
+  const optimizer = form.getByLabel("Optimizer", { exact: true });
+  await optimizer.selectOption("mayfly");
+  await form.getByLabel("Population").fill("37");
+  await form.getByLabel("Seed").fill("42");
+  await optimizer.selectOption("simple");
+  await optimizer.selectOption("mayfly");
+  await expect(form.getByLabel("Population")).toHaveValue("37");
+  await expect(form.getByLabel("Seed")).toHaveValue("42");
+  await form.getByLabel("Report every").fill("100001");
+  await form.getByLabel("Reference recording (WAV)").setInputFiles({
+    name: "reference.wav",
+    mimeType: "audio/wav",
+    buffer: Buffer.from("not decoded before client validation"),
+  });
+  await summary.click();
+  await expect(advanced).toHaveJSProperty("open", false);
+
+  await form.getByRole("button", { name: "Start fit" }).click();
+
+  await expect(advanced).toHaveAttribute("open", "");
+  await expect(
+    form.getByText("The report interval must be in [0, 100000].", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    form.getByText("Some fields need fixing before the fit can start.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+});
+
 test("Optimize at 1440x1000", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await installStableEngine(page);
@@ -443,7 +566,9 @@ test("Optimize at 1440x1000", async ({ page }) => {
   await page.goto("/#/optimize");
 
   await expect(
-    page.getByText("Connected to glockenspiel visual-test.", { exact: true }),
+    page.getByRole("status", {
+      name: "Fit service connected · visual-test",
+    }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Start fit" })).toBeVisible();
   await waitForStablePaint(page);

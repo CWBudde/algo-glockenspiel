@@ -735,10 +735,12 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       panning remains enabled, and neither the keyboard nor body creates another horizontal
       scroller. The 390px Play reference was intentionally updated; the full nine-test Chromium
       suite passes while the desktop, tablet and Optimize references remain pixel-exact.
-- [ ] **5.5.9 — Clarify Optimize setup.** Present Reference, Note and Fit Setup as numbered or
-      otherwise ordered sections. Move bounds and specialist optimizer settings behind an
-      accessible Advanced disclosure, shorten helper copy, and show API connectivity as a compact
-      status element.
+- [x] **5.5.9 — Clarify Optimize setup.** Reference, Note and Fit Setup are now three numbered
+      sections, with reporting, Mayfly tuning and bounds in a native Advanced disclosure that
+      reopens when validation finds a hidden error without discarding entered values. Shorter
+      hints keep the common path compact, while a live service badge distinguishes checking,
+      connected (with version) and unavailable states. Playwright covers the ordering, disclosure,
+      all three service states and the hidden-error path; only the Optimize reference changed.
 - [ ] **5.5.10 — Clarify Optimize execution and results.** Keep Start/Cancel with current job
       status, replace the pre-run chart with an intentional empty state, and group progress, chart,
       audition and download into one results area. Preserve reconnect-to-running-job behavior and

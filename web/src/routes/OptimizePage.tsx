@@ -51,6 +51,12 @@ export function OptimizePage() {
 
   const limitApplies = limit !== null && limit.jobId === snapshot?.jobId;
   const maxIterations = limitApplies ? limit.maxIterations : null;
+  const serviceStatus =
+    availability === "probing"
+      ? "Checking fit service"
+      : availability === "available"
+        ? `Fit service connected · ${version ?? "unknown version"}`
+        : "Fit service unavailable";
 
   // A fit outlives the page: the server holds one slot and a reload lands back
   // on whatever is running. Reading the status once on mount is what makes the
@@ -89,25 +95,32 @@ export function OptimizePage() {
   return (
     <section className="optimize-panel" aria-labelledby="optimize-heading">
       <header className="optimize-header">
-        <h2 id="optimize-heading">Optimize</h2>
+        <div className="optimize-heading-row">
+          <h2 id="optimize-heading">Optimize</h2>
+
+          <div
+            aria-label={serviceStatus}
+            aria-live="polite"
+            className="optimize-api-status"
+            data-state={availability}
+            role="status"
+          >
+            {serviceStatus}
+          </div>
+        </div>
+
         <p className="optimize-lead">
           Fit the instrument model against a reference recording, watch the cost
           fall, then audition and download the result.
         </p>
       </header>
 
-      <div aria-live="polite" className="optimize-availability">
-        {availability === "probing" ? (
-          <p className="optimize-placeholder">Looking for the fit API…</p>
-        ) : null}
-
+      <div className="optimize-availability">
         {availability === "unavailable" ? (
           <>
             <p className="optimize-placeholder">
-              This page is served without the fit API, which is what the hosted
-              build looks like: fitting is CPU-bound work the Go binary does,
-              and there is no binary behind a static host. Run the local server
-              and open the address it prints to use this tab.
+              Fitting needs the local Go service. Run it and open the address it
+              prints:
             </p>
 
             <pre className="optimize-command">
@@ -115,9 +128,7 @@ export function OptimizePage() {
             </pre>
 
             <p className="optimize-placeholder">
-              Fitting entirely in the browser, through the WebAssembly build, is
-              deferred. Until then a fit can also be run without a browser at
-              all:
+              Or fit from the command line:
             </p>
 
             <pre className="optimize-command">
@@ -131,10 +142,6 @@ export function OptimizePage() {
 
       {availability === "available" ? (
         <>
-          <p className="optimize-lead">
-            Connected to glockenspiel {version ?? "(unknown version)"}.
-          </p>
-
           <FitForm onSnapshot={onSnapshot} snapshot={snapshot} />
 
           <FitProgress
