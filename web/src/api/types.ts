@@ -108,14 +108,22 @@ export type MetricName = "rms" | "log" | "spectral";
 export type OptimizerName = "simple" | "mayfly";
 
 /** `MayflyOptimizer.Validate`'s vocabulary. */
-export type MayflyVariant =
-  | "ma"
-  | "desma"
-  | "olce"
-  | "eobbma"
-  | "gsasma"
-  | "mpma"
-  | "aoblmoa";
+export const MAYFLY_VARIANTS = [
+  "ma",
+  "desma",
+  "olce",
+  "eobbma",
+  "gsasma",
+  "mpma",
+  "aoblmoa",
+] as const;
+
+/**
+ * Derived from the list rather than spelled out a second time. A union this
+ * long also formats differently under prettier 3.8 and 3.9 -- the CI check
+ * installs whatever 3.x is current -- and deriving it sidesteps that for good.
+ */
+export type MayflyVariant = (typeof MAYFLY_VARIANTS)[number];
 
 export const METRIC_NAMES: readonly MetricName[] = [
   "rms",
@@ -126,16 +134,6 @@ export const METRIC_NAMES: readonly MetricName[] = [
 export const OPTIMIZER_NAMES: readonly OptimizerName[] = [
   "simple",
   "mayfly",
-] as const;
-
-export const MAYFLY_VARIANTS: readonly MayflyVariant[] = [
-  "ma",
-  "desma",
-  "olce",
-  "eobbma",
-  "gsasma",
-  "mpma",
-  "aoblmoa",
 ] as const;
 
 /**
