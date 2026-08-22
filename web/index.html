@@ -13,14 +13,13 @@
     <div id="root"></div>
 
     <!--
-      wasm_exec.js is vendored from the Go toolchain and must stay
-      byte-identical to it -- scripts/build-wasm.sh refuses to build when it
-      drifts, because the shim and the module share an ABI. It is therefore a
-      classic script rather than a module import: nothing bundles it, nothing
-      transforms it, and it publishes the `Go` constructor the app expects to
-      find before it starts.
+      wasm_exec.js is not loaded here. The Go module runs in the engine worker
+      (src/audio/engine.worker.ts), which imports the shim for its side effect,
+      so the page itself never starts a Go runtime. The file is still shipped
+      beside the bundle -- the worker fetches it by URL, and it must stay
+      byte-identical to the Go toolchain's copy, which scripts/build-wasm.sh
+      enforces.
     -->
-    <script src="./wasm_exec.js"></script>
     <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>
