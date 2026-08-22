@@ -692,10 +692,11 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       at 390x844 now mock the engine worker and fit API, so neither WASM nor a Go server can make
       the images race. Four Linux references are tracked; generated actual/diff images, traces and
       HTML reports stay ignored and are uploaded by CI when the comparison fails.
-- [ ] **5.5.2 — Introduce design tokens without moving layout.** Consolidate surface colors,
-      spacing, radii, shadows, type scale and material colors in `web/src/styles/index.css`. Give
-      the page, neutral panels, structural wood, metal bars and interactive accents separate roles.
-      Confirm the existing layout and interactions remain unchanged in the baseline screenshots.
+- [x] **5.5.2 — Introduce design tokens without moving layout.** `web/src/styles/index.css` now
+      defines the workshop palette, material recipes, type roles, spacing, radii and elevation in
+      one token layer, with separate roles for canvas, parchment, charcoal ink, structural wood,
+      brass/bronze, copper, metal bars and focus. Existing selectors resolve to their previous
+      values; all four pixel-exact Playwright references pass without a snapshot update.
 - [ ] **5.5.3 — Calm the application shell.** Restyle the page background and top bar, reduce the
       title and shadow weight, and make the Play/Optimize navigation a compact, balanced control.
       Preserve the logo, product name, active-tab state and mobile wrapping.
