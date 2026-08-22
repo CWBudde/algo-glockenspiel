@@ -17,6 +17,9 @@
 /out/
 /web/dist/
 /web/node_modules/
+/web/blob-report/
+/web/playwright-report/
+/web/test-results/
 /glockenspiel-vst3
 
 # build & test artifacts

@@ -43,3 +43,39 @@ jobs:
       # that typechecks cleanly.
       - name: Build
         run: npm --prefix web run build
+
+  test-web-visual:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+
+      - name: Test visual baseline
+        run: npm run test:visual
+        working-directory: web
+
+      - name: Upload visual failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-visual-failure
+          path: |
+            web/playwright-report/
+            web/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

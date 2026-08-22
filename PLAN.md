@@ -687,10 +687,11 @@ Acceptance criteria:
 
 Bite-sized tasks, intended to be independently reviewable in this order:
 
-- [ ] **5.5.1 — Pin the visual baseline.** Add a small Playwright screenshot project and commands
+- [x] **5.5.1 — Pin the visual baseline.** A Chromium screenshot project and commands
       that capture deterministic Play and Optimize states at 1440x1000, Play at 1024x768, and Play
-      at 390x844. Keep generated screenshots out of Git; commit only tests and intentionally chosen
-      reference images. Verify that failures produce a useful diff artifact.
+      at 390x844 now mock the engine worker and fit API, so neither WASM nor a Go server can make
+      the images race. Four Linux references are tracked; generated actual/diff images, traces and
+      HTML reports stay ignored and are uploaded by CI when the comparison fails.
 - [ ] **5.5.2 — Introduce design tokens without moving layout.** Consolidate surface colors,
       spacing, radii, shadows, type scale and material colors in `web/src/styles/index.css`. Give
       the page, neutral panels, structural wood, metal bars and interactive accents separate roles.

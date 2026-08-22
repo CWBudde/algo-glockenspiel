@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "npm run wood:check && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
-    "test": "vitest run",
+    "test": "vitest run src",
+    "test:visual": "playwright test",
+    "test:visual:update": "playwright test --update-snapshots",
     "lint": "eslint .",
     "preview": "vite preview",
     "wood:generate": "node scripts/generate-wood-textures.mjs",
@@ -21,6 +23,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.20.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
