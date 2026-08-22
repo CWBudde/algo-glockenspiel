@@ -3,7 +3,7 @@ package cli
 import (
 	"strings"
 
-	"github.com/cwbudde/glockenspiel/internal/optimizer"
+	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 )
 
 // boundsFlagHelp documents the --bounds JSON shape in `fit --help`. The parser

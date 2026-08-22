@@ -61,9 +61,9 @@ What does not match the goal:
   still means fitting with `curl`.
 - The optimizer tab is done (4.3) and so is the audio transport (5.2); what is left in Phase 5
   is the baked wood textures and the printed key hints (5.4).
-- The module path still does not resolve: the module is `github.com/cwbudde/glockenspiel`, the
-  repository is `CWBudde/algo-glockenspiel`, and there are no tags. Until that is reconciled,
-  the plugin repository cannot depend on this one the ordinary way (Phase 6.3).
+- There are no tags. The module path resolves now — it is
+  `github.com/cwbudde/algo-glockenspiel`, matching the repository — but until a version is
+  tagged, the plugin repository still cannot depend on this one the ordinary way (Phase 6.3).
 - The web app has no page in `docs/` (Phase 7.3).
 
 ---
@@ -718,20 +718,25 @@ Goal: the `replace` directive and the plugin leave together.
       `model.TransposeToNote` delegation and the preset-drift test all crossed before the
       deletion. `plugin/` is gone with its only package; `web/README.md` now points at the
       mockup in the other repository.
-- [ ] Reconcile the module path and tag a version. The module is `github.com/cwbudde/glockenspiel`
-      while the repository is `CWBudde/algo-glockenspiel`, so `go get` cannot resolve it, and
-      there are no tags at all. Until both are fixed the split-out repository cannot drop its
-      `replace github.com/cwbudde/glockenspiel => ../algo-glockenspiel` or its `v0.0.0`
-      placeholder require, which is this phase's fourth acceptance criterion measured from the
-      other side. Two corrections to the options above: a `go-import` meta tag is **not** one.
-      Go resolves `github.com/...` paths through its built-in GitHub rule and never fetches a
-      meta tag for them, so the choice is between renaming the repository to `glockenspiel` —
-      no code changes, GitHub keeps a redirect, and the module path already matches — and
-      renaming the module to `github.com/cwbudde/algo-glockenspiel`, which rewrites the import
-      in 53 files here plus every import in the plugin repository. Decided: rename the
-      repository. That is a settings change and a tag, neither of which a pull request can
-      carry; both are on the owning account. Everything that a pull request _can_ carry is
-      done, so this bullet is now one click and one `git tag` from closing.
+- [ ] Reconcile the module path and tag a version. The module was
+      `github.com/cwbudde/glockenspiel` while the repository is `CWBudde/algo-glockenspiel`, so
+      `go get` could not resolve it, and there are no tags at all. Until both are fixed the
+      split-out repository cannot drop its `replace` or its `v0.0.0` placeholder require, which
+      is this phase's fourth acceptance criterion measured from the other side.
+
+      One correction to the options above: a `go-import` meta tag is **not** one. Go resolves
+      `github.com/...` paths through its built-in GitHub rule and never fetches a meta tag for
+      them. So the choice was between renaming the repository to `glockenspiel` and renaming the
+      module to `github.com/cwbudde/algo-glockenspiel`. **Decided: rename the module**, keeping
+      the `algo-` name the other repositories share. Done: `go.mod` and the import in 51 files
+      on this branch. The path half of this bullet is closed; what is left is a `git tag`, which
+      no pull request can carry.
+
+      What that costs, so it is not a surprise: the plugin repository's imports move with it, in
+      the same commit that drops its `replace` directive. And anything that already depends on
+      the old path breaks rather than redirecting — a repository rename would have kept a
+      redirect, a module rename does not. Nothing does today; both known consumers are ours.
+
 - [x] Remove `replace github.com/cwbudde/vst3go => ../vst3go` (`go.mod:25`), which is
       unresolvable without a sibling checkout and breaks every documented `-tags=vst3go` command
       as well as `go mod tidy`. The `require` went with it — a bare `replace` is not what made

@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/oscbank"
+	"github.com/cwbudde/algo-glockenspiel/internal/oscbank"
 )
 
 func barParamsWithModes(modes []ModeParams) BarParams {

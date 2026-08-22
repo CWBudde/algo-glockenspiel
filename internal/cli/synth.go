@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/cwbudde/glockenspiel/internal/synth"
-	"github.com/cwbudde/glockenspiel/internal/wavio"
+	"github.com/cwbudde/algo-glockenspiel/internal/synth"
+	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
 	"github.com/spf13/cobra"
 )
 

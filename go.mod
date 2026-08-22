@@ -1,4 +1,4 @@
-module github.com/cwbudde/glockenspiel
+module github.com/cwbudde/algo-glockenspiel
 
 go 1.25.0
 

@@ -2,7 +2,7 @@
 
 package optimizer
 
-import "github.com/cwbudde/glockenspiel/internal/cpufeat"
+import "github.com/cwbudde/algo-glockenspiel/internal/cpufeat"
 
 // avx2RMSErrorBlock is the number of float32 lanes one YMM register holds.
 const avx2RMSErrorBlock = 8

@@ -6,7 +6,7 @@ import (
 
 	"github.com/cwbudde/algo-dsp/dsp/filter/biquad"
 	"github.com/cwbudde/algo-dsp/dsp/filter/design/pass"
-	"github.com/cwbudde/glockenspiel/internal/oscbank"
+	"github.com/cwbudde/algo-glockenspiel/internal/oscbank"
 )
 
 const velocityScale = 1.0 / 128.0

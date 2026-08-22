@@ -13,10 +13,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cwbudde/glockenspiel/internal/optimizer"
-	"github.com/cwbudde/glockenspiel/internal/preset"
-	"github.com/cwbudde/glockenspiel/internal/synth"
-	"github.com/cwbudde/glockenspiel/internal/wavio"
+	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/internal/synth"
+	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
 	"github.com/spf13/cobra"
 )
 

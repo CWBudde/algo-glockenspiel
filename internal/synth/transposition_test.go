@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/preset"
-	"github.com/cwbudde/glockenspiel/model"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/model"
 )
 
 // The tests in this file exist because every other test in the package renders

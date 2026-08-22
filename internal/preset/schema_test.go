@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/preset"
-	"github.com/cwbudde/glockenspiel/model"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/model"
 )
 
 // v1ModeCount mirrors the fixed mode count of the v1 schema.
