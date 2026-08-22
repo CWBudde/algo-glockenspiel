@@ -491,6 +491,134 @@ test("rack exposes every bar with material and accessible-name hooks", async ({
   expect(new Set(names).size).toBe(25);
 });
 
+test("rack depth aligns constant bars, supports, and foreground mallet", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await installStableEngine(page);
+  await page.goto("/#/play");
+  await expect(page.getByText(ENGINE_READY, { exact: true })).toBeVisible();
+
+  const rack = page.getByRole("region", { name: "Playable glockenspiel" });
+  const naturalLane = rack.locator(".note-lane-naturals");
+  const accidentalLane = rack.locator(".note-lane-sharps");
+  const naturals = naturalLane.locator(".bar.natural");
+  const accidentals = accidentalLane.locator(".bar.accidental");
+
+  for (const bars of [naturals, accidentals]) {
+    const metrics = await bars.evaluateAll((elements) =>
+      elements.map((element) => {
+        const box = element.getBoundingClientRect();
+        return { baseline: box.bottom, width: box.width };
+      }),
+    );
+    const widths = metrics.map(({ width }) => width);
+    expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(0.25);
+    for (let index = 1; index < metrics.length; index += 1) {
+      expect(metrics[index].baseline).toBeGreaterThan(
+        metrics[index - 1].baseline,
+      );
+    }
+    const perspective = metrics.at(-1)!.baseline - metrics[0].baseline;
+    expect(perspective).toBeGreaterThanOrEqual(7.5);
+    expect(perspective).toBeLessThanOrEqual(8.5);
+  }
+
+  await expect(rack.locator(".row-support")).toHaveCount(2);
+  await expect(rack.locator(".rail")).toHaveCount(0);
+
+  for (const lane of [naturalLane, accidentalLane]) {
+    await expect(lane.locator(".row-support")).toHaveCount(1);
+    const alignment = await lane.evaluate((element) => {
+      const svg = element.querySelector(".row-support");
+      const polyline = svg?.querySelector("polyline");
+      const bars = [...element.querySelectorAll<HTMLElement>(".bar")];
+      if (
+        !(svg instanceof SVGSVGElement) ||
+        !(polyline instanceof SVGPolylineElement)
+      ) {
+        throw new Error("row support geometry is missing");
+      }
+
+      const svgBox = svg.getBoundingClientRect();
+      const laneBox = element.getBoundingClientRect();
+      const viewBox = svg.viewBox.baseVal;
+      const points = Array.from(polyline.points);
+
+      return bars.map((bar, index) => {
+        const barBox = bar.getBoundingClientRect();
+        const point = points[index];
+        return {
+          dx: Math.abs(
+            barBox.left +
+              barBox.width / 2 -
+              (svgBox.left + (point.x / viewBox.width) * svgBox.width),
+          ),
+          dy: Math.abs(
+            laneBox.top +
+              Number(bar.dataset.mountY) -
+              (svgBox.top + (point.y / viewBox.height) * svgBox.height),
+          ),
+        };
+      });
+    });
+    expect(alignment.every(({ dx, dy }) => dx <= 1 && dy <= 1)).toBe(true);
+  }
+
+  const layerOrder = await rack.evaluate((element) => {
+    const naturalLane = element.querySelector(".note-lane-naturals");
+    const accidentalLane = element.querySelector(".note-lane-sharps");
+    const natural = element.querySelector(".bar.natural");
+    const accidental = element.querySelector(".bar.accidental");
+    const mallet = element.querySelector(".mallet");
+    if (
+      !(naturalLane instanceof HTMLElement) ||
+      !(accidentalLane instanceof HTMLElement) ||
+      !(natural instanceof HTMLElement) ||
+      !(accidental instanceof HTMLElement) ||
+      !(mallet instanceof HTMLElement)
+    ) {
+      throw new Error("rack layers are missing");
+    }
+    return {
+      accidental: Number(getComputedStyle(accidental).zIndex),
+      accidentalLane: Number(getComputedStyle(accidentalLane).zIndex),
+      mallet: Number(getComputedStyle(mallet).zIndex),
+      natural: Number(getComputedStyle(natural).zIndex),
+      naturalLane: Number(getComputedStyle(naturalLane).zIndex),
+    };
+  });
+  expect(layerOrder.accidentalLane).toBeGreaterThan(layerOrder.naturalLane);
+  expect(layerOrder.accidental).toBeGreaterThan(layerOrder.natural);
+  expect(layerOrder.mallet).toBeGreaterThan(layerOrder.accidentalLane);
+
+  const mallet = rack.locator(".mallet");
+  const [malletBox, barBoxes] = await Promise.all([
+    mallet.boundingBox(),
+    rack.locator(".bar").evaluateAll((elements) =>
+      elements.map((element) => {
+        const box = element.getBoundingClientRect();
+        return {
+          bottom: box.bottom,
+          left: box.left,
+          right: box.right,
+          top: box.top,
+        };
+      }),
+    ),
+  ]);
+  expect(malletBox).not.toBeNull();
+  expect(
+    barBoxes.some(
+      (bar) =>
+        malletBox!.x < bar.right &&
+        malletBox!.x + malletBox!.width > bar.left &&
+        malletBox!.y < bar.bottom &&
+        malletBox!.y + malletBox!.height > bar.top,
+    ),
+  ).toBe(false);
+});
+
 test("keyboard keeps its full named range and active-state hook", async ({
   page,
 }) => {

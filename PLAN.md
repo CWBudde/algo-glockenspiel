@@ -757,6 +757,21 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       widths plus the shared mobile playfield. `typecheck`, ESLint, 16 Vitest tests, the production
       build and all 21 Chromium tests pass; only the intentionally shifted 390px Play reference was
       updated.
+- [x] **5.5.12 — Rack depth and support alignment.** Natural and accidental bars now keep a
+      constant 32px/28px visual width while retaining their pitch-dependent length, and both rows
+      gain the same subtle eight-pixel rightward baseline drop. One support polyline per row passes
+      behind every computed mount-hole center; accidentals explicitly layer above naturals. The
+      foreground mallet sits below every bar at 1024px. Pure geometry tests pin width, perspective
+      and mount alignment, while focused Playwright measurements pin browser geometry, z-order,
+      support count/alignment and mallet clearance. Only the three Play references changed.
+- [ ] **5.5.13 — Aged-brass control knobs.** Replace the glossy brown dial faces with restrained
+      aged brass that belongs to the bar palette, keeping a high-contrast indicator and all native
+      range, keyboard and wheel semantics. Accept when both controls remain immediately readable
+      in default, focus and adjusted states without returning to a polished-plastic appearance.
+- [ ] **5.5.14 — Compact mobile composition.** Reduce vertical padding and rebalance the narrow
+      control deck so more of the rack is visible at 390px without shrinking the shared pitch
+      surface. Preserve 44px targets, the single horizontal scroller, readable status/wood text,
+      focus traversal and full C2-C7 reachability.
 
 ## Phase 6: Split Out VST3
 

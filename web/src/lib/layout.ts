@@ -8,6 +8,32 @@ export const LAST_NOTE = 84; // C6
 export const KEYBOARD_FIRST_NOTE = 36; // C2
 export const KEYBOARD_LAST_NOTE = 96; // C7
 export const MOBILE_WHITE_UNIT_PX = 44;
+export const BAR_PERSPECTIVE_PX = 8;
+
+export type BarKind = "natural" | "accidental";
+
+const BAR_WIDTH_PX: Readonly<Record<BarKind, number>> = {
+  natural: 32,
+  accidental: 28,
+};
+
+const BAR_LANE_HEIGHT_PX: Readonly<Record<BarKind, number>> = {
+  natural: 188,
+  accidental: 132,
+};
+
+/** Hole centers in the source SVG viewboxes, measured from their top edge. */
+const BAR_MOUNT_RATIO: Readonly<Record<BarKind, number>> = {
+  natural: 62 / 420,
+  accidental: 56 / 360,
+};
+
+const BAR_ROW_RANGE: Readonly<
+  Record<BarKind, { firstNote: number; lastNote: number }>
+> = {
+  natural: { firstNote: FIRST_NOTE, lastNote: LAST_NOTE },
+  accidental: { firstNote: FIRST_NOTE + 1, lastNote: LAST_NOTE - 2 },
+};
 
 export const WHITE_OFFSETS: ReadonlySet<number> = new Set([
   0, 2, 4, 5, 7, 9, 11,
@@ -87,6 +113,30 @@ export interface NoteLayout {
   totalWhiteUnits: number;
 }
 
+export interface BarGeometry {
+  /** Constant visual width within one material row. */
+  width: number;
+  /** Top edge within the row lane. */
+  top: number;
+  /** Bottom edge within the row lane, including the perspective drop. */
+  baseline: number;
+  /** Center of the visible upper mounting hole within the row lane. */
+  mountCenterY: number;
+}
+
+export interface BarSupportPoint {
+  note: number;
+  /** Horizontal position in the row's 0..100 SVG coordinate space. */
+  x: number;
+  /** Vertical position in lane pixels. */
+  y: number;
+}
+
+export interface BarSupportGeometry {
+  laneHeight: number;
+  points: readonly BarSupportPoint[];
+}
+
 export function computeNoteLayout(): NoteLayout {
   const naturals: BarEntry[] = [];
   const accidentals: BarEntry[] = [];
@@ -115,6 +165,47 @@ export function computeNoteLayout(): NoteLayout {
   }
 
   return { naturals, accidentals, totalWhiteUnits: whiteIndex };
+}
+
+/**
+ * Draw geometry shared by the bar and the support behind its mount.
+ *
+ * Length still follows pitch, but width is a material property rather than an
+ * accidental consequence of the SVG aspect ratio. The small baseline drop
+ * gives both rows the same rightward depth cue.
+ */
+export function computeBarGeometry(
+  entry: BarEntry,
+  kind: BarKind,
+): BarGeometry {
+  const range = BAR_ROW_RANGE[kind];
+  const span = range.lastNote - range.firstNote;
+  const ratio = span === 0 ? 0 : (entry.note - range.firstNote) / span;
+  const baseline = BAR_LANE_HEIGHT_PX[kind] + ratio * BAR_PERSPECTIVE_PX;
+  const top = baseline - entry.length;
+
+  return {
+    width: BAR_WIDTH_PX[kind],
+    top,
+    baseline,
+    mountCenterY: top + entry.length * BAR_MOUNT_RATIO[kind],
+  };
+}
+
+/** One coherent support passing behind every visible mount hole in a row. */
+export function computeBarSupportGeometry(
+  entries: readonly BarEntry[],
+  kind: BarKind,
+  totalWhiteUnits: number,
+): BarSupportGeometry {
+  return {
+    laneHeight: BAR_LANE_HEIGHT_PX[kind],
+    points: entries.map((entry) => ({
+      note: entry.note,
+      x: (entry.center / totalWhiteUnits) * 100,
+      y: computeBarGeometry(entry, kind).mountCenterY,
+    })),
+  };
 }
 
 /** One piano key under the rack. Keys carry no length; the CSS sizes them. */

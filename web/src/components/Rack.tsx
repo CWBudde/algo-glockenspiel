@@ -1,9 +1,29 @@
 import type { CSSProperties, KeyboardEvent } from "react";
 
 import mallet from "../../assets/mallet.svg";
-import { centerPercent, computeNoteLayout, type BarEntry } from "../lib/layout";
+import {
+  centerPercent,
+  computeBarGeometry,
+  computeBarSupportGeometry,
+  computeNoteLayout,
+  type BarEntry,
+  type BarKind,
+  type BarSupportGeometry,
+} from "../lib/layout";
 
 const LAYOUT = computeNoteLayout();
+const SUPPORTS = {
+  accidental: computeBarSupportGeometry(
+    LAYOUT.accidentals,
+    "accidental",
+    LAYOUT.totalWhiteUnits,
+  ),
+  natural: computeBarSupportGeometry(
+    LAYOUT.naturals,
+    "natural",
+    LAYOUT.totalWhiteUnits,
+  ),
+};
 
 export interface RackProps {
   onStrike: (note: number) => void;
@@ -17,12 +37,15 @@ export function Rack({ onStrike, activeNotes }: RackProps) {
       <div className="rack-wrap">
         <div className="rack-shadow" />
         <div className="rack">
-          <div className="rail rail-sharp-back" />
-          <div className="rail rail-sharp-front" />
-          <div className="rail rail-natural-back" />
-          <div className="rail rail-natural-front" />
-
-          <div className="note-lane note-lane-sharps">
+          <div
+            className="note-lane note-lane-sharps"
+            style={
+              {
+                "--lane-height": `${SUPPORTS.accidental.laneHeight}px`,
+              } as CSSProperties
+            }
+          >
+            <RowSupport kind="accidental" geometry={SUPPORTS.accidental} />
             {LAYOUT.accidentals.map((entry) => (
               <Bar
                 key={entry.note}
@@ -34,7 +57,15 @@ export function Rack({ onStrike, activeNotes }: RackProps) {
             ))}
           </div>
 
-          <div className="note-lane note-lane-naturals">
+          <div
+            className="note-lane note-lane-naturals"
+            style={
+              {
+                "--lane-height": `${SUPPORTS.natural.laneHeight}px`,
+              } as CSSProperties
+            }
+          >
+            <RowSupport kind="natural" geometry={SUPPORTS.natural} />
             {LAYOUT.naturals.map((entry) => (
               <Bar
                 key={entry.note}
@@ -55,7 +86,7 @@ export function Rack({ onStrike, activeNotes }: RackProps) {
 
 interface BarProps {
   entry: BarEntry;
-  kind: "natural" | "accidental";
+  kind: BarKind;
   active: boolean;
   onStrike: (note: number) => void;
 }
@@ -71,16 +102,22 @@ interface BarProps {
  * which would strike twice.
  */
 function Bar({ entry, kind, active, onStrike }: BarProps) {
+  const geometry = computeBarGeometry(entry, kind);
+
   return (
     <button
       type="button"
       className={`bar ${kind}${active ? " is-active" : ""}`}
       data-note={entry.note}
+      data-baseline={geometry.baseline}
+      data-mount-y={geometry.mountCenterY}
       aria-label={entry.name}
       style={
         {
           "--center": centerPercent(entry.center, LAYOUT.totalWhiteUnits),
           "--length": `${entry.length}px`,
+          "--bar-top": `${geometry.top}px`,
+          "--bar-width": `${geometry.width}px`,
         } as CSSProperties
       }
       onPointerDown={(event) => {
@@ -101,6 +138,29 @@ function Bar({ entry, kind, active, onStrike }: BarProps) {
       <span className="bar-note">{entry.name}</span>
       <span className="bar-key">{entry.keyHint}</span>
     </button>
+  );
+}
+
+interface RowSupportProps {
+  kind: BarKind;
+  geometry: BarSupportGeometry;
+}
+
+/** One support follows the mounting-hole trajectory behind a complete row. */
+function RowSupport({ kind, geometry }: RowSupportProps) {
+  const points = geometry.points.map(({ x, y }) => `${x},${y}`).join(" ");
+
+  return (
+    <svg
+      className={`row-support ${kind}`}
+      data-support={kind}
+      viewBox={`0 0 100 ${geometry.laneHeight}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <polyline points={points} />
+    </svg>
   );
 }
 
