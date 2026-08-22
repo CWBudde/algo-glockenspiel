@@ -1,6 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { computePlayfieldLayout } from "../src/lib/layout";
+
 const ENGINE_READY = "WASM loaded. Strike a bar to start audio.";
+const MOBILE_PLAYFIELD = computePlayfieldLayout();
 
 /**
  * Replaces the audio worker with its stable loaded state. Visual tests exercise
@@ -109,6 +112,183 @@ for (const viewport of [
     );
   });
 }
+
+test("mobile playfield shares one aligned, reachable pitch viewport", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installStableEngine(page);
+  await page.goto("/#/play");
+  await expect(page.getByText(ENGINE_READY, { exact: true })).toBeVisible();
+
+  const viewport = page.locator(".playfield-viewport");
+  const rack = page.getByRole("region", { name: "Playable glockenspiel" });
+  const keyboard = page.getByRole("region", { name: "Piano alignment" });
+  const bars = rack.getByRole("button");
+
+  await expect(viewport).toHaveCSS("overflow-x", "auto");
+  await expect(viewport).toHaveCSS("touch-action", "pan-x");
+  await expect(bars.first()).toHaveCSS("touch-action", "pan-x");
+  await expect(keyboard.getByRole("button").first()).toHaveCSS(
+    "touch-action",
+    "pan-x",
+  );
+
+  const horizontalScrollerCount = await page
+    .locator(".instrument-card *")
+    .evaluateAll((elements): number => {
+      let count = 0;
+
+      for (const element of elements) {
+        if (!(element instanceof HTMLElement)) {
+          continue;
+        }
+        const overflow = getComputedStyle(element).overflowX;
+        if (
+          element.scrollWidth > element.clientWidth + 1 &&
+          (overflow === "auto" || overflow === "scroll")
+        ) {
+          count += 1;
+        }
+      }
+
+      return count;
+    });
+  expect(horizontalScrollerCount).toBe(1);
+
+  await expect
+    .poll(() => viewport.evaluate((element) => element.scrollLeft))
+    .toBe(MOBILE_PLAYFIELD.initialScrollLeft);
+
+  const rackC4 = rack.locator('.bar[data-note="60"]');
+  const pianoC4 = keyboard.locator('.piano-key[data-note="60"]');
+  const [rackC4Box, pianoC4Box] = await Promise.all([
+    rackC4.boundingBox(),
+    pianoC4.boundingBox(),
+  ]);
+  expect(rackC4Box).not.toBeNull();
+  expect(pianoC4Box).not.toBeNull();
+  const viewportBox = await viewport.boundingBox();
+  expect(viewportBox).not.toBeNull();
+  expect(rackC4Box!.x).toBeGreaterThanOrEqual(viewportBox!.x);
+  expect(rackC4Box!.x + rackC4Box!.width).toBeLessThanOrEqual(
+    viewportBox!.x + viewportBox!.width,
+  );
+  expect(
+    Math.abs(
+      rackC4Box!.x +
+        rackC4Box!.width / 2 -
+        (pianoC4Box!.x + pianoC4Box!.width / 2),
+    ),
+  ).toBeLessThanOrEqual(1);
+
+  const barMetrics = await bars.evaluateAll((elements) =>
+    elements.map((element) => {
+      const button = element.getBoundingClientRect();
+      const label = element.querySelector(".bar-note");
+      if (!(label instanceof HTMLElement)) {
+        throw new Error("bar has no visible note label");
+      }
+      const labelBox = label.getBoundingClientRect();
+      const style = getComputedStyle(label);
+
+      return {
+        width: button.width,
+        text: label.textContent?.trim() ?? "",
+        readable:
+          style.visibility === "visible" &&
+          style.display !== "none" &&
+          Number.parseFloat(style.fontSize) >= 12,
+        labelBox: {
+          left: labelBox.left,
+          right: labelBox.right,
+          top: labelBox.top,
+          bottom: labelBox.bottom,
+        },
+      };
+    }),
+  );
+  expect(barMetrics).toHaveLength(25);
+  expect(barMetrics.every(({ width }) => width >= 44)).toBe(true);
+  expect(
+    barMetrics.every(({ text, readable }) => text !== "" && readable),
+  ).toBe(true);
+
+  for (const [index, bar] of barMetrics.entries()) {
+    for (const other of barMetrics.slice(index + 1)) {
+      const horizontalOverlap =
+        Math.min(bar.labelBox.right, other.labelBox.right) -
+        Math.max(bar.labelBox.left, other.labelBox.left);
+      const verticalOverlap =
+        Math.min(bar.labelBox.bottom, other.labelBox.bottom) -
+        Math.max(bar.labelBox.top, other.labelBox.top);
+      expect(horizontalOverlap > 0 && verticalOverlap > 0).toBe(false);
+    }
+  }
+
+  const keyboardPanel = page.locator(".keyboard-panel");
+  expect(
+    await keyboardPanel.evaluate(
+      (element) => element.scrollWidth === element.clientWidth,
+    ),
+  ).toBe(true);
+
+  await viewport.evaluate((element) => {
+    element.scrollLeft = 0;
+  });
+  await page
+    .getByRole("region", { name: "Performance controls" })
+    .getByRole("combobox", { name: "Wood" })
+    .selectOption("maple");
+  await expect
+    .poll(() => viewport.evaluate((element) => element.scrollLeft))
+    .toBe(0);
+  expect(
+    await viewport.evaluate((element, selector) => {
+      const key = document.querySelector(selector);
+      if (!(key instanceof HTMLElement)) {
+        return false;
+      }
+      const viewportBox = element.getBoundingClientRect();
+      const keyBox = key.getBoundingClientRect();
+
+      return (
+        keyBox.left >= viewportBox.left && keyBox.right <= viewportBox.right
+      );
+    }, '.piano-key[data-note="36"]'),
+  ).toBe(true);
+  await viewport.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+  });
+  expect(
+    await viewport.evaluate((element, selector) => {
+      const key = document.querySelector(selector);
+      if (!(key instanceof HTMLElement)) {
+        return false;
+      }
+      const viewportBox = element.getBoundingClientRect();
+      const keyBox = key.getBoundingClientRect();
+
+      return (
+        keyBox.left >= viewportBox.left && keyBox.right <= viewportBox.right
+      );
+    }, '.piano-key[data-note="96"]'),
+  ).toBe(true);
+
+  expect(
+    await page
+      .locator("body")
+      .evaluate((element) => element.scrollWidth === element.clientWidth),
+  ).toBe(true);
+  expect(
+    await page
+      .getByRole("region", { name: "Performance controls" })
+      .evaluate(
+        (element) =>
+          !element.contains(document.querySelector(".playfield-viewport")),
+      ),
+  ).toBe(true);
+});
 
 test("rack exposes every bar with material and accessible-name hooks", async ({
   page,

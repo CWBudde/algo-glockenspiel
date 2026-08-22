@@ -84,7 +84,9 @@ function PianoKey({ entry, kind, active, onStrike }: PianoKeyProps) {
       aria-label={entry.name}
       style={style}
       onPointerDown={(event) => {
-        event.preventDefault();
+        if (event.pointerType !== "touch") {
+          event.preventDefault();
+        }
         onStrike(entry.note);
       }}
       onKeyDown={(event) => {

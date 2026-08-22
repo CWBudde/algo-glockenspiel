@@ -727,10 +727,14 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       unchanged. Playwright pins all 61 unique accessible names, the 36/25 key split, MIDI 36–96
       endpoints, data-note hooks and the active-style hook. The visible desktop/tablet references
       were intentionally updated; mobile (keyboard below the fold) and Optimize remain exact.
-- [ ] **5.5.8 — Fix the mobile playfield.** Put the rack and keyboard in one horizontal pitch
-      viewport with a shared minimum instrument width. Keep the control deck stationary, retain
-      touch-action behavior, and verify the first and last notes can be reached at 390px without
-      label collisions.
+- [x] **5.5.8 — Fix the mobile playfield.** `Playfield` now owns one C2-C7 horizontal viewport
+      below the stationary control deck. At 760px and below, its pure layout geometry uses a 44px
+      white-key unit, offsets the 15-unit C4-C6 rack by exactly 14 units, and initializes once at
+      C4 without taking control back after user scrolling. Rack and piano centers align within one
+      pixel; all 25 bar labels remain distinct on 44px hit targets, C2 and C7 are reachable, touch
+      panning remains enabled, and neither the keyboard nor body creates another horizontal
+      scroller. The 390px Play reference was intentionally updated; the full nine-test Chromium
+      suite passes while the desktop, tablet and Optimize references remain pixel-exact.
 - [ ] **5.5.9 — Clarify Optimize setup.** Present Reference, Note and Fit Setup as numbered or
       otherwise ordered sections. Move bounds and specialist optimizer settings behind an
       accessible Advanced disclosure, shorten helper copy, and show API connectivity as a compact

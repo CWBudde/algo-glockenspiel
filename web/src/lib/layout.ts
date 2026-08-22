@@ -7,6 +7,7 @@ export const FIRST_NOTE = 60; // C4
 export const LAST_NOTE = 84; // C6
 export const KEYBOARD_FIRST_NOTE = 36; // C2
 export const KEYBOARD_LAST_NOTE = 96; // C7
+export const MOBILE_WHITE_UNIT_PX = 44;
 
 export const WHITE_OFFSETS: ReadonlySet<number> = new Set([
   0, 2, 4, 5, 7, 9, 11,
@@ -129,6 +130,19 @@ export interface KeyboardLayout {
   totalWhiteUnits: number;
 }
 
+export interface PlayfieldLayout {
+  /** Width of one white-key pitch on the horizontally scrolling surface. */
+  whiteUnitPx: number;
+  /** Full C2-C7 keyboard span. */
+  totalWhiteUnits: number;
+  /** C4-C6 rack span. */
+  rackWhiteUnits: number;
+  /** White keys between the keyboard's C2 and the rack's C4. */
+  rackOffsetWhiteUnits: number;
+  /** Initial mobile scroll position, aligned to the rack's leading edge. */
+  initialScrollLeft: number;
+}
+
 export function computeKeyboardLayout(): KeyboardLayout {
   const whites: KeyEntry[] = [];
   const blacks: KeyEntry[] = [];
@@ -153,6 +167,39 @@ export function computeKeyboardLayout(): KeyboardLayout {
   }
 
   return { whites, blacks, totalWhiteUnits: whiteIndex };
+}
+
+/**
+ * Shared mobile pitch geometry for the rack and its full-range keyboard.
+ * Keeping this derivation beside the note layouts prevents CSS offsets from
+ * drifting when either range changes.
+ */
+export function computePlayfieldLayout(
+  whiteUnitPx = MOBILE_WHITE_UNIT_PX,
+): PlayfieldLayout {
+  const keyboard = computeKeyboardLayout();
+  const rack = computeNoteLayout();
+  const rackOffsetWhiteUnits = countWhiteNotes(KEYBOARD_FIRST_NOTE, FIRST_NOTE);
+
+  return {
+    whiteUnitPx,
+    totalWhiteUnits: keyboard.totalWhiteUnits,
+    rackWhiteUnits: rack.totalWhiteUnits,
+    rackOffsetWhiteUnits,
+    initialScrollLeft: rackOffsetWhiteUnits * whiteUnitPx,
+  };
+}
+
+function countWhiteNotes(firstNote: number, lastNoteExclusive: number): number {
+  let count = 0;
+
+  for (let note = firstNote; note < lastNoteExclusive; note += 1) {
+    if (WHITE_OFFSETS.has(note % 12)) {
+      count += 1;
+    }
+  }
+
+  return count;
 }
 
 function naturalLength(note: number): number {

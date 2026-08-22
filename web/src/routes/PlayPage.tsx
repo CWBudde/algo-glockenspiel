@@ -3,8 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AudioEngine } from "../audio/useAudioEngine";
 import type { EngineWorker } from "../audio/useEngineWorker";
 import { ControlDeck } from "../components/ControlDeck";
-import { Keyboard } from "../components/Keyboard";
-import { Rack } from "../components/Rack";
+import { Playfield } from "../components/Playfield";
 import { computeKeyMap } from "../lib/layout";
 import { useNoteActivation } from "../lib/useNoteActivation";
 import { applyWoodTexture } from "../lib/wood";
@@ -148,11 +147,7 @@ export function PlayPage({ engine, audio, gain, onGainChange }: PlayPageProps) {
         statusIsError={statusIsError}
       />
 
-      <div className="instrument-main">
-        <Rack onStrike={strike} activeNotes={activeNotes} />
-      </div>
-
-      <Keyboard onStrike={strike} activeNotes={activeNotes} />
+      <Playfield onStrike={strike} activeNotes={activeNotes} />
     </section>
   );
 }

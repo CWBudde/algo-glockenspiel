@@ -65,9 +65,10 @@ interface BarProps {
  *
  * It listens for `pointerdown` so that a strike lands when the mallet does
  * rather than on mouse-up, and for Enter and Space so the keyboard reaches it
- * too. Both are prevented from their defaults: `pointerdown` to stop the drag
- * of a text selection across the rack, and the key events to stop the browser
- * synthesising a second `click` out of them, which would strike twice.
+ * too. Mouse and pen pointer defaults are prevented to stop text selection;
+ * touch pointers keep their default so the shared playfield can pan. The key
+ * events are prevented to stop the browser synthesising a second `click`,
+ * which would strike twice.
  */
 function Bar({ entry, kind, active, onStrike }: BarProps) {
   return (
@@ -83,7 +84,11 @@ function Bar({ entry, kind, active, onStrike }: BarProps) {
         } as CSSProperties
       }
       onPointerDown={(event) => {
-        event.preventDefault();
+        // Let touch pointers start the playfield's horizontal pan. Mouse and
+        // pen still suppress text selection and synthetic clicks.
+        if (event.pointerType !== "touch") {
+          event.preventDefault();
+        }
         onStrike(entry.note);
       }}
       onKeyDown={(event) => {

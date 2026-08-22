@@ -646,8 +646,29 @@ h1 {
     min-height: 0;
   }
 
+  .playfield-viewport {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+    scrollbar-gutter: stable;
+  }
+
+  .playfield-track {
+    width: calc(
+      var(--playfield-total-white-units) * var(--playfield-white-unit)
+    );
+  }
+
   .instrument-main {
-    padding: var(--space-xl) var(--space-xl) var(--space-sm);
+    width: calc(
+      var(--playfield-rack-white-units) * var(--playfield-white-unit)
+    );
+    margin-left: calc(
+      var(--playfield-rack-offset-white-units) * var(--playfield-white-unit)
+    );
+    padding: var(--space-xl) 0 var(--space-sm);
   }
 
   .instrument-stage {
@@ -688,16 +709,34 @@ h1 {
     height: 204px;
   }
 
+  .note-lane {
+    left: 0;
+    right: 0;
+  }
+
+  .playfield-viewport .bar {
+    width: var(--playfield-white-unit);
+    aspect-ratio: auto;
+    touch-action: pan-x;
+  }
+
   .bar-note {
     font-size: 0.88rem;
   }
 
   .keyboard-panel {
-    overflow-x: auto;
+    overflow: visible;
+    padding-right: 0;
+    padding-left: 0;
   }
 
   .keyboard {
-    min-width: 760px;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .playfield-viewport .piano-key {
+    touch-action: pan-x;
   }
 }
 
