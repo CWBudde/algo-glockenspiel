@@ -741,10 +741,12 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       hints keep the common path compact, while a live service badge distinguishes checking,
       connected (with version) and unavailable states. Playwright covers the ordering, disclosure,
       all three service states and the hidden-error path; only the Optimize reference changed.
-- [ ] **5.5.10 — Clarify Optimize execution and results.** Keep Start/Cancel with current job
-      status, replace the pre-run chart with an intentional empty state, and group progress, chart,
-      audition and download into one results area. Preserve reconnect-to-running-job behavior and
-      all existing validation messages.
+- [x] **5.5.10 — Clarify Optimize execution and results.** Start and Cancel now share a control
+      bar with the watched job's state. A dedicated Results area shows an intentional fresh-state
+      prompt, status before the curve, a waiting message before the first sample, and audition plus
+      download when a preset exists. The desktop workspace uses balanced setup/results columns and
+      collapses below 980px. Mocked Playwright scenarios cover fresh, running, SSE-updated,
+      canceled-with-preset and 409 recovery states without changing reconnect or API behavior.
 - [ ] **5.5.11 — Responsive and accessibility polish.** Check 390, 760, 1024 and 1440px layouts;
       add `prefers-reduced-motion`; verify contrast, touch targets, full keyboard traversal and
       visible focus. Run `npm --prefix web run typecheck`, `npm --prefix web run lint`, the UI tests

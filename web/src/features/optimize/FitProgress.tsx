@@ -51,9 +51,28 @@ export function FitProgress({
     }
   }, [snapshot, onSnapshot]);
 
+  if (jobId === null) {
+    return (
+      <section className="fit-progress" aria-labelledby="fit-results-heading">
+        <header className="fit-results-header">
+          <h2 id="fit-results-heading">Results</h2>
+        </header>
+
+        <div className="fit-results-empty">
+          <p>
+            Start a fit to see live progress, the cost curve, and audition
+            controls.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <div className="fit-progress">
-      <CostChart points={points} revision={revision} />
+    <section className="fit-progress" aria-labelledby="fit-results-heading">
+      <header className="fit-results-header">
+        <h2 id="fit-results-heading">Results</h2>
+      </header>
 
       <FitStatus
         snapshot={snapshot}
@@ -62,7 +81,15 @@ export function FitProgress({
         streamError={streamError}
       />
 
+      <div className="fit-chart-area">
+        {points.length === 0 ? (
+          <p className="fit-chart-waiting">Waiting for first cost report…</p>
+        ) : (
+          <CostChart points={points} revision={revision} />
+        )}
+      </div>
+
       <Audition snapshot={snapshot} />
-    </div>
+    </section>
   );
 }

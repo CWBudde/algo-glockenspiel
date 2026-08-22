@@ -141,7 +141,7 @@ export function OptimizePage() {
       </div>
 
       {availability === "available" ? (
-        <>
+        <div className="optimize-workspace">
           <FitForm onSnapshot={onSnapshot} snapshot={snapshot} />
 
           <FitProgress
@@ -149,7 +149,7 @@ export function OptimizePage() {
             maxIterations={maxIterations}
             onSnapshot={onSnapshot}
           />
-        </>
+        </div>
       ) : null}
     </section>
   );

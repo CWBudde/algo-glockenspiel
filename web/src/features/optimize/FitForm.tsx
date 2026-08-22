@@ -281,6 +281,12 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
 
   const running = snapshot?.state === "running";
   const mayfly = optimizer === "mayfly";
+  const jobState =
+    snapshot === null
+      ? "Ready to start"
+      : snapshot.state === "running"
+        ? `Fit ${snapshot.jobId} running`
+        : `Fit ${snapshot.jobId} ${snapshot.state}`;
 
   const setScalar = (name: keyof ScalarFields, value: string) => {
     setScalars((previous) => ({ ...previous, [name]: value }));
@@ -984,19 +990,29 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
         </details>
       </fieldset>
 
-      <div className="fit-actions">
-        <button className="fit-button" disabled={busy || running} type="submit">
-          {busy && !running ? "Starting…" : "Start fit"}
-        </button>
+      <div className="fit-job-control">
+        <p aria-live="polite" className="fit-job-state">
+          {jobState}
+        </p>
 
-        <button
-          className="fit-button fit-button-secondary"
-          disabled={busy || !running}
-          onClick={() => void onCancel()}
-          type="button"
-        >
-          Cancel fit
-        </button>
+        <div className="fit-actions">
+          <button
+            className="fit-button"
+            disabled={busy || running}
+            type="submit"
+          >
+            {busy && !running ? "Starting…" : "Start fit"}
+          </button>
+
+          <button
+            className="fit-button fit-button-secondary"
+            disabled={busy || !running}
+            onClick={() => void onCancel()}
+            type="button"
+          >
+            Cancel fit
+          </button>
+        </div>
       </div>
 
       {/*

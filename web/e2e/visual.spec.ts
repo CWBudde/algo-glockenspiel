@@ -1,9 +1,32 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import type { FitSnapshot } from "../src/api/types";
 import { computePlayfieldLayout } from "../src/lib/layout";
 
 const ENGINE_READY = "WASM loaded. Strike a bar to start audio.";
 const MOBILE_PLAYFIELD = computePlayfieldLayout();
+
+function fitSnapshot(overrides: Partial<FitSnapshot> = {}): FitSnapshot {
+  return {
+    jobId: "job-visual",
+    state: "running",
+    iteration: 1,
+    optimizerIterations: 10,
+    evaluations: 24,
+    currentCost: 0.75,
+    bestCost: 0.5,
+    elapsedMs: 1250,
+    sampleRate: 48_000,
+    referenceSeconds: 1.5,
+    note: 69,
+    velocity: 100,
+    optimizer: "simple",
+    metric: "rms",
+    startedAt: "2026-08-22T12:00:00Z",
+    hasPreset: false,
+    ...overrides,
+  };
+}
 
 /**
  * Replaces the audio worker with its stable loaded state. Visual tests exercise
@@ -95,6 +118,39 @@ async function installUnavailableFitApi(page: Page): Promise<void> {
       status: 404,
       contentType: "application/json",
       body: JSON.stringify({ error: "not found" }),
+    });
+  });
+}
+
+async function installFitScenario(
+  page: Page,
+  status: FitSnapshot,
+  event: { name: "progress" | "done"; snapshot: FitSnapshot },
+  eventGate?: Promise<void>,
+): Promise<void> {
+  await page.route("**/api/version", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ version: "visual-test" }),
+    });
+  });
+
+  await page.route("**/api/fit", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(status),
+    });
+  });
+
+  await page.route("**/api/fit/events", async (route) => {
+    if (eventGate !== undefined) {
+      await eventGate;
+    }
+
+    await route.fulfill({
+      contentType: "text/event-stream",
+      headers: { "cache-control": "no-store" },
+      body: `event: ${event.name}\ndata: ${JSON.stringify(event.snapshot)}\n\n`,
     });
   });
 }
@@ -495,6 +551,28 @@ test("Optimize exposes ordered setup and compact service states", async ({
   await expect(advanced).toHaveCount(1);
   await expect(advanced).toHaveJSProperty("open", false);
 
+  await expect(form.locator(".fit-job-state")).toHaveText("Ready to start");
+  const results = page.getByRole("region", { name: "Results" });
+  await expect(results).toContainText(
+    "Start a fit to see live progress, the cost curve, and audition controls.",
+  );
+  await expect(results.locator("canvas")).toHaveCount(0);
+  await expect(results.getByRole("heading", { name: "Status" })).toHaveCount(0);
+  await expect(results.getByRole("heading", { name: "Audition" })).toHaveCount(
+    0,
+  );
+
+  const workspace = page.locator(".optimize-workspace");
+  await expect(workspace).toHaveCSS(
+    "grid-template-columns",
+    /^\d+(?:\.\d+)?px \d+(?:\.\d+)?px$/,
+  );
+  await page.setViewportSize({ width: 900, height: 800 });
+  await expect(workspace).toHaveCSS(
+    "grid-template-columns",
+    /^\d+(?:\.\d+)?px$/,
+  );
+
   const unavailablePage = await page.context().newPage();
   await installStableEngine(unavailablePage);
   await installUnavailableFitApi(unavailablePage);
@@ -557,6 +635,171 @@ test("Optimize reopens Advanced when one of its fields is invalid", async ({
       exact: true,
     }),
   ).toBeVisible();
+});
+
+test("Optimize reconnects to a running fit and draws its SSE update", async ({
+  page,
+}) => {
+  const running = fitSnapshot();
+  const progress = fitSnapshot({
+    iteration: 2,
+    optimizerIterations: 20,
+    evaluations: 44,
+    currentCost: 0.4,
+    bestCost: 0.25,
+    elapsedMs: 2400,
+    hasPreset: true,
+  });
+  let releaseEvent = (): void => undefined;
+  const eventGate = new Promise<void>((resolve) => {
+    releaseEvent = resolve;
+  });
+
+  await installStableEngine(page);
+  await installFitScenario(
+    page,
+    running,
+    {
+      name: "progress",
+      snapshot: progress,
+    },
+    eventGate,
+  );
+  await page.goto("/#/optimize");
+
+  const form = page.locator(".fit-form");
+  await expect(form.locator(".fit-job-state")).toHaveText(
+    "Fit job-visual running",
+  );
+  await expect(form.getByRole("button", { name: "Start fit" })).toBeDisabled();
+  await expect(form.getByRole("button", { name: "Cancel fit" })).toBeEnabled();
+
+  const results = page.getByRole("region", { name: "Results" });
+  await expect(
+    results.getByText("Waiting for first cost report…"),
+  ).toBeVisible();
+  await expect(results.locator("canvas")).toHaveCount(0);
+
+  releaseEvent();
+  await expect(results.getByRole("region", { name: "Status" })).toContainText(
+    "20",
+  );
+  await expect(
+    results.getByRole("img", { name: /Cost curve over 1 samples\./ }),
+  ).toBeVisible();
+  await expect(results.getByText("Waiting for first cost report…")).toHaveCount(
+    0,
+  );
+});
+
+test("Optimize keeps a canceled fit with a preset usable in Results", async ({
+  page,
+}) => {
+  const canceled = fitSnapshot({
+    state: "canceled",
+    iteration: 4,
+    optimizerIterations: 40,
+    evaluations: 88,
+    currentCost: 0.2,
+    bestCost: 0.1,
+    elapsedMs: 4800,
+    stopReason: "canceled",
+    finishedAt: "2026-08-22T12:00:05Z",
+    hasPreset: true,
+  });
+
+  await installStableEngine(page);
+  await installFitScenario(page, canceled, {
+    name: "done",
+    snapshot: canceled,
+  });
+  await page.goto("/#/optimize");
+
+  const form = page.locator(".fit-form");
+  await expect(form.locator(".fit-job-state")).toHaveText(
+    "Fit job-visual canceled",
+  );
+  await expect(form.getByRole("button", { name: "Start fit" })).toBeEnabled();
+  await expect(form.getByRole("button", { name: "Cancel fit" })).toBeDisabled();
+
+  const results = page.getByRole("region", { name: "Results" });
+  await expect(
+    results.getByRole("img", { name: /Cost curve over 1 samples\./ }),
+  ).toBeVisible();
+  await expect(
+    results.getByRole("button", { name: "Render and play" }),
+  ).toBeEnabled();
+  await expect(
+    results.getByRole("link", { name: "Download preset JSON" }),
+  ).toHaveAttribute("href", "api/fit/preset");
+});
+
+test("Optimize recovers the active fit after a start conflict", async ({
+  page,
+}) => {
+  const running = fitSnapshot({ jobId: "job-elsewhere" });
+  let statusReads = 0;
+
+  await installStableEngine(page);
+  await page.route("**/api/version", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ version: "visual-test" }),
+    });
+  });
+  await page.route("**/api/fit/start", async (route) => {
+    await route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "a fit is already running" }),
+    });
+  });
+  await page.route("**/api/fit", async (route) => {
+    statusReads += 1;
+
+    if (statusReads === 1) {
+      await route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "no fit has been started" }),
+      });
+      return;
+    }
+
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(running),
+    });
+  });
+  await page.route("**/api/fit/events", async (route) => {
+    await route.fulfill({
+      contentType: "text/event-stream",
+      body: `event: progress\ndata: ${JSON.stringify(running)}\n\n`,
+    });
+  });
+
+  await page.goto("/#/optimize");
+  await expect.poll(() => statusReads).toBe(1);
+
+  const form = page.locator(".fit-form");
+  await form.getByLabel("Reference recording (WAV)").setInputFiles({
+    name: "reference.wav",
+    mimeType: "audio/wav",
+    buffer: Buffer.from("reference fixture"),
+  });
+  await form.getByRole("button", { name: "Start fit" }).click();
+
+  await expect(
+    form.getByText(
+      "a fit is already running. Cancel it first, or wait for it to finish.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(form.locator(".fit-job-state")).toHaveText(
+    "Fit job-elsewhere running",
+  );
+  await expect(form.getByRole("button", { name: "Cancel fit" })).toBeEnabled();
+  await expect.poll(() => statusReads).toBe(2);
 });
 
 test("Optimize at 1440x1000", async ({ page }) => {
