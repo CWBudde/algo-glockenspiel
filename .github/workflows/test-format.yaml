@@ -34,4 +34,14 @@ jobs:
         run: golangci-lint fmt --diff
 
       - name: Check web formatting
-        run: npx --yes prettier@3 --check "web/**/*.{js,ts,tsx,css,html}" "plugin/**/ui/*.{js,html}"
+        # Pinned to an exact version, and to the same one treefmt.toml's
+        # prettier formatter runs locally. `prettier@3` floats to the newest
+        # 3.x, and prettier's minor releases do change formatting -- 3.9 wraps
+        # multi-line type unions differently from 3.8 -- so a floating range
+        # turns "formatted correctly" into a question of which day CI ran.
+        # The failure mode is worse than a stale pin: the tree is formatted,
+        # `just fmt` reports nothing to do, and CI fails anyway on files the
+        # developer cannot reformat without breaking their own check.
+        # Upgrading is deliberate: bump this and the local toolchain together,
+        # then run `just fmt` in the same commit.
+        run: npx --yes prettier@3.8.0 --check "web/**/*.{js,ts,tsx,css,html}" "plugin/**/ui/*.{js,html}"
