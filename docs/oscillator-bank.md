@@ -125,6 +125,82 @@ mnemonic for floating-point vector multiply, add, subtract or pairwise-add. Only
 `WORD` macros, whose encodings `go tool objdump` decodes back to the expected
 instruction names.
 
+### What the loop is limited by
+
+Nothing in this subsection changed the kernel. It records what a tuning pass
+against the M5 measurements tried and what each attempt cost, so that the next
+person does not spend an afternoon finding it out again.
+
+Per block pair and sample the kernel issues thirty-five vector instructions:
+eight `FMLA` and four `FMLS` for the rotation, eight `FMUL` — four for `re*cos`
+and four for the next sample's `amp*x` — four `FSUB` to recover `t`, three
+`FADD` for the lane fold, and eight register moves, four seeding `im'` with
+`amp*x` and four writing `im'` back. A pass that accumulates into `acc` instead
+of storing over it adds a load, an add and a store. Twenty-seven of the
+thirty-five are arithmetic and rule one owns every one of them — the
+association, the operand order and the number of roundings are the contract — so
+the only instructions available to argue about are the eight moves and the loop
+control.
+
+A block pair costs about 2.0 ns per sample at 16 x 4 and about 2.2 ns at 4 x 4.
+At any clock this part plausibly runs, that is close to four vector instructions
+per cycle, which is the first hint that the loop is issue-limited rather than
+waiting on its own recursion.
+
+Three changes were written, measured against the unmodified kernel in the same
+binary, interleaved, at `-count 15`, and thrown away. Medians, as a percentage
+of the unmodified kernel measured in the same run, where a positive number is
+slower:
+
+| Change                                                  | 4 x 4 | 16 x 4 | 64 x 4 |
+| ------------------------------------------------------- | ----- | ------ | ------ |
+| two samples per pass, the `im` register file rotating   | -1%   | +26%   | +1%    |
+| two samples per pass, register roles unchanged          | 0%    | +26%   | -1%    |
+| the accumulator load hoisted above the pair's rotations | +2%   | 0%     | +1%    |
+
+The first change is the only one of the three that removes work: rotating which
+four registers hold `im` across a two-sample body retires the four write-back
+moves, thirty-five instructions becoming thirty-one. The second is the same
+unrolling without the register rotation, and it is there to say whether any
+difference came from the moves or from the halved loop control. The third is
+pure scheduling. None of them paid, and unrolling cost a quarter of the run time
+at 16 x 4 — an effect that reproduced across all fifteen iterations of both
+unrolled builds, at both the median and the minimum, and is far too large and
+too consistent to be background load. Why that size and not the other two was
+not established.
+
+A fourth build answered the question the first three raised. It is the same
+instruction stream — same opcodes, same count, same widths — with both halves of
+the state written to scratch registers instead of back into `re` and `im`, so
+nothing at all is carried from one sample to the next. Its arithmetic is
+meaningless; what it measures is what this instruction mix costs when there is
+no recursion to wait for. It came out 6% faster at 64 x 4, 6% faster at 16 x 4
+and 11% _slower_ at 4 x 4.
+
+That is the result worth carrying. Cutting every loop-carried dependency in the
+kernel is worth at most six percent, so there is no stall for more
+instruction-level parallelism to fill: interleaving two block pairs in flight,
+or software-pipelining the sample loop, would be spending register pressure on
+headroom that is not there. The eight cycles quoted under "The AVX2 kernel" are
+a latency figure, and latency is not what this loop spends its time on.
+
+The reduction was measured the same way and reached the same conclusion for a
+different reason. Doubling `reduceLanesNEON`'s pass to eight frames, so two
+independent `FADDP` trees interleave and the loop control halves, is
+bit-identical by construction — the per-frame tree is untouched — and measured
+27.3 ns against 28.3 ns over twenty iterations. That is about 3% of a routine
+that is itself about 5% of a 4 x 4 block, so it is a fifth of a percent, and it
+buys that by adding a peel path for an odd frame pair: one more place to get
+rule two wrong, for nothing measurable.
+
+Two calibrations for anyone reading those percentages. Two benchmarks whose
+4 x 4 path is literally the same instruction stream at a different address
+differed by 1.9% in medians of fifteen. And the unmodified kernel measured
+20792 ns at 64 x 4 in one run and 16425 ns in another an hour later, from the
+same source on the same host — which is the caveat "Measured performance"
+already carries, arriving from the other direction. On this host, under about
+ten percent is not a result.
+
 ### The rounding barrier this kernel is the reason for
 
 `advanceRotor` binds every product to its own `float32`, and the line most
@@ -616,6 +692,14 @@ but ran the larger banks 20–25% slower, which is what background load on an
 unpinned scheduler looks like. Treat the 5.3x as the result and the absolute
 nanoseconds as an upper bound.
 
+A tuning pass a day later ran the same five benchmarks from the same source on
+the same host, with no kernel change between them, and got 1167, 7042, 4173,
+16556 and 34.2 ns. Four of the five are within 3.5% of the row above and the
+portable kernel within 0.5%; 4 x 4 came out 12% below its recorded value, which
+is the direction the caveat predicts and the reason the row is not being rewritten
+to match. What that pass tried to change, and what it measured, is in "What the
+loop is limited by".
+
 Two more numbers from the same run, for the parts of the arm64 backend that have
 no amd64 counterpart to be read against. `BenchmarkReduceLanes4x4` folds a
 256-sample, 4-lane accumulator in a median of 33.5 ns, about 0.13 ns per frame:
@@ -694,7 +778,12 @@ note. It clones now, and `TestRenderingIsIndependentOfPresetState` guards it.
   and why the contract is still measured unflushed, is in "Denormals" above.
 - The recursion still costs eight cycles per sample per block pair. Stepping two
   samples at a time through the squared rotation matrix would halve that, at the
-  cost of a second coefficient set and a sample-count tail.
+  cost of a second coefficient set and a sample-count tail. That eight is a
+  latency figure. On the Apple M5 the NEON loop turns out to be issue-limited
+  rather than latency-limited — "What the loop is limited by" measures the gap at
+  six percent — so on that core a two-sample step would have to pay for itself by
+  issuing fewer instructions per sample, not by shortening the chain. It would
+  also have to land on all four kernels at once, or rule one breaks.
 - The optimizer does not search per-mode harmonic gains. `ParamCodec` sizes
   itself from the template's mode count but carries per-mode harmonics through
   unchanged.
