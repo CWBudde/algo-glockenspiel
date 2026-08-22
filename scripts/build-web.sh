@@ -35,13 +35,19 @@ npm --prefix web ci
 echo "Building the web app..."
 npm --prefix web run build
 
+"$ROOT/scripts/build-wasm.sh" "$@"
+
 # wasm_exec.js is the one file the page loads that Vite must not touch: it is
 # vendored from the Go toolchain and shares an ABI with the module, so it is
 # copied verbatim rather than bundled and content-hashed. index.html references
 # it as a classic script, which is why `vite build` prints a note about not
 # bundling it.
+#
+# The copy comes after build-wasm.sh, not before, because --refresh-wasm-exec is
+# handled in there: it rewrites web/wasm_exec.js from the toolchain in use. A
+# copy taken first would put the pre-upgrade shim in web/dist next to a module
+# built by the new toolchain -- an ABI mismatch the build would report as
+# success.
 echo "Copying wasm_exec.js..."
 mkdir -p web/dist
 cp web/wasm_exec.js web/dist/wasm_exec.js
-
-"$ROOT/scripts/build-wasm.sh" "$@"
