@@ -45,6 +45,33 @@ var (
 	detectMu sync.Mutex
 )
 
+// init warms the cache so that the audio thread is never the goroutine that
+// fills it.
+//
+// The steady state of Detect is a single atomic load, but the *first* call has
+// to take detectMu, run the CPUID probe and publish the result. Nothing else in
+// the process warmed it: the first Detect in a realtime session came from
+// processRotorBlocks (internal/oscbank/kernel_amd64.go), which already runs on
+// the audio thread. That is exactly one mutex acquisition per process on the
+// audio path -- rare enough never to show up in a benchmark, and still a
+// violation of the "no mutex acquisition on the audio path" rule, because the
+// one callback that pays it can be preempted while holding a lock a non-
+// realtime goroutine may also want. Package initialisation is guaranteed to
+// finish before main runs, so after this init every Detect on the audio thread
+// is the lock-free load.
+//
+// This is deliberately a plain Detect call and not a sync.Once: ResetDetection
+// stores nil to force a real hardware re-detect, and a Once cannot be rearmed,
+// so guarding the warm-up with one would freeze whatever the process detected
+// first and silently disable the forced portable / SSE2-only kernel paths that
+// validate the packed kernels. Calling Detect here is also why Detect must stay
+// safe during package initialisation: internal/oscbank reads it from a
+// package-level var (contract_test.go), and Go initialises this package -- init
+// included -- before any package that imports it.
+func init() {
+	_ = Detect()
+}
+
 // Detect returns the cached CPU feature set for the current process.
 func Detect() Features {
 	if f := current.Load(); f != nil {
