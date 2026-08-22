@@ -23,7 +23,7 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | 2     | Real SIMD on three targets   | done                              |
 | 3     | Optimizer                    | done                              |
 | 4     | Serve and the optimizer UI   | done                              |
-| 5     | Web app                      | open — 5.1, 5.2 and 5.3 done      |
+| 5     | Web app                      | open — 5.1–5.3 done; 5.4–5.5 open |
 | 6     | Split out VST3               | open — 6.1 all but the last audit |
 | 7     | Documentation                | open — 7.1 and 7.2 done           |
 
@@ -60,7 +60,8 @@ What does not match the goal:
   (Phase 4.1 and 4.2), but nothing in `web/` calls the API yet, so fitting from the browser
   still means fitting with `curl`.
 - The optimizer tab is done (4.3) and so is the audio transport (5.2); what is left in Phase 5
-  is the baked wood textures and the printed key hints (5.4).
+  is the baked wood textures and printed key hints (5.4), plus a visual and responsive redesign
+  of the Play and Optimize views (5.5).
 - `go build -tags=vst3go ./plugin/...` fails with four errors, and `go.mod` still carries a
   `replace` directive that is unresolvable without a sibling checkout, which is also why
   `just check-tidy` cannot run in CI.
@@ -655,6 +656,80 @@ Goal: fast first paint, usable by keyboard, and no controls that lie.
 - [x] Fix the `<h1>`, which still read "Algo Glockenspiel VST3" on a page that is not a VST3.
       It reads "Algo Glockenspiel".
 
+### Phase 5.5: Visual and responsive redesign
+
+Goal: keep the warmth of a physical wooden instrument while replacing the repeated faux-wood,
+gloss and heavy panel treatment with a balanced contemporary workshop aesthetic. The Play view
+must remain the focal instrument; Optimize must read as a guided workflow rather than one long
+undifferentiated form.
+
+Baseline captured with Playwright on 2026-08-22 at 1440x1000 and 390x844:
+
+- Desktop Play repeats the same pale texture across the header, selector strip, rack and keyboard,
+  while the narrow control rail competes with a much larger central rack.
+- Mobile squeezes fixed-size bars into the viewport until their bodies and labels overlap. The
+  keyboard scrolls independently, so its pitches no longer remain spatially aligned with the rack.
+- Optimize uses full-width fieldsets with nearly identical visual weight, shows an empty chart
+  before there is data, and loses most of the instrument character present on Play.
+
+Acceptance criteria:
+
+- [ ] At 390px wide, every bar keeps a usable hit target and readable note label; the rack and
+      keyboard share one pitch-aligned horizontal viewport rather than overlapping or scrolling
+      independently.
+- [ ] At 1440px wide, the rack is the clear Play-view focal point, the performance controls form
+      one balanced control deck, and the keyboard reads as a supporting input aid.
+- [ ] Wood appears on structural instrument surfaces rather than every panel. Bars and hardware
+      have a distinct restrained metal treatment, and text does not rely on textured backgrounds
+      for contrast.
+- [ ] Optimize presents setup, execution and results as a clear sequence, does not render a blank
+      chart as though it contained data, and keeps primary job actions near current job state.
+- [ ] Playwright reference screenshots cover Play and Optimize at 1440px, Play at 1024px, and Play
+      at 390px. Keyboard traversal, visible focus, reduced motion and existing audio controls still
+      work after the redesign.
+
+Bite-sized tasks, intended to be independently reviewable in this order:
+
+- [ ] **5.5.1 — Pin the visual baseline.** Add a small Playwright screenshot project and commands
+      that capture deterministic Play and Optimize states at 1440x1000, Play at 1024x768, and Play
+      at 390x844. Keep generated screenshots out of Git; commit only tests and intentionally chosen
+      reference images. Verify that failures produce a useful diff artifact.
+- [ ] **5.5.2 — Introduce design tokens without moving layout.** Consolidate surface colors,
+      spacing, radii, shadows, type scale and material colors in `web/src/styles/index.css`. Give
+      the page, neutral panels, structural wood, metal bars and interactive accents separate roles.
+      Confirm the existing layout and interactions remain unchanged in the baseline screenshots.
+- [ ] **5.5.3 — Calm the application shell.** Restyle the page background and top bar, reduce the
+      title and shadow weight, and make the Play/Optimize navigation a compact, balanced control.
+      Preserve the logo, product name, active-tab state and mobile wrapping.
+- [ ] **5.5.4 — Simplify the Play surfaces.** Remove redundant cream frames and repeated texture
+      layers around the instrument. Restrict the baked wood texture from 5.4 to the rack frame and
+      deliberate trim, with flat neutral surfaces elsewhere.
+- [ ] **5.5.5 — Rebuild the performance control deck.** Place Volume, Velocity, wood selection and
+      engine status in one compact responsive deck. Preserve the current range-input semantics,
+      wheel and keyboard operation, live status announcement and error state.
+- [ ] **5.5.6 — Refine the physical instrument.** Give bars a restrained metal finish, simplify
+      rails and fasteners, reduce glossy highlights, and bring the mallet inside the composition.
+      Define consistent hover, pressed and sounding-note states without changing note activation.
+- [ ] **5.5.7 — Make the keyboard supporting, not competing.** Reduce its height and contrast while
+      keeping every piano key clickable, named and visibly focusable. Preserve its C2–C7 range and
+      active-note synchronization with the bars.
+- [ ] **5.5.8 — Fix the mobile playfield.** Put the rack and keyboard in one horizontal pitch
+      viewport with a shared minimum instrument width. Keep the control deck stationary, retain
+      touch-action behavior, and verify the first and last notes can be reached at 390px without
+      label collisions.
+- [ ] **5.5.9 — Clarify Optimize setup.** Present Reference, Note and Fit Setup as numbered or
+      otherwise ordered sections. Move bounds and specialist optimizer settings behind an
+      accessible Advanced disclosure, shorten helper copy, and show API connectivity as a compact
+      status element.
+- [ ] **5.5.10 — Clarify Optimize execution and results.** Keep Start/Cancel with current job
+      status, replace the pre-run chart with an intentional empty state, and group progress, chart,
+      audition and download into one results area. Preserve reconnect-to-running-job behavior and
+      all existing validation messages.
+- [ ] **5.5.11 — Responsive and accessibility polish.** Check 390, 760, 1024 and 1440px layouts;
+      add `prefers-reduced-motion`; verify contrast, touch targets, full keyboard traversal and
+      visible focus. Run `npm --prefix web run typecheck`, `npm --prefix web run lint`, the UI tests
+      and the screenshot suite, then record the final evidence here.
+
 ## Phase 6: Split Out VST3
 
 Goal: this repo builds cleanly from a fresh clone.
@@ -875,9 +950,11 @@ per-parameter recovery assertions in `TestOptimizationImprovesFitAgainstLegacyRe
 to go, because a time-domain objective over a preset whose modes actually carry the signal is
 sharp enough in mode frequency that a local search cannot walk a perturbation back.
 
-Independent of all of that, and pickable in any order: **5.4** (baked wood textures and the
-printed key hints) and **7.3** (a docs page for the web app, which now exists as
-`docs/web-app.md`, so what is left there is the leftovers).
+Independent of all of that: **5.4** (baked wood textures and the printed key hints), then
+**5.5** (the visual and responsive redesign that consumes those baked textures), and **7.3**
+(a docs page for the web app, which now exists as `docs/web-app.md`, so what is left there is
+the leftovers). Phase 5.5 is internally ordered so its screenshot baseline and design tokens
+land before layout and material changes.
 
 Phase 5.2 is closed: the Go module runs in a Web Worker, an `AudioWorkletNode` drains what it
 renders, and `docs/audio-transport.md` records why that split and not one of the other three.
