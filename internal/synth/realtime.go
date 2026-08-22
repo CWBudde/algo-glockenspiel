@@ -627,7 +627,19 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 	buf := e.mixBuffer[:required]
 	clear(buf)
 
-	e.renderBanks(frames, buf)
+	// A voice renders at most its own block size per pass, so a callback wider
+	// than that is covered by several passes rather than by one that leaves the
+	// tail silent. Getting this wrong is not subtle: at the demo's 512-frame
+	// callback and a 128-sample block, three quarters of every buffer stayed at
+	// zero and the output was a 94 Hz gate rather than a note.
+	for offset := 0; offset < frames; {
+		segment := min(frames-offset, e.synth.blockSize)
+
+		e.renderBanks(segment, buf[offset*2:(offset+segment)*2])
+
+		offset += segment
+	}
+
 	e.retireVoices()
 
 	for i := range buf {
@@ -640,9 +652,8 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 // renderBanks runs one pass of every bank that holds a sounding voice and mixes
 // the result into buf.
 func (e *RealtimeEngine) renderBanks(frames int, buf []float32) {
-	// A voice never renders more than its own block size in one call, which is
-	// what the serial path did too, so the bank pass is that long and a wider
-	// callback block leaves its tail silent exactly as before.
+	// Capped by the caller: ProcessBlock splits a wider callback into passes of
+	// at most the synthesizer's block size, so frames is already one pass here.
 	segment := min(frames, e.synth.blockSize)
 
 	highest := e.mapLanes(frames)
