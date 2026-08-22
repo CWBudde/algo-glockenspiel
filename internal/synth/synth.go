@@ -335,12 +335,62 @@ func (v *Voice) Active() bool {
 }
 
 // RenderInto writes the next chunk into dst and returns the sample count written.
+//
+// This is the whole-chain form, where the voice's own bar runs its own
+// rotor-major bank. The realtime engine does not use it: it drives startBlock
+// and finishBlock instead so that one voice-major bank can serve every sounding
+// voice at once. Both forms share blockLength and advance, so there is one
+// definition of how long a block is and one of what finishing it means.
 func (v *Voice) RenderInto(dst []float32) int {
-	if !v.Active() || len(dst) == 0 {
+	n := v.blockLength(len(dst))
+	if n == 0 {
 		return 0
 	}
 
-	n := len(dst)
+	block := v.bar.Synthesize(v.strikeVelocity, n)
+	v.strikeVelocity = 0
+
+	copy(dst[:n], block)
+
+	v.advance(block)
+
+	return n
+}
+
+// startBlock runs the pre-bank half of the chain for a block of at most n
+// samples and returns the excitation an oscillator bank should be fed, or nil
+// if the voice has nothing left to render.
+//
+// The returned slice aliases the bar's working buffers and stays valid until
+// the next call on this voice, which is what lets the engine gather it straight
+// into its interleaved input.
+func (v *Voice) startBlock(n int) []float32 {
+	n = v.blockLength(n)
+	if n == 0 {
+		return nil
+	}
+
+	in := v.bar.StartBankInput(v.strikeVelocity, n)
+	v.strikeVelocity = 0
+
+	return in
+}
+
+// finishBlock runs the post-bank half of the chain over one voice's share of a
+// bank's output, writes it into dst and does the block bookkeeping. bankOut
+// must be the deinterleaved output of the block startBlock last prepared.
+func (v *Voice) finishBlock(bankOut, dst []float32) {
+	v.advance(v.bar.FinishBankOutput(bankOut, dst))
+}
+
+// blockLength returns how many samples the voice will contribute to a request
+// of n samples: the render block size and the note's remaining length both cap
+// it, and a voice that is done contributes nothing.
+func (v *Voice) blockLength(n int) int {
+	if !v.Active() || n <= 0 {
+		return 0
+	}
+
 	if n > v.blockSize {
 		n = v.blockSize
 	}
@@ -349,11 +399,12 @@ func (v *Voice) RenderInto(dst []float32) int {
 		n = v.remainingSamples
 	}
 
-	block := v.bar.Synthesize(v.strikeVelocity, n)
-	v.strikeVelocity = 0
+	return n
+}
 
-	copy(dst[:n], block)
-
+// advance applies the auto-stop rule and the remaining-sample count to a block
+// the voice has just rendered.
+func (v *Voice) advance(block []float32) {
 	if v.autoStop && shouldStop(block, v.threshold) {
 		v.consecutiveQuietBlocks++
 		if v.consecutiveQuietBlocks >= autoStopBlockCount {
@@ -363,10 +414,8 @@ func (v *Voice) RenderInto(dst []float32) int {
 		v.consecutiveQuietBlocks = 0
 	}
 
-	v.remainingSamples -= n
+	v.remainingSamples -= len(block)
 	if v.remainingSamples <= 0 {
 		v.done = true
 	}
-
-	return n
 }
