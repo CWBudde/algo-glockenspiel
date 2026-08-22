@@ -32,9 +32,14 @@ just build-web
 That runs `scripts/build-web.sh`, which does three things in order:
 
 1. `npm ci && npm run build` in `web/` — the React bundle into `web/dist`,
-2. copies `web/wasm_exec.js` into `web/dist` verbatim,
-3. `scripts/build-wasm.sh` — `web/dist/glockenspiel.wasm` and
-   `web/dist/manifest.json`.
+2. `scripts/build-wasm.sh` — `web/dist/glockenspiel.wasm` and
+   `web/dist/manifest.json`,
+3. copies `web/wasm_exec.js` into `web/dist` verbatim.
+
+The copy comes last because `--refresh-wasm-exec` is handled inside
+`build-wasm.sh`: it rewrites `web/wasm_exec.js` from the toolchain in use, and a
+copy taken before that would leave the pre-upgrade shim beside a module built by
+the new toolchain.
 
 Both halves land in the same directory. Vite runs with `emptyOutDir: false` so
 it does not delete the module beside it, and the module is built second, so
@@ -70,8 +75,10 @@ npm --prefix web run dev          # in another, for hot reload
 ```
 
 `vite.config.ts` proxies `/api` to `http://localhost:8080`, so the dev server
-can talk to a running `serve`. The WebAssembly module is read from `web/dist`,
-so `just build-web` still has to have run at least once.
+can talk to a running `serve`. It also maps `/glockenspiel.wasm` and
+`/manifest.json` onto `web/dist`, because those two are build output rather than
+sources and the dev server would otherwise answer 404 for them; `just build-web`
+still has to have run at least once.
 
 Checks, all of which CI runs:
 

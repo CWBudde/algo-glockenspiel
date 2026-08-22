@@ -15,11 +15,12 @@ The browser build compiles the Go engine to WebAssembly and drives it from a sma
 Run it locally:
 
 ```bash
-./scripts/build-wasm.sh
-python3 -m http.server -d web 8080
+just build-web
+go run ./cmd/glockenspiel serve
 ```
 
-Then open `http://localhost:8080`.
+Then open `http://localhost:8080`. Any static file server over `web/dist` works
+too -- `npx serve web/dist` -- it just has no fit API for the Optimize tab.
 
 `scripts/build-web.sh` builds both halves into `web/dist`: the React front end through Vite, then `scripts/build-wasm.sh`, which compiles `cmd/glockenspiel-wasm` to `web/dist/glockenspiel.wasm` and writes `web/dist/manifest.json`, whose content hash the page appends to the fetch URL so a rebuilt module is never served from cache. `web/wasm_exec.js` is tracked in git and copied into the bundle verbatim rather than bundled, because it shares an ABI with the module; the build only warns when it no longer matches the toolchain, and refreshes it on `./scripts/build-wasm.sh --refresh-wasm-exec`. If `wasm-opt` (binaryen) is on `PATH` the module is optimized as well, otherwise that step is skipped with a note. The GitHub Pages deployment runs the same script from `.github/workflows/deploy-pages.yml` and publishes `web/dist`.
 
