@@ -1,4 +1,4 @@
-package cli
+package optimizer_test
 
 import (
 	"os"
@@ -9,7 +9,7 @@ import (
 	"github.com/cwbudde/glockenspiel/internal/optimizer"
 )
 
-func TestLoadParamBounds(t *testing.T) {
+func TestDecodeParamBounds(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
@@ -58,6 +58,11 @@ func TestLoadParamBounds(t *testing.T) {
 			wantErr: "must be below max",
 		},
 		{
+			name:    "rejects a non-finite bound",
+			content: `{"decay_ms": [50.0, 1e999]}`,
+			wantErr: "decode bounds",
+		},
+		{
 			name:    "rejects unknown key",
 			content: `{"decay_millis": [50.0, 400.0]}`,
 			wantErr: "decode bounds",
@@ -71,12 +76,7 @@ func TestLoadParamBounds(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "bounds.json")
-			if err := os.WriteFile(path, []byte(tc.content), 0o600); err != nil {
-				t.Fatalf("write bounds fixture: %v", err)
-			}
-
-			bounds, err := loadParamBounds(path)
+			bounds, err := optimizer.DecodeParamBounds([]byte(tc.content), "the test document")
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
@@ -86,7 +86,7 @@ func TestLoadParamBounds(t *testing.T) {
 			}
 
 			if err != nil {
-				t.Fatalf("loadParamBounds failed: %v", err)
+				t.Fatalf("DecodeParamBounds failed: %v", err)
 			}
 
 			tc.check(t, bounds)
@@ -94,8 +94,34 @@ func TestLoadParamBounds(t *testing.T) {
 	}
 }
 
+func TestLoadParamBounds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bounds.json")
+	if err := os.WriteFile(path, []byte(`{"decay_ms": [50.0, 400.0]}`), 0o600); err != nil {
+		t.Fatalf("write bounds fixture: %v", err)
+	}
+
+	bounds, err := optimizer.LoadParamBounds(path)
+	if err != nil {
+		t.Fatalf("LoadParamBounds failed: %v", err)
+	}
+
+	if bounds.DecayMs != (optimizer.Range{Min: 50, Max: 400}) {
+		t.Fatalf("unexpected decay bound: %#v", bounds.DecayMs)
+	}
+}
+
 func TestLoadParamBoundsMissingFile(t *testing.T) {
-	if _, err := loadParamBounds(filepath.Join(t.TempDir(), "absent.json")); err == nil {
+	if _, err := optimizer.LoadParamBounds(filepath.Join(t.TempDir(), "absent.json")); err == nil {
 		t.Fatal("expected missing bounds file to fail")
+	}
+}
+
+func TestBoundsKeysMatchTheDocument(t *testing.T) {
+	// Every documented key must decode, or the --bounds help text and the API
+	// error messages would advertise a key the parser rejects.
+	for _, key := range optimizer.BoundsKeys {
+		if _, err := optimizer.DecodeParamBounds([]byte(`{"`+key+`": [1.0, 2.0]}`), "the test document"); err != nil {
+			t.Fatalf("documented key %q does not decode: %v", key, err)
+		}
 	}
 }

@@ -220,7 +220,7 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 
 	explicitBounds := options.boundsPath != ""
 	if explicitBounds {
-		bounds, err = loadParamBounds(options.boundsPath)
+		bounds, err = optimizer.LoadParamBounds(options.boundsPath)
 		if err != nil {
 			return err
 		}
