@@ -23,7 +23,7 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | 2     | Real SIMD on three targets   | done                              |
 | 3     | Optimizer                    | done                              |
 | 4     | Serve and the optimizer UI   | done                              |
-| 5     | Web app                      | open — 5.1, 5.2 and 5.3 done      |
+| 5     | Web app                      | open — 5.1–5.3 done; 5.4–5.5 open |
 | 6     | Split out VST3               | open — 6.1 all but the last audit |
 | 7     | Documentation                | open — 7.1 and 7.2 done           |
 
@@ -60,7 +60,8 @@ What does not match the goal:
   (Phase 4.1 and 4.2), but nothing in `web/` calls the API yet, so fitting from the browser
   still means fitting with `curl`.
 - The optimizer tab is done (4.3) and so is the audio transport (5.2); what is left in Phase 5
-  is the baked wood textures and the printed key hints (5.4).
+  is the baked wood textures and printed key hints (5.4), plus a visual and responsive redesign
+  of the Play and Optimize views (5.5).
 - There are no tags. The module path resolves now — it is
   `github.com/cwbudde/algo-glockenspiel`, matching the repository — but until a version is
   tagged, the plugin repository still cannot depend on this one the ordinary way (Phase 6.3).
@@ -627,16 +628,13 @@ Goal: a smaller, cache-busted payload behind a bridge that says what it means.
 
 Goal: fast first paint, usable by keyboard, and no controls that lie.
 
-- [ ] Bake the wood textures at build time. Still open, and moved rather than changed by the
-      4.3 rewrite: the generator is now `web/src/lib/wood.ts`, still a synchronous 1024x576
-      pixel-by-pixel fill running before first paint and again on every species change. Keep
-      the generator as a build tool.
-- [ ] Fix the printed key hints. `computeNoteLayout` labels the natural bars by their position
-      among the naturals while `computeKeyMap` — what the keyboard listener actually uses —
-      keys on the semitone offset, so from D4 upwards a bar prints a key that strikes a
-      different note. The bug predates the rewrite; 4.3 carried it over verbatim and
-      documented it in `web/src/lib/layout.ts` rather than fixing it silently, so that the
-      port changed nothing but the framework. It belongs here, under "no controls that lie".
+- [x] Bake the wood textures at build time. The sampler and all four species are preserved in a
+      deterministic Node generator backed by shared JSON presets. It writes tracked 1024x576
+      PNGs using only Node's built-in zlib; `wood:check` gates the normal web build, while the
+      browser now switches imported static URLs without canvas work before first paint.
+- [x] Fix the printed key hints. `computeNoteLayout` now derives every natural and accidental
+      label from `keyBindingFor`, the same source used by `computeKeyMap`. A focused Vitest
+      regression checks every bound bar against the keyboard listener map.
 - [x] Accessibility. Done with the React rewrite in 4.3, because retrofitting it into markup
       that was being replaced anyway would have cost several times more. Bars and keys are
       real `<button>`s, so click, Enter and Space all strike, and every one carries an
@@ -654,6 +652,133 @@ Goal: fast first paint, usable by keyboard, and no controls that lie.
       Deleting beats shipping controls that lie.
 - [x] Fix the `<h1>`, which still read "Algo Glockenspiel VST3" on a page that is not a VST3.
       It reads "Algo Glockenspiel".
+
+### Phase 5.5: Visual and responsive redesign
+
+Goal: keep the warmth of a physical wooden instrument while replacing the repeated faux-wood,
+gloss and heavy panel treatment with a balanced contemporary workshop aesthetic. The Play view
+must remain the focal instrument; Optimize must read as a guided workflow rather than one long
+undifferentiated form.
+
+Baseline captured with Playwright on 2026-08-22 at 1440x1000 and 390x844:
+
+- Desktop Play repeats the same pale texture across the header, selector strip, rack and keyboard,
+  while the narrow control rail competes with a much larger central rack.
+- Mobile squeezes fixed-size bars into the viewport until their bodies and labels overlap. The
+  keyboard scrolls independently, so its pitches no longer remain spatially aligned with the rack.
+- Optimize uses full-width fieldsets with nearly identical visual weight, shows an empty chart
+  before there is data, and loses most of the instrument character present on Play.
+
+Acceptance criteria:
+
+- [x] At 390px wide, every bar keeps a usable hit target and readable note label; the rack and
+      keyboard share one pitch-aligned horizontal viewport rather than overlapping or scrolling
+      independently.
+- [x] At 1440px wide, the rack is the clear Play-view focal point, the performance controls form
+      one balanced control deck, and the keyboard reads as a supporting input aid.
+- [x] Wood appears on structural instrument surfaces rather than every panel. Bars and hardware
+      have a distinct restrained metal treatment, and text does not rely on textured backgrounds
+      for contrast.
+- [x] Optimize presents setup, execution and results as a clear sequence, does not render a blank
+      chart as though it contained data, and keeps primary job actions near current job state.
+- [x] Playwright reference screenshots cover Play and Optimize at 1440px, Play at 1024px, and Play
+      at 390px. Keyboard traversal, visible focus, reduced motion and existing audio controls still
+      work after the redesign.
+
+Bite-sized tasks, intended to be independently reviewable in this order:
+
+- [x] **5.5.1 — Pin the visual baseline.** A Chromium screenshot project and commands
+      that capture deterministic Play and Optimize states at 1440x1000, Play at 1024x768, and Play
+      at 390x844 now mock the engine worker and fit API, so neither WASM nor a Go server can make
+      the images race. Four Linux references are tracked; generated actual/diff images, traces and
+      HTML reports stay ignored and are uploaded by CI when the comparison fails.
+- [x] **5.5.2 — Introduce design tokens without moving layout.** `web/src/styles/index.css` now
+      defines the workshop palette, material recipes, type roles, spacing, radii and elevation in
+      one token layer, with separate roles for canvas, parchment, charcoal ink, structural wood,
+      brass/bronze, copper, metal bars and focus. Existing selectors resolve to their previous
+      values; all four pixel-exact Playwright references pass without a snapshot update.
+- [x] **5.5.3 — Calm the application shell.** The page now has quiet flax canvas depth, while a
+      shorter, softly elevated masthead uses restrained dark wood behind a smaller brand mark and
+      title. Play/Optimize is one compact segmented control with an unambiguous active segment and
+      clean 390px wrapping. The logo, product name, hash links and focus ring remain intact, and the
+      inaccurate kicker now reads “Algorithmic Instrument.” All four shell-affected references
+      were intentionally updated and pass pixel-exact comparison.
+- [x] **5.5.4 — Simplify the Play surfaces.** The preset strip, performance surround, rack bed and
+      keyboard deck are now matte neutral surfaces with lighter borders and elevation. The rack's
+      single structural frame and its support rails retain the selected procedural wood; the extra
+      cream inset, blurred rack shadow and repeated texture layers are gone. The three Play
+      references were intentionally updated, while Optimize remains pixel-exact and unchanged.
+- [x] **5.5.5 — Rebuild the performance control deck.** `ControlDeck` now places the compact
+      Volume and Velocity dials, wood selector and description, and live engine status together
+      above the playfield, collapsing into a balanced two-column deck at 390px. Playwright verifies
+      the native range bounds, keyboard and wheel changes, formatted outputs, species application,
+      and both polite ready and error announcements. The three Play references were intentionally
+      updated; Optimize remains pixel-exact and the full six-test Chromium suite passes.
+- [x] **5.5.6 — Refine the physical instrument.** Naturals now use a brushed satin-brass face and
+      dark labels; accidentals use smoked bronze with light labels, and both carry restrained brush
+      lines and layered metal fasteners. Neutral support rails replace the cream/wood rods, and the
+      smaller translucent mallet sits fully inside and behind the playable composition. Hover,
+      pointer press and sounding-note feedback are separate subtle states without activation-code
+      changes. Playwright now pins all 25 named buttons plus the 15/10 material split; the three
+      Play references were intentionally updated while Optimize remains unchanged.
+- [x] **5.5.7 — Make the keyboard supporting, not competing.** The keybed is shorter, flatter and
+      lower-contrast, with muted graphite accidentals, quieter ivory naturals, smaller shadows and
+      restrained active colors beneath the brass/bronze rack. Its component and focus rules are
+      unchanged. Playwright pins all 61 unique accessible names, the 36/25 key split, MIDI 36–96
+      endpoints, data-note hooks and the active-style hook. The visible desktop/tablet references
+      were intentionally updated; mobile (keyboard below the fold) and Optimize remain exact.
+- [x] **5.5.8 — Fix the mobile playfield.** `Playfield` now owns one C2-C7 horizontal viewport
+      below the stationary control deck. At 760px and below, its pure layout geometry uses a 44px
+      white-key unit, offsets the 15-unit C4-C6 rack by exactly 14 units, and initializes once at
+      C4 without taking control back after user scrolling. Rack and piano centers align within one
+      pixel; all 25 bar labels remain distinct on 44px hit targets, C2 and C7 are reachable, touch
+      panning remains enabled, and neither the keyboard nor body creates another horizontal
+      scroller. The 390px Play reference was intentionally updated; the full nine-test Chromium
+      suite passes while the desktop, tablet and Optimize references remain pixel-exact.
+- [x] **5.5.9 — Clarify Optimize setup.** Reference, Note and Fit Setup are now three numbered
+      sections, with reporting, Mayfly tuning and bounds in a native Advanced disclosure that
+      reopens when validation finds a hidden error without discarding entered values. Shorter
+      hints keep the common path compact, while a live service badge distinguishes checking,
+      connected (with version) and unavailable states. Playwright covers the ordering, disclosure,
+      all three service states and the hidden-error path; only the Optimize reference changed.
+- [x] **5.5.10 — Clarify Optimize execution and results.** Start and Cancel now share a control
+      bar with the watched job's state. A dedicated Results area shows an intentional fresh-state
+      prompt, status before the curve, a waiting message before the first sample, and audition plus
+      download when a preset exists. The desktop workspace uses balanced setup/results columns and
+      collapses below 980px. Mocked Playwright scenarios cover fresh, running, SSE-updated,
+      canceled-with-preset and 409 recovery states without changing reconnect or API behavior.
+- [x] **5.5.11 — Responsive and accessibility polish.** Play and Optimize now stay inside the body
+      at 390, 760, 1024 and 1440px. Narrow layouts keep 44px effective targets without enlarging
+      checkbox glyphs, and their form fields surrender intrinsic width instead of overflowing.
+      Mobile piano accidentals retain a narrow visual face inside a 44px button. A reduced-motion
+      media query removes nonessential animation and transition duration. Playwright walks every
+      visible enabled control on both routes and confirms its three-pixel focus treatment, checks
+      both available routes with Axe (no serious or critical violations), and verifies all target
+      widths plus the shared mobile playfield. `typecheck`, ESLint, 16 Vitest tests, the production
+      build and all 21 Chromium tests pass; only the intentionally shifted 390px Play reference was
+      updated.
+- [x] **5.5.12 — Rack depth and support alignment.** Natural and accidental bars now keep a
+      constant 32px/28px visual width while retaining their pitch-dependent length, and both rows
+      gain the same subtle eight-pixel rightward baseline drop. One support polyline per row passes
+      behind every computed mount-hole center; accidentals explicitly layer above naturals. The
+      foreground mallet sits below every bar at 1024px. Pure geometry tests pin width, perspective
+      and mount alignment, while focused Playwright measurements pin browser geometry, z-order,
+      support count/alignment and mallet clearance. Only the three Play references changed.
+- [x] **5.5.13 — Aged-brass control knobs.** Both 66px dial faces now share a code-native aged-
+      brass material: a dark bronze rim surrounds a desaturated face with fine directional marks,
+      restrained patina and a crisp light indicator instead of the former glossy brown highlight.
+      Focus remains three pixels, and Playwright pins the common material hook and gradients, exact
+      geometry, keyboard adjustment, pointer adjustment and formatted values. Only the three Play
+      references changed; Optimize remains pixel-exact and the full 23-test Chromium suite passes.
+- [x] **5.5.14 — Compact mobile composition.** At 760px and below, the shorter shared masthead,
+      52px aged-brass dials, paired wood/status panels, tighter rack bed and 56px keyboard put the
+      complete C4-B4 frame and keyboard inside 390x844 without shrinking the 44px pitch unit. The
+      centered viewport is derived as exactly seven white pitches (308px), initializes at C4 once,
+      and still pans across the complete C2-C7 keyboard and C4-C6 rack. Browser coverage pins the
+      compact vertical landmarks, effective targets, readable contained copy, one scroller, exact
+      octave frame, pitch/support alignment, layering, mallet clearance, edge reachability, full
+      keyboard traversal and Axe result. Only the 390px Play reference changed; desktop Play and
+      Optimize remain pixel-exact.
 
 ## Phase 6: Split Out VST3
 
@@ -896,9 +1021,11 @@ per-parameter recovery assertions in `TestOptimizationImprovesFitAgainstLegacyRe
 to go, because a time-domain objective over a preset whose modes actually carry the signal is
 sharp enough in mode frequency that a local search cannot walk a perturbation back.
 
-Independent of all of that, and pickable in any order: **5.4** (baked wood textures and the
-printed key hints) and **7.3** (a docs page for the web app, which now exists as
-`docs/web-app.md`, so what is left there is the leftovers).
+Independent of all of that: **5.4** (baked wood textures and the printed key hints), then
+**5.5** (the visual and responsive redesign that consumes those baked textures), and **7.3**
+(a docs page for the web app, which now exists as `docs/web-app.md`, so what is left there is
+the leftovers). Phase 5.5 is internally ordered so its screenshot baseline and design tokens
+land before layout and material changes.
 
 Phase 5.2 is closed: the Go module runs in a Web Worker, an `AudioWorkletNode` drains what it
 renders, and `docs/audio-transport.md` records why that split and not one of the other three.

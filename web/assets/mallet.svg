@@ -4,12 +4,23 @@
       <stop stop-color="#8F5A2B"/>
       <stop offset="1" stop-color="#D1A370"/>
     </linearGradient>
+    <filter id="shaft-grain" x="-3%" y="-30%" width="106%" height="160%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency=".018 .42" numOctaves="2" seed="19" stitchTiles="stitch" result="noise"/>
+      <feColorMatrix in="noise" type="matrix" values="
+        .62 0 0 0 .18
+        0 .48 0 0 .08
+        0 0 .34 0 .02
+        0 0 0 .14 0
+      " result="tinted-grain"/>
+      <feComposite in="tinted-grain" in2="SourceAlpha" operator="in" result="masked-grain"/>
+      <feBlend in="SourceGraphic" in2="masked-grain" mode="soft-light"/>
+    </filter>
     <radialGradient id="head" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(360 17) rotate(123.69) scale(34 29.5616)">
       <stop stop-color="#E9C195"/>
       <stop offset="1" stop-color="#A76A35"/>
     </radialGradient>
   </defs>
-  <rect x="22" y="60" width="341" height="8" rx="4" transform="rotate(-8 22 60)" fill="url(#shaft)"/>
+  <path d="M23 64L360 17" stroke="url(#shaft)" stroke-width="8" stroke-linecap="round" filter="url(#shaft-grain)"/>
   <circle cx="360" cy="17" r="24" fill="url(#head)"/>
   <circle cx="352" cy="10" r="8" fill="#F0D7B8" opacity=".75"/>
 </svg>

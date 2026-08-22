@@ -23,10 +23,19 @@ web/
     audio/            the engine worker, the worklet, and the AudioContext graph
     features/optimize/  the fit form, the event stream, the chart, the audition
     api/              the typed fit-API client and the wire types
-    lib/              note geometry, the procedural wood texture
+    lib/              note geometry, wood metadata and shared species presets
     styles/           the stylesheet
   dist/               build output, gitignored
 ```
+
+The instrument's wood is still procedural, but no longer generated on the main
+thread. `web/scripts/generate-wood-textures.mjs` samples growth rings, pores,
+rays and figured ripple into deterministic 1024x576 PNGs during development.
+The four tracked assets are imported by the browser like any other image;
+`npm run wood:check` keeps them synchronized with their shared JSON presets and
+runs automatically before the normal Vite build. It compares inflated PNG
+scanlines so equivalent zlib output from different supported Node releases does
+not create false stale-asset failures.
 
 Two decisions account for most of the structure.
 

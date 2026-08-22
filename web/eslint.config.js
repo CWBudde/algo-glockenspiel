@@ -7,7 +7,14 @@ export default tseslint.config(
   {
     // dist holds the build output and the wasm module; wasm_exec.js is vendored
     // from the Go toolchain and must stay byte-identical to it.
-    ignores: ["dist/**", "node_modules/**", "wasm_exec.js"],
+    ignores: [
+      "blob-report/**",
+      "dist/**",
+      "node_modules/**",
+      "playwright-report/**",
+      "test-results/**",
+      "wasm_exec.js",
+    ],
   },
   {
     files: ["**/*.{ts,tsx}"],
@@ -26,7 +33,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["eslint.config.js", "vite.config.ts"],
+    files: ["eslint.config.js", "playwright.config.ts", "vite.config.ts"],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: {
       globals: globals.node,

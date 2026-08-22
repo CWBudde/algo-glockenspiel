@@ -144,7 +144,7 @@ export function Dial({
           }}
         />
         <div
-          className="dial-face"
+          className="dial-face dial-face-aged-brass"
           ref={faceRef}
           style={{ "--turn": `${turn}deg` } as CSSProperties}
           onPointerDown={(event) => {

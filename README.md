@@ -190,9 +190,10 @@ The signal chain for one note:
 
 The optimizer layer is kept separate from the synthesis engine so new metrics and search strategies can be added without touching the core.
 
-Two documents go deeper:
+Three documents go deeper:
 
 - [docs/oscillator-bank.md](docs/oscillator-bank.md) — the recursion, the AoSoA layout, the three packed kernels, the numeric contract they are held to, and measured performance.
+- [docs/optimizer.md](docs/optimizer.md) — parameter encoding, objective evaluation, and checkpoint contracts.
 - [docs/user-guide.md](docs/user-guide.md) — the full CLI walkthrough, including `--bounds` and how to choose an optimizer and a metric.
 
 [PLAN.md](PLAN.md) tracks what is done and what is not.

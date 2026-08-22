@@ -2,10 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AudioEngine } from "../audio/useAudioEngine";
 import type { EngineWorker } from "../audio/useEngineWorker";
-import { ControlRail } from "../components/ControlRail";
-import { Keyboard } from "../components/Keyboard";
-import { PresetStrip } from "../components/PresetStrip";
-import { Rack } from "../components/Rack";
+import { ControlDeck } from "../components/ControlDeck";
+import { Playfield } from "../components/Playfield";
 import { computeKeyMap } from "../lib/layout";
 import { useNoteActivation } from "../lib/useNoteActivation";
 import { applyWoodTexture } from "../lib/wood";
@@ -137,25 +135,19 @@ export function PlayPage({ engine, audio, gain, onGainChange }: PlayPageProps) {
   const statusIsError = engine.error || audio.error;
 
   return (
-    <>
-      <PresetStrip species={species} onSpeciesChange={setSpecies} />
+    <section className="instrument-card">
+      <ControlDeck
+        gain={gain}
+        onGainChange={onGainChange}
+        velocity={velocity}
+        onVelocityChange={setVelocity}
+        species={species}
+        onSpeciesChange={setSpecies}
+        status={status}
+        statusIsError={statusIsError}
+      />
 
-      <section className="instrument-card">
-        <div className="instrument-main">
-          <ControlRail
-            gain={gain}
-            onGainChange={onGainChange}
-            velocity={velocity}
-            onVelocityChange={setVelocity}
-            status={status}
-            statusIsError={statusIsError}
-          />
-
-          <Rack onStrike={strike} activeNotes={activeNotes} />
-        </div>
-
-        <Keyboard onStrike={strike} activeNotes={activeNotes} />
-      </section>
-    </>
+      <Playfield onStrike={strike} activeNotes={activeNotes} />
+    </section>
   );
 }

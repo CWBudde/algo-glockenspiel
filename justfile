@@ -79,6 +79,10 @@ test-web:
     npm --prefix web run lint
     npm --prefix web run test
 
+# Run the Chromium visual regression suite (install with: npx playwright install chromium)
+test-web-visual:
+    npm --prefix web run test:visual
+
 # Build the glockenspiel CLI binary
 build:
     go build -o bin/glockenspiel ./cmd/glockenspiel

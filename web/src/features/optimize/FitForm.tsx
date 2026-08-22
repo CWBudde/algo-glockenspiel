@@ -272,6 +272,7 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
 
   const [useBounds, setUseBounds] = useState(false);
   const [boundsRows, setBoundsRows] = useState<BoundsRows>(EMPTY_BOUNDS_ROWS);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -280,6 +281,12 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
 
   const running = snapshot?.state === "running";
   const mayfly = optimizer === "mayfly";
+  const jobState =
+    snapshot === null
+      ? "Ready to start"
+      : snapshot.state === "running"
+        ? `Fit ${snapshot.jobId} running`
+        : `Fit ${snapshot.jobId} ${snapshot.state}`;
 
   const setScalar = (name: keyof ScalarFields, value: string) => {
     setScalars((previous) => ({ ...previous, [name]: value }));
@@ -418,6 +425,23 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
     }
 
     if (Object.keys(found).length > 0) {
+      const advancedError = Object.keys(found).some(
+        (name) =>
+          name === "reportEvery" ||
+          name === "mayflyPopulation" ||
+          name === "mayflySeed" ||
+          name === "bounds" ||
+          name.startsWith("bounds-"),
+      );
+
+      if (advancedError) {
+        // An error hidden inside a closed disclosure is effectively no error
+        // at all: the summary says the form needs fixing, but the field that
+        // explains how is absent. Opening only on an advanced error keeps the
+        // ordinary setup compact without making validation cryptic.
+        setAdvancedOpen(true);
+      }
+
       return { errors: found };
     }
 
@@ -583,7 +607,10 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
       onSubmit={(event) => void onSubmit(event)}
     >
       <fieldset className="fit-group">
-        <legend>Reference</legend>
+        <legend>
+          <span className="fit-step-number">1</span>
+          <span>Reference</span>
+        </legend>
 
         <div className="fit-field">
           <label htmlFor={fieldId("reference")}>
@@ -600,8 +627,7 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
             type="file"
           />
           <p className="fit-hint">
-            Mono, or the first channel of a multi-channel file. Up to{" "}
-            {referenceLimitLabel}.
+            Uses the first channel. Maximum {referenceLimitLabel}.
           </p>
           {fieldError("reference")}
         </div>
@@ -615,14 +641,15 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
             ref={presetRef}
             type="file"
           />
-          <p className="fit-hint">
-            The built-in preset is the starting point when none is chosen.
-          </p>
+          <p className="fit-hint">Uses the built-in preset when omitted.</p>
         </div>
       </fieldset>
 
       <fieldset className="fit-group">
-        <legend>The note being fitted</legend>
+        <legend>
+          <span className="fit-step-number">2</span>
+          <span>Note</span>
+        </legend>
 
         <div className="fit-row">
           <div className="fit-field">
@@ -664,23 +691,84 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
       </fieldset>
 
       <fieldset className="fit-group">
-        <legend>Objective</legend>
+        <legend>
+          <span className="fit-step-number">3</span>
+          <span>Fit setup</span>
+        </legend>
 
-        <div className="fit-field">
-          <label htmlFor={fieldId("metric")}>Metric</label>
-          <select
-            id={fieldId("metric")}
-            onChange={(event) => {
-              setMetric(event.target.value as MetricName);
-            }}
-            value={metric}
-          >
-            {METRIC_NAMES.map((name) => (
-              <option key={name} value={name}>
-                {METRIC_LABELS[name]}
-              </option>
-            ))}
-          </select>
+        <div className="fit-row">
+          <div className="fit-field">
+            <label htmlFor={fieldId("metric")}>Metric</label>
+            <select
+              id={fieldId("metric")}
+              onChange={(event) => {
+                setMetric(event.target.value as MetricName);
+              }}
+              value={metric}
+            >
+              {METRIC_NAMES.map((name) => (
+                <option key={name} value={name}>
+                  {METRIC_LABELS[name]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="fit-field">
+            <label htmlFor={fieldId("optimizer")}>Optimizer</label>
+            <select
+              id={fieldId("optimizer")}
+              onChange={(event) => {
+                setOptimizer(event.target.value as OptimizerName);
+              }}
+              value={optimizer}
+            >
+              {OPTIMIZER_NAMES.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="fit-row">
+          <div className="fit-field">
+            <label htmlFor={fieldId("maxIterations")}>Iteration limit</label>
+            <input
+              aria-describedby={describedBy("maxIterations")}
+              aria-invalid={errors.maxIterations !== undefined}
+              id={fieldId("maxIterations")}
+              inputMode="numeric"
+              max={FIT_LIMITS.maxIterations.max}
+              min={FIT_LIMITS.maxIterations.min}
+              onChange={(event) => {
+                setScalar("maxIterations", event.target.value);
+              }}
+              type="number"
+              value={scalars.maxIterations}
+            />
+            {fieldError("maxIterations")}
+          </div>
+
+          <div className="fit-field">
+            <label htmlFor={fieldId("timeBudget")}>Time budget</label>
+            <input
+              aria-describedby={describedBy("timeBudget")}
+              aria-invalid={errors.timeBudget !== undefined}
+              id={fieldId("timeBudget")}
+              onChange={(event) => {
+                setScalar("timeBudget", event.target.value);
+              }}
+              type="text"
+              value={scalars.timeBudget}
+            />
+            <p className="fit-hint">
+              Examples: <code>30s</code>, <code>2m</code> or <code>1h</code>.
+              Maximum 1 hour.
+            </p>
+            {fieldError("timeBudget")}
+          </div>
         </div>
 
         <div className="fit-checks">
@@ -707,251 +795,224 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
               }}
               type="checkbox"
             />
-            <label htmlFor={fieldId("normalizeGain")}>
-              Normalize gain before scoring
-            </label>
-          </div>
-        </div>
-      </fieldset>
-
-      <fieldset className="fit-group">
-        <legend>Search</legend>
-
-        <div className="fit-row">
-          <div className="fit-field">
-            <label htmlFor={fieldId("optimizer")}>Optimizer</label>
-            <select
-              id={fieldId("optimizer")}
-              onChange={(event) => {
-                setOptimizer(event.target.value as OptimizerName);
-              }}
-              value={optimizer}
-            >
-              {OPTIMIZER_NAMES.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="fit-field">
-            <label htmlFor={fieldId("maxIterations")}>Iteration limit</label>
-            <input
-              aria-describedby={describedBy("maxIterations")}
-              aria-invalid={errors.maxIterations !== undefined}
-              id={fieldId("maxIterations")}
-              inputMode="numeric"
-              max={FIT_LIMITS.maxIterations.max}
-              min={FIT_LIMITS.maxIterations.min}
-              onChange={(event) => {
-                setScalar("maxIterations", event.target.value);
-              }}
-              type="number"
-              value={scalars.maxIterations}
-            />
-            {fieldError("maxIterations")}
+            <label htmlFor={fieldId("normalizeGain")}>Normalize gain</label>
           </div>
         </div>
 
-        <div className="fit-row">
-          <div className="fit-field">
-            <label htmlFor={fieldId("timeBudget")}>Time budget</label>
-            <input
-              aria-describedby={describedBy("timeBudget")}
-              aria-invalid={errors.timeBudget !== undefined}
-              id={fieldId("timeBudget")}
-              onChange={(event) => {
-                setScalar("timeBudget", event.target.value);
-              }}
-              type="text"
-              value={scalars.timeBudget}
-            />
-            <p className="fit-hint">
-              A duration such as <code>30s</code>, <code>2m</code> or{" "}
-              <code>1h</code>; a bare number is read as seconds. At most one
-              hour.
-            </p>
-            {fieldError("timeBudget")}
-          </div>
+        <details
+          className="fit-advanced"
+          onToggle={(event) => {
+            setAdvancedOpen(event.currentTarget.open);
+          }}
+          open={advancedOpen}
+        >
+          <summary>Advanced settings</summary>
 
-          <div className="fit-field">
-            <label htmlFor={fieldId("reportEvery")}>Report every</label>
-            <input
-              aria-describedby={describedBy("reportEvery")}
-              aria-invalid={errors.reportEvery !== undefined}
-              id={fieldId("reportEvery")}
-              inputMode="numeric"
-              max={FIT_LIMITS.reportEvery.max}
-              min={FIT_LIMITS.reportEvery.min}
-              onChange={(event) => {
-                setScalar("reportEvery", event.target.value);
-              }}
-              type="number"
-              value={scalars.reportEvery}
-            />
-            <p className="fit-hint">
-              Optimizer iterations between progress reports.
-            </p>
-            {fieldError("reportEvery")}
-          </div>
-        </div>
-
-        {/*
-          The mayfly fields are removed rather than disabled when the simple
-          optimizer is chosen: the server does not read them at all in that
-          case, and a greyed-out control that does nothing is a control that
-          lies.
-        */}
-        {mayfly ? (
-          <div className="fit-row">
+          <div className="fit-advanced-body">
             <div className="fit-field">
-              <label htmlFor={fieldId("mayflyVariant")}>Mayfly variant</label>
-              <select
-                id={fieldId("mayflyVariant")}
-                onChange={(event) => {
-                  setMayflyVariant(event.target.value as MayflyVariant);
-                }}
-                value={mayflyVariant}
-              >
-                {MAYFLY_VARIANTS.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="fit-field">
-              <label htmlFor={fieldId("mayflyPopulation")}>Population</label>
+              <label htmlFor={fieldId("reportEvery")}>Report every</label>
               <input
-                aria-describedby={describedBy("mayflyPopulation")}
-                aria-invalid={errors.mayflyPopulation !== undefined}
-                id={fieldId("mayflyPopulation")}
+                aria-describedby={describedBy("reportEvery")}
+                aria-invalid={errors.reportEvery !== undefined}
+                id={fieldId("reportEvery")}
                 inputMode="numeric"
-                max={FIT_LIMITS.mayflyPopulation.max}
-                min={FIT_LIMITS.mayflyPopulation.min}
+                max={FIT_LIMITS.reportEvery.max}
+                min={FIT_LIMITS.reportEvery.min}
                 onChange={(event) => {
-                  setScalar("mayflyPopulation", event.target.value);
+                  setScalar("reportEvery", event.target.value);
                 }}
                 type="number"
-                value={scalars.mayflyPopulation}
+                value={scalars.reportEvery}
               />
-              {fieldError("mayflyPopulation")}
+              <p className="fit-hint">
+                Optimizer iterations between progress reports.
+              </p>
+              {fieldError("reportEvery")}
             </div>
 
-            <div className="fit-field">
-              <label htmlFor={fieldId("mayflySeed")}>Seed</label>
-              <input
-                aria-describedby={describedBy("mayflySeed")}
-                aria-invalid={errors.mayflySeed !== undefined}
-                id={fieldId("mayflySeed")}
-                inputMode="numeric"
-                onChange={(event) => {
-                  setScalar("mayflySeed", event.target.value);
-                }}
-                // A text field, not a number one: the seed is an exact int64
-                // decimal string, and a number input is free to hand back a
-                // normalised value -- "1e+19" for a seed near the top of the
-                // range -- which BigInt() then refuses. inputMode still brings
-                // up the numeric keypad.
-                type="text"
-                value={scalars.mayflySeed}
-              />
-              {fieldError("mayflySeed")}
-            </div>
+            {/*
+              The mayfly fields are removed rather than disabled when the
+              simple optimizer is chosen: the server does not read them at all
+              in that case, and a greyed-out control that does nothing is a
+              control that lies.
+            */}
+            {mayfly ? (
+              <section
+                aria-labelledby={fieldId("mayfly-heading")}
+                className="fit-advanced-section"
+              >
+                <h3 id={fieldId("mayfly-heading")}>Mayfly optimizer</h3>
+
+                <div className="fit-row">
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("mayflyVariant")}>
+                      Mayfly variant
+                    </label>
+                    <select
+                      id={fieldId("mayflyVariant")}
+                      onChange={(event) => {
+                        setMayflyVariant(event.target.value as MayflyVariant);
+                      }}
+                      value={mayflyVariant}
+                    >
+                      {MAYFLY_VARIANTS.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("mayflyPopulation")}>
+                      Population
+                    </label>
+                    <input
+                      aria-describedby={describedBy("mayflyPopulation")}
+                      aria-invalid={errors.mayflyPopulation !== undefined}
+                      id={fieldId("mayflyPopulation")}
+                      inputMode="numeric"
+                      max={FIT_LIMITS.mayflyPopulation.max}
+                      min={FIT_LIMITS.mayflyPopulation.min}
+                      onChange={(event) => {
+                        setScalar("mayflyPopulation", event.target.value);
+                      }}
+                      type="number"
+                      value={scalars.mayflyPopulation}
+                    />
+                    {fieldError("mayflyPopulation")}
+                  </div>
+
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("mayflySeed")}>Seed</label>
+                    <input
+                      aria-describedby={describedBy("mayflySeed")}
+                      aria-invalid={errors.mayflySeed !== undefined}
+                      id={fieldId("mayflySeed")}
+                      inputMode="numeric"
+                      onChange={(event) => {
+                        setScalar("mayflySeed", event.target.value);
+                      }}
+                      // A text field, not a number one: the seed is an exact
+                      // int64 decimal string, and a number input is free to
+                      // hand back a normalised value -- "1e+19" for a seed near
+                      // the top of the range -- which BigInt() then refuses.
+                      type="text"
+                      value={scalars.mayflySeed}
+                    />
+                    {fieldError("mayflySeed")}
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
+            <section
+              aria-labelledby={fieldId("bounds-heading")}
+              className="fit-advanced-section"
+            >
+              <h3 id={fieldId("bounds-heading")}>Bounds</h3>
+
+              <div className="fit-check">
+                <input
+                  checked={useBounds}
+                  id={fieldId("useBounds")}
+                  onChange={(event) => {
+                    setUseBounds(event.target.checked);
+                  }}
+                  type="checkbox"
+                />
+                <label htmlFor={fieldId("useBounds")}>
+                  Narrow the search bounds
+                </label>
+              </div>
+
+              <p className="fit-hint">
+                Set both ends for a dimension to narrow it. Empty dimensions
+                keep their defaults.
+              </p>
+
+              {fieldError("bounds")}
+
+              {useBounds
+                ? BOUNDS_KEYS.map((key) => (
+                    <div className="fit-row fit-bounds-row" key={key}>
+                      <span
+                        className="fit-bounds-label"
+                        id={fieldId(`bounds-${key}`)}
+                      >
+                        {BOUNDS_LABELS[key]}
+                      </span>
+
+                      <div className="fit-field">
+                        <label htmlFor={fieldId(`bounds-${key}-min`)}>
+                          Minimum
+                        </label>
+                        <input
+                          aria-describedby={describedBy(`bounds-${key}`)}
+                          aria-invalid={errors[`bounds-${key}`] !== undefined}
+                          // The visible label reads "Minimum" seven times over;
+                          // the accessible name names its dimension.
+                          aria-label={`${BOUNDS_LABELS[key]} minimum`}
+                          id={fieldId(`bounds-${key}-min`)}
+                          onChange={(event) => {
+                            setBound(key, "min", event.target.value);
+                          }}
+                          placeholder={String(DEFAULT_PARAM_BOUNDS[key][0])}
+                          type="number"
+                          value={boundsRows[key].min}
+                        />
+                      </div>
+
+                      <div className="fit-field">
+                        <label htmlFor={fieldId(`bounds-${key}-max`)}>
+                          Maximum
+                        </label>
+                        <input
+                          aria-describedby={describedBy(`bounds-${key}`)}
+                          aria-invalid={errors[`bounds-${key}`] !== undefined}
+                          aria-label={`${BOUNDS_LABELS[key]} maximum`}
+                          id={fieldId(`bounds-${key}-max`)}
+                          onChange={(event) => {
+                            setBound(key, "max", event.target.value);
+                          }}
+                          placeholder={String(DEFAULT_PARAM_BOUNDS[key][1])}
+                          type="number"
+                          value={boundsRows[key].max}
+                        />
+                      </div>
+
+                      {fieldError(`bounds-${key}`)}
+                    </div>
+                  ))
+                : null}
+            </section>
           </div>
-        ) : null}
+        </details>
       </fieldset>
 
-      <fieldset className="fit-group">
-        <legend>Bounds</legend>
-
-        <div className="fit-check">
-          <input
-            checked={useBounds}
-            id={fieldId("useBounds")}
-            onChange={(event) => {
-              setUseBounds(event.target.checked);
-            }}
-            type="checkbox"
-          />
-          <label htmlFor={fieldId("useBounds")}>Narrow the search bounds</label>
-        </div>
-
-        <p className="fit-hint">
-          Every dimension is optional; one left empty keeps its default.
-          Supplied bounds are a hard constraint, so the box is not widened to
-          contain the starting preset. A server built before the bounds field
-          was added to the fit API ignores the document rather than refusing it,
-          so on such a server the fit runs against the default box.
+      <div className="fit-job-control">
+        <p aria-live="polite" className="fit-job-state">
+          {jobState}
         </p>
 
-        {fieldError("bounds")}
+        <div className="fit-actions">
+          <button
+            className="fit-button"
+            disabled={busy || running}
+            type="submit"
+          >
+            {busy && !running ? "Starting…" : "Start fit"}
+          </button>
 
-        {useBounds
-          ? BOUNDS_KEYS.map((key) => (
-              <div className="fit-row fit-bounds-row" key={key}>
-                <span
-                  className="fit-bounds-label"
-                  id={fieldId(`bounds-${key}`)}
-                >
-                  {BOUNDS_LABELS[key]}
-                </span>
-
-                <div className="fit-field">
-                  <label htmlFor={fieldId(`bounds-${key}-min`)}>Minimum</label>
-                  <input
-                    aria-describedby={describedBy(`bounds-${key}`)}
-                    aria-invalid={errors[`bounds-${key}`] !== undefined}
-                    // The visible label reads "Minimum" seven times over; the
-                    // accessible name names the dimension it belongs to.
-                    aria-label={`${BOUNDS_LABELS[key]} minimum`}
-                    id={fieldId(`bounds-${key}-min`)}
-                    onChange={(event) => {
-                      setBound(key, "min", event.target.value);
-                    }}
-                    placeholder={String(DEFAULT_PARAM_BOUNDS[key][0])}
-                    type="number"
-                    value={boundsRows[key].min}
-                  />
-                </div>
-
-                <div className="fit-field">
-                  <label htmlFor={fieldId(`bounds-${key}-max`)}>Maximum</label>
-                  <input
-                    aria-describedby={describedBy(`bounds-${key}`)}
-                    aria-invalid={errors[`bounds-${key}`] !== undefined}
-                    aria-label={`${BOUNDS_LABELS[key]} maximum`}
-                    id={fieldId(`bounds-${key}-max`)}
-                    onChange={(event) => {
-                      setBound(key, "max", event.target.value);
-                    }}
-                    placeholder={String(DEFAULT_PARAM_BOUNDS[key][1])}
-                    type="number"
-                    value={boundsRows[key].max}
-                  />
-                </div>
-
-                {fieldError(`bounds-${key}`)}
-              </div>
-            ))
-          : null}
-      </fieldset>
-
-      <div className="fit-actions">
-        <button className="fit-button" disabled={busy || running} type="submit">
-          {busy && !running ? "Starting…" : "Start fit"}
-        </button>
-
-        <button
-          className="fit-button fit-button-secondary"
-          disabled={busy || !running}
-          onClick={() => void onCancel()}
-          type="button"
-        >
-          Cancel fit
-        </button>
+          <button
+            className="fit-button fit-button-secondary"
+            disabled={busy || !running}
+            onClick={() => void onCancel()}
+            type="button"
+          >
+            Cancel fit
+          </button>
+        </div>
       </div>
 
       {/*

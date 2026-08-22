@@ -23,7 +23,7 @@ export function Topbar({ route }: TopbarProps) {
       <div className="brand">
         <img src={brandMark} alt="" className="brand-mark" />
         <div>
-          <p className="brand-kicker">Physical Model Instrument</p>
+          <p className="brand-kicker">Algorithmic Instrument</p>
           <h1>Algo Glockenspiel</h1>
         </div>
       </div>
