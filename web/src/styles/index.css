@@ -567,7 +567,7 @@ h1 {
   right: 3%;
   width: calc(var(--mallet-original-width) + var(--mallet-original-width));
   height: calc(var(--mallet-original-height) + var(--mallet-original-height));
-  opacity: 0.82;
+  opacity: 1;
   pointer-events: none;
   filter: drop-shadow(0 3px 4px rgba(55, 43, 32, 0.16));
   z-index: 8;

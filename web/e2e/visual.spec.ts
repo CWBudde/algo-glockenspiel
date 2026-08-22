@@ -852,6 +852,7 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
   expect(layerOrder.mallet).toBeGreaterThan(layerOrder.accidental);
 
   const mallet = rack.locator(".mallet");
+  await expect(mallet).toHaveCSS("opacity", "1");
   const [malletBox, barBoxes, malletRackBox] = await Promise.all([
     mallet.boundingBox(),
     rack.locator(".bar").evaluateAll((elements) =>
