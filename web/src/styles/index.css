@@ -580,10 +580,13 @@ h1 {
 }
 
 .mallet {
+  --mallet-original-width: clamp(136px, 14vw, 156px);
+  --mallet-original-height: clamp(32.381px, 3.333vw, 37.143px);
   position: absolute;
+  top: calc(100% - var(--mallet-original-height) + 1px);
   right: 3%;
-  bottom: -1px;
-  width: clamp(136px, 14vw, 156px);
+  width: calc(var(--mallet-original-width) + var(--mallet-original-width));
+  height: calc(var(--mallet-original-height) + var(--mallet-original-height));
   opacity: 0.82;
   pointer-events: none;
   filter: drop-shadow(0 3px 4px rgba(55, 43, 32, 0.16));
@@ -823,9 +826,11 @@ h1 {
   }
 
   .mallet {
+    top: auto;
     right: 1%;
     bottom: -10px;
     width: 84px;
+    height: auto;
   }
 
   .keyboard-panel {

@@ -829,7 +829,7 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
   expect(layerOrder.mallet).toBeGreaterThan(layerOrder.accidental);
 
   const mallet = rack.locator(".mallet");
-  const [malletBox, barBoxes] = await Promise.all([
+  const [malletBox, barBoxes, malletRackBox] = await Promise.all([
     mallet.boundingBox(),
     rack.locator(".bar").evaluateAll((elements) =>
       elements.map((element) => {
@@ -842,8 +842,22 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
         };
       }),
     ),
+    rack.locator(".rack").boundingBox(),
   ]);
   expect(malletBox).not.toBeNull();
+  expect(malletRackBox).not.toBeNull();
+  const originalMalletWidth = Math.min(156, Math.max(136, 1024 * 0.14));
+  const originalMalletHeight = originalMalletWidth / 4.2;
+  expect(malletBox!.width).toBeCloseTo(originalMalletWidth * 2, 0);
+  expect(malletBox!.y).toBeCloseTo(
+    malletRackBox!.y + malletRackBox!.height - originalMalletHeight + 1,
+    0,
+  );
+  expect(
+    malletRackBox!.x +
+      malletRackBox!.width -
+      (malletBox!.x + malletBox!.width),
+  ).toBeCloseTo(malletRackBox!.width * 0.03, 0);
   expect(
     barBoxes.some(
       (bar) =>
