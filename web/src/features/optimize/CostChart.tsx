@@ -51,26 +51,58 @@ function cssColor(name: string, fallback: string): string {
 }
 
 /**
+ * Folds the samples from `from` onwards into one dataset's own array.
+ *
  * A logarithmic axis cannot plot a zero or a negative, and a cost legitimately
  * can be either: a perfect match is 0, and a metric is free to be signed. Such
  * a sample is dropped from the line rather than being clamped to an invented
  * epsilon, which would draw a floor that is not in the data.
+ *
+ * The tail is trimmed before appending because the newest sample is not always
+ * a new one: `appendPoint` overwrites the last point in place when the
+ * optimizer's iteration count has not moved, so whatever is already drawn at or
+ * beyond the first re-read sample has to go before it is drawn again.
  */
-function plottable(
+function extend(
+  data: Point[],
   points: CostPoint[],
+  from: number,
   pick: (p: CostPoint) => number,
-): Point[] {
-  const result: Point[] = [];
+): void {
+  const boundary = points[from];
 
-  for (const point of points) {
-    const y = pick(point);
+  if (boundary !== undefined) {
+    while (data.length > 0) {
+      // Chart.js allows a null coordinate to mean a gap in the line; nothing
+      // here ever writes one, so an x that is not a number is dropped with the
+      // rest of the re-read tail rather than being reasoned about.
+      const x = data[data.length - 1].x;
 
-    if (Number.isFinite(y) && y > 0) {
-      result.push({ x: point.iteration, y });
+      if (x !== null && x < boundary.iteration) {
+        break;
+      }
+
+      data.pop();
     }
   }
 
-  return result;
+  for (let index = from; index < points.length; index += 1) {
+    const point = points[index];
+    const y = pick(point);
+
+    if (Number.isFinite(y) && y > 0) {
+      data.push({ x: point.iteration, y });
+    }
+  }
+}
+
+/** The same guard `FitStatus` applies, so a broken reading is never announced. */
+function formatCost(cost: number): string {
+  if (!Number.isFinite(cost)) {
+    return "-";
+  }
+
+  return cost.toPrecision(4);
 }
 
 /**
@@ -172,6 +204,12 @@ export function CostChart({ points }: CostChartProps) {
     [palette, prefersReducedMotion],
   );
 
+  // How many of `points` are already in the chart's own arrays. A fit that
+  // reports every iteration may run to 100,000 of them, so each event folds in
+  // only what it brought rather than mapping the whole history again.
+  const foldedRef = useRef(0);
+  const frameRef = useRef<number | null>(null);
+
   useEffect(() => {
     const chart = chartRef.current;
 
@@ -179,10 +217,48 @@ export function CostChart({ points }: CostChartProps) {
       return;
     }
 
-    chart.data.datasets[0].data = plottable(points, (p) => p.best);
-    chart.data.datasets[1].data = plottable(points, (p) => p.current);
-    chart.update("none");
+    const [best, current] = chart.data.datasets;
+    let from = foldedRef.current;
+
+    if (from > points.length) {
+      // A new job hands us a shorter array: the previous run's line goes.
+      from = 0;
+    } else if (from > 0) {
+      // The last sample may have been overwritten in place rather than
+      // appended, so it is re-read rather than trusted.
+      from -= 1;
+    }
+
+    if (from === 0) {
+      best.data = [];
+      current.data = [];
+    }
+
+    extend(best.data, points, from, (p) => p.best);
+    extend(current.data, points, from, (p) => p.current);
+    foldedRef.current = points.length;
+
+    // A burst at reportEvery: 1 arrives faster than the screen refreshes, and
+    // every redraw walks the whole line. Collapsing the pending redraws into
+    // one per frame keeps the drawing cost proportional to time rather than to
+    // the number of samples.
+    frameRef.current ??= requestAnimationFrame(() => {
+      frameRef.current = null;
+      chart.update("none");
+    });
   }, [points]);
+
+  // Only on unmount: cancelling the pending frame between events would keep
+  // rescheduling a redraw that never happens while samples keep arriving.
+  useEffect(
+    () => () => {
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+    },
+    [],
+  );
 
   const last = points[points.length - 1];
   const summary =
@@ -190,7 +266,7 @@ export function CostChart({ points }: CostChartProps) {
       ? "No cost samples yet."
       : `Cost curve over ${String(points.length)} samples. ` +
         `At ${String(last.iteration)} optimizer iterations the best cost is ` +
-        `${last.best.toPrecision(4)} and the current cost is ${last.current.toPrecision(4)}.`;
+        `${formatCost(last.best)} and the current cost is ${formatCost(last.current)}.`;
 
   return (
     <div className="cost-chart">
