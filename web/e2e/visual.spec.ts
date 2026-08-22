@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 import type { FitSnapshot } from "../src/api/types";
@@ -160,6 +161,109 @@ async function waitForStablePaint(page: Page): Promise<void> {
   await page.evaluate(async () => {
     await document.fonts.ready;
   });
+}
+
+/** Returns visible, enabled controls in the order the browser tabs to them. */
+function tabbableControls(page: Page) {
+  return page.locator(
+    "a[href]:visible, button:not([disabled]):visible, input:not([disabled]):visible, select:not([disabled]):visible, summary:visible",
+  );
+}
+
+/**
+ * Walks every control, rather than sampling one, and checks that keyboard focus
+ * has a visible three-pixel treatment. The dials draw it on their visible face
+ * because the real range input is deliberately transparent.
+ */
+async function expectFullKeyboardTraversal(page: Page): Promise<void> {
+  const controls = await tabbableControls(page).all();
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+
+  for (const control of controls) {
+    await page.keyboard.press("Tab");
+    await expect(control).toBeFocused();
+
+    const focusStyle = await control.evaluate((element) => {
+      const focusTarget = element.classList.contains("dial-input")
+        ? element.nextElementSibling
+        : element;
+
+      if (!(focusTarget instanceof HTMLElement)) {
+        throw new Error("focus target is not an HTML element");
+      }
+
+      const style = getComputedStyle(focusTarget);
+      return {
+        color: style.outlineColor,
+        style: style.outlineStyle,
+        width: Number.parseFloat(style.outlineWidth),
+      };
+    });
+
+    expect(focusStyle.style).toBe("solid");
+    expect(focusStyle.width).toBeGreaterThanOrEqual(3);
+    expect(focusStyle.color).not.toBe("rgba(0, 0, 0, 0)");
+  }
+}
+
+async function expectNoSeriousAxeViolations(page: Page): Promise<void> {
+  const results = await new AxeBuilder({ page }).analyze();
+  const violations = results.violations.filter(
+    ({ impact }) => impact === "serious" || impact === "critical",
+  );
+
+  expect(violations).toEqual([]);
+}
+
+async function expectNoBodyOverflow(page: Page): Promise<void> {
+  const overflow = await page.locator("body").evaluate((body) => {
+    const bodyRight = body.getBoundingClientRect().right;
+
+    return [...body.querySelectorAll("*")]
+      .filter(
+        (element) =>
+          !element.closest(".playfield-viewport") &&
+          element.getBoundingClientRect().right > bodyRight + 1,
+      )
+      .map((element) => ({
+        className: element.className,
+        right: element.getBoundingClientRect().right,
+        tag: element.tagName,
+      }));
+  });
+
+  expect(overflow).toEqual([]);
+  expect(
+    await page
+      .locator("body")
+      .evaluate((body) => body.scrollWidth === body.clientWidth),
+  ).toBe(true);
+}
+
+async function expectTouchTargets(page: Page): Promise<void> {
+  const controls = await tabbableControls(page).all();
+
+  for (const control of controls) {
+    let target = control;
+
+    if ((await control.getAttribute("type")) === "checkbox") {
+      const id = await control.getAttribute("id");
+      expect(id).not.toBeNull();
+      target = page.locator(`label[for="${id}"]`);
+    }
+
+    const box = await target.boundingBox();
+    expect(box).not.toBeNull();
+    // Chromium can quantize a declared 44px edge to 43.95 CSS pixels.
+    expect(box!.width).toBeGreaterThanOrEqual(43.9);
+    expect(box!.height).toBeGreaterThanOrEqual(43.9);
+  }
+}
+
+async function exposeAllOptimizeControls(page: Page): Promise<void> {
+  await page.getByLabel("Optimizer", { exact: true }).selectOption("mayfly");
+  await page.getByText("Advanced settings", { exact: true }).click();
+  await page.getByLabel("Narrow the search bounds").check();
 }
 
 for (const viewport of [
@@ -502,6 +606,96 @@ test("performance deck exposes engine failures as live errors", async ({
   await expect(status).toHaveAttribute("data-error", "true");
   await expect(status).toHaveText("visual engine failure");
 });
+
+test("Play and Optimize support full keyboard traversal with visible focus", async ({
+  page,
+}) => {
+  await installStableEngine(page);
+  await page.goto("/#/play");
+  await expect(page.getByText(ENGINE_READY, { exact: true })).toBeVisible();
+  await expectFullKeyboardTraversal(page);
+
+  await installStableFitApi(page);
+  await page.goto("/#/optimize");
+  await expect(
+    page.getByRole("status", {
+      name: "Fit service connected · visual-test",
+    }),
+  ).toBeVisible();
+  await exposeAllOptimizeControls(page);
+  await expectFullKeyboardTraversal(page);
+});
+
+test("Play and available Optimize have no serious Axe violations", async ({
+  page,
+}) => {
+  await installStableEngine(page);
+  await page.goto("/#/play");
+  await expect(page.getByText(ENGINE_READY, { exact: true })).toBeVisible();
+  await expectNoSeriousAxeViolations(page);
+
+  await installStableFitApi(page);
+  await page.goto("/#/optimize");
+  await expect(
+    page.getByRole("status", {
+      name: "Fit service connected · visual-test",
+    }),
+  ).toBeVisible();
+  await exposeAllOptimizeControls(page);
+  await expectNoSeriousAxeViolations(page);
+});
+
+test("reduced-motion preference removes nonessential transitions", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await installStableEngine(page);
+  await page.goto("/#/play");
+
+  const durations = await page
+    .locator(".bar")
+    .first()
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        animation: style.animationDuration,
+        transition: style.transitionDuration,
+      };
+    });
+  expect(Number.parseFloat(durations.animation)).toBeLessThanOrEqual(0.001);
+  expect(Number.parseFloat(durations.transition)).toBeLessThanOrEqual(0.001);
+});
+
+for (const width of [390, 760, 1024, 1440]) {
+  test(`Play and Optimize stay inside the body at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await installStableEngine(page);
+    await page.goto("/#/play");
+    await expect(page.getByText(ENGINE_READY, { exact: true })).toBeVisible();
+
+    await expectNoBodyOverflow(page);
+
+    if (width <= 760) {
+      await expectTouchTargets(page);
+    }
+
+    await installStableFitApi(page);
+    await page.goto("/#/optimize");
+    await expect(
+      page.getByRole("status", {
+        name: "Fit service connected · visual-test",
+      }),
+    ).toBeVisible();
+    await exposeAllOptimizeControls(page);
+    await expectNoBodyOverflow(page);
+
+    if (width <= 760) {
+      await expectTouchTargets(page);
+    }
+  });
+}
 
 test("Optimize exposes ordered setup and compact service states", async ({
   page,

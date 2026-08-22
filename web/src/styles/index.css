@@ -738,6 +738,32 @@ h1 {
   .playfield-viewport .piano-key {
     touch-action: pan-x;
   }
+
+  /* Keep the quiet narrow accidental while making its touch target 44px. */
+  .playfield-viewport .piano-key.black {
+    width: var(--playfield-white-unit);
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .playfield-viewport .piano-key.black::before {
+    content: "";
+    position: absolute;
+    inset: 0 22%;
+    border-radius: 0 0 4px 4px;
+    background: linear-gradient(180deg, #625950 0%, #46403a 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 248, 238, 0.08),
+      0 2px 3px rgba(35, 29, 24, 0.14);
+  }
+
+  .playfield-viewport .piano-key.black.is-active {
+    background: transparent;
+  }
+
+  .playfield-viewport .piano-key.black.is-active::before {
+    background: linear-gradient(180deg, #806a50 0%, #554638 100%);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1374,6 +1400,44 @@ h1 {
   .tab {
     flex: 1;
     justify-content: center;
+    min-height: 44px;
+  }
+
+  .wood-field select,
+  .fit-field input,
+  .fit-field select,
+  .fit-advanced summary,
+  .fit-button,
+  .audition-field input,
+  .audition-controls button,
+  .audition-download {
+    min-height: 44px;
+  }
+
+  .fit-group,
+  .fit-row,
+  .fit-field {
+    min-width: 0;
+  }
+
+  .fit-row > .fit-field {
+    flex-basis: 100%;
+  }
+
+  .fit-field input,
+  .fit-field select {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .fit-check {
+    min-height: 44px;
+  }
+
+  .fit-check label {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
   }
 
   .fit-job-control,
@@ -1387,5 +1451,16 @@ h1 {
 
   .fit-actions > .fit-button {
     flex: 1 1 140px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

@@ -671,17 +671,17 @@ Baseline captured with Playwright on 2026-08-22 at 1440x1000 and 390x844:
 
 Acceptance criteria:
 
-- [ ] At 390px wide, every bar keeps a usable hit target and readable note label; the rack and
+- [x] At 390px wide, every bar keeps a usable hit target and readable note label; the rack and
       keyboard share one pitch-aligned horizontal viewport rather than overlapping or scrolling
       independently.
-- [ ] At 1440px wide, the rack is the clear Play-view focal point, the performance controls form
+- [x] At 1440px wide, the rack is the clear Play-view focal point, the performance controls form
       one balanced control deck, and the keyboard reads as a supporting input aid.
-- [ ] Wood appears on structural instrument surfaces rather than every panel. Bars and hardware
+- [x] Wood appears on structural instrument surfaces rather than every panel. Bars and hardware
       have a distinct restrained metal treatment, and text does not rely on textured backgrounds
       for contrast.
-- [ ] Optimize presents setup, execution and results as a clear sequence, does not render a blank
+- [x] Optimize presents setup, execution and results as a clear sequence, does not render a blank
       chart as though it contained data, and keeps primary job actions near current job state.
-- [ ] Playwright reference screenshots cover Play and Optimize at 1440px, Play at 1024px, and Play
+- [x] Playwright reference screenshots cover Play and Optimize at 1440px, Play at 1024px, and Play
       at 390px. Keyboard traversal, visible focus, reduced motion and existing audio controls still
       work after the redesign.
 
@@ -747,10 +747,16 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       download when a preset exists. The desktop workspace uses balanced setup/results columns and
       collapses below 980px. Mocked Playwright scenarios cover fresh, running, SSE-updated,
       canceled-with-preset and 409 recovery states without changing reconnect or API behavior.
-- [ ] **5.5.11 — Responsive and accessibility polish.** Check 390, 760, 1024 and 1440px layouts;
-      add `prefers-reduced-motion`; verify contrast, touch targets, full keyboard traversal and
-      visible focus. Run `npm --prefix web run typecheck`, `npm --prefix web run lint`, the UI tests
-      and the screenshot suite, then record the final evidence here.
+- [x] **5.5.11 — Responsive and accessibility polish.** Play and Optimize now stay inside the body
+      at 390, 760, 1024 and 1440px. Narrow layouts keep 44px effective targets without enlarging
+      checkbox glyphs, and their form fields surrender intrinsic width instead of overflowing.
+      Mobile piano accidentals retain a narrow visual face inside a 44px button. A reduced-motion
+      media query removes nonessential animation and transition duration. Playwright walks every
+      visible enabled control on both routes and confirms its three-pixel focus treatment, checks
+      both available routes with Axe (no serious or critical violations), and verifies all target
+      widths plus the shared mobile playfield. `typecheck`, ESLint, 16 Vitest tests, the production
+      build and all 21 Chromium tests pass; only the intentionally shifted 390px Play reference was
+      updated.
 
 ## Phase 6: Split Out VST3
 
