@@ -2,13 +2,10 @@ package cli
 
 import (
 	"fmt"
-	"math"
 	"os"
-	"path/filepath"
 
 	"github.com/cwbudde/glockenspiel/internal/synth"
-	"github.com/go-audio/audio"
-	"github.com/go-audio/wav"
+	"github.com/cwbudde/glockenspiel/internal/wavio"
 	"github.com/spf13/cobra"
 )
 
@@ -97,7 +94,7 @@ func runSynth(cmd *cobra.Command, options synthOptions) error {
 		return fmt.Errorf("render produced no samples")
 	}
 
-	if err := writeWAV(options.outputPath, options.sampleRate, samples); err != nil {
+	if err := wavio.WriteMono(options.outputPath, options.sampleRate, samples); err != nil {
 		return err
 	}
 
@@ -113,49 +110,4 @@ func runSynth(cmd *cobra.Command, options synthOptions) error {
 		renderedDuration, len(samples), options.outputPath, stat.Size())
 
 	return nil
-}
-
-func writeWAV(path string, sampleRate int, samples []float32) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create output directory: %w", err)
-	}
-
-	file, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("create output file %q: %w", path, err)
-	}
-
-	defer func() {
-		_ = file.Close()
-	}()
-
-	encoder := wav.NewEncoder(file, sampleRate, 16, 1, 1)
-
-	intData := make([]int, len(samples))
-	for i, sample := range samples {
-		intData[i] = float32ToInt16(sample)
-	}
-
-	buffer := &audio.IntBuffer{
-		Format: &audio.Format{
-			NumChannels: 1,
-			SampleRate:  sampleRate,
-		},
-		SourceBitDepth: 16,
-		Data:           intData,
-	}
-	if err := encoder.Write(buffer); err != nil {
-		return fmt.Errorf("write wav data: %w", err)
-	}
-
-	if err := encoder.Close(); err != nil {
-		return fmt.Errorf("close wav writer: %w", err)
-	}
-
-	return nil
-}
-
-func float32ToInt16(sample float32) int {
-	v := math.Max(-1, math.Min(1, float64(sample)))
-	return int(math.Round(v * 32767))
 }

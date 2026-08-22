@@ -22,7 +22,7 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | 1     | Configurable oscillator bank | done                              |
 | 2     | Real SIMD on three targets   | open — 2.1-2.3 done, 2.4 partly   |
 | 3     | Optimizer                    | done                              |
-| 4     | Serve and the optimizer UI   | open — no code yet                |
+| 4     | Serve and the optimizer UI   | open — 4.1 and 4.2 done, 4.3 open |
 | 5     | Web app                      | open — no code yet                |
 | 6     | Split out VST3               | open — 6.1 all but the last audit |
 | 7     | Documentation                | open — 7.1 and 7.2 done           |
@@ -61,7 +61,9 @@ What does not match the goal:
   worthless for timing, so the NEON row of the benchmark table in `docs/oscillator-bank.md` is
   still `TODO` pending a native arm64 host.
 - AVX-512 is deferred rather than written, with the reason in `## Deferred`.
-- `serve` and the optimizer tab have no code.
+- The optimizer tab has no code. `serve` does: it hosts the app and the fit API
+  (Phase 4.1 and 4.2), but nothing in `web/` calls the API yet, so fitting from the browser
+  still means fitting with `curl`.
 - The web app runs on `ScriptProcessorNode`, master gain never reaches a ringing note, and the
   bottom two octaves of the keyboard are over-unity with an inverted right channel.
 - `go build -tags=vst3go ./plugin/...` fails with four errors, and `go.mod` still carries a
@@ -352,32 +354,53 @@ Goal: run optimization interactively from a browser.
 
 Acceptance criteria:
 
-- [ ] `serve` hosts the UI and the API.
+- [x] `serve` hosts the UI and the API. The static app from Phase 4.1 and the fit endpoints
+      from Phase 4.2 are registered by the same `Handler()`, so one process on one port is
+      the whole story. What the browser does with the API is 4.3.
 - [ ] A fit can be started, watched, auditioned, and downloaded from the browser.
 - [ ] The Pages build degrades gracefully with no server.
 
-### Phase 4.1: The server skeleton
+### Phase 4.1: The server skeleton — DONE (2026-08-21)
 
 Goal: `glockenspiel serve` puts the existing web app on a port. No fitting yet.
 
-- [ ] `go:embed` the `web/` tree. The only embed in the repo today is
-      `assets/embed_default.go:9`, so the pattern exists but the assets are not covered.
-- [ ] `internal/cli/serve.go` with `--addr :8080`, registered next to `newSynthCmd`,
-      `newFitCmd` and `newVersionCmd` in `internal/cli/root.go:30-34`.
-- [ ] `internal/server/` serving the embedded assets plus a version endpoint, with graceful
-      shutdown wired to the signal handling `fit` already threads through.
+- [x] `go:embed` the `web/` tree. `web/embed.go:28` embeds `index.html`, the three scripts,
+      the stylesheet, `wasm_exec.js` and `assets`, file by file rather than as a directory:
+      a directory pattern would pull in the gitignored `web/dist` whenever it happened to
+      exist and make the binary's contents depend on the state of an ignored directory.
+      `web/dist` is served from disk instead.
+- [x] `internal/cli/serve.go` with `--addr :8080` (`:45`) and a `--dist` alongside it,
+      registered next to `newSynthCmd`, `newFitCmd` and `newVersionCmd` in
+      `internal/cli/root.go:33`.
+- [x] `internal/server/` serving the embedded assets plus a version endpoint
+      (`server.go:227`), with graceful shutdown wired to the signal handling `fit` already
+      threads through: `serve.go:82` owns the `signal.NotifyContext` and `Server.Run`
+      shuts down under `context.WithoutCancel`, so in-flight requests keep their grace
+      period rather than being cut off by the signal that started the shutdown.
 
-### Phase 4.2: The fit API
+### Phase 4.2: The fit API — DONE (2026-08-22)
 
 Goal: the CLI's fitting stack, reachable over HTTP.
 
-- [ ] A job manager owning one fit at a time, cancellable through the `context.Context` the
-      optimizer already accepts.
-- [ ] JSON endpoints: start a fit, cancel it, fetch the resulting preset, render audio.
-- [ ] An SSE progress stream fed from the existing `optimizer.Progress` callback — the same
-      one that drives checkpointing, so no new plumbing inside the optimizer.
-- [ ] Reference-WAV upload with a size limit, reusing the existing WAV loader rather than a
-      second decoder.
+- [x] A job manager owning one fit at a time, cancellable through the `context.Context` the
+      optimizer already accepts. `internal/server/job.go`: one slot, a second start is a
+      409, and `POST /api/fit/cancel` waits for the run to actually stop before it answers,
+      so cancel-then-start needs no polling. The context is rooted in `context.Background`
+      rather than in the request that started the fit, which returns immediately.
+- [x] JSON endpoints: start a fit (`POST /api/fit/start`), cancel it
+      (`POST /api/fit/cancel`), read status (`GET /api/fit`), fetch the resulting preset
+      (`GET /api/fit/preset`) and render audio (`GET /api/fit/audio`). Nothing a client
+      sends is ever used to build a filesystem path.
+- [x] An SSE progress stream (`GET /api/fit/events`) fed from the existing
+      `optimizer.Progress` callback — the same one that drives checkpointing.
+      `internal/optimizer` needed no change at all. The streams are closed before
+      `http.Server.Shutdown` runs, because an SSE response is an active connection forever
+      and would otherwise burn the whole shutdown timeout on every Ctrl-C.
+- [x] Reference-WAV upload with a size limit (16 MiB, `http.MaxBytesReader`), reusing the
+      existing WAV loader rather than a second decoder. There was no shared loader to
+      reuse — `internal/cli/fit.go`, `internal/cli/synth.go` and
+      `internal/optimizer/legacy_validation_test.go` each carried their own copy — so it
+      was extracted into `internal/wavio` first and all three migrated onto it.
 
 ### Phase 4.3: The Optimize tab
 

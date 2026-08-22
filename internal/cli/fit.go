@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -17,7 +16,7 @@ import (
 	"github.com/cwbudde/glockenspiel/internal/optimizer"
 	"github.com/cwbudde/glockenspiel/internal/preset"
 	"github.com/cwbudde/glockenspiel/internal/synth"
-	"github.com/go-audio/wav"
+	"github.com/cwbudde/glockenspiel/internal/wavio"
 	"github.com/spf13/cobra"
 )
 
@@ -203,7 +202,7 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	}
 	defer stopCPUProfile()
 
-	reference, referenceRate, err := loadMonoWAVFloat32(options.referencePath)
+	reference, referenceRate, err := wavio.LoadMono(options.referencePath)
 	if err != nil {
 		return err
 	}
@@ -367,14 +366,14 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	fittedSamples := engine.RenderNote(options.note, options.velocity, renderedDuration)
 
 	renderedPath := filepath.Join(options.workDir, "fitted_output.wav")
-	if err := writeWAV(renderedPath, options.sampleRate, fittedSamples); err != nil {
+	if err := wavio.WriteMono(renderedPath, options.sampleRate, fittedSamples); err != nil {
 		return err
 	}
 
 	// The reported RMS/log figures describe what the rendered WAV will sound
-	// like, so quantize a copy the way writeWAV will. The objective itself no
-	// longer does this — quantizing every candidate made the cost piecewise
-	// constant.
+	// like, so quantize a copy the way wavio.WriteMono will. The objective
+	// itself no longer does this — quantizing every candidate made the cost
+	// piecewise constant.
 	reportedSamples := append([]float32(nil), fittedSamples...)
 	optimizer.ProjectToPCM16Domain(reportedSamples)
 	rms := optimizer.ComputeRMSError(reportedSamples, reference)
@@ -637,48 +636,4 @@ func startCPUProfile(path string) (func(), error) {
 
 		_ = file.Close()
 	}, nil
-}
-
-func loadMonoWAVFloat32(path string) ([]float32, int, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, 0, fmt.Errorf("open wav %q: %w", path, err)
-	}
-
-	defer func() {
-		_ = file.Close()
-	}()
-
-	decoder := wav.NewDecoder(file)
-	if !decoder.IsValidFile() {
-		return nil, 0, fmt.Errorf("invalid wav file: %s", path)
-	}
-
-	intBuffer, err := decoder.FullPCMBuffer()
-	if err != nil {
-		return nil, 0, fmt.Errorf("decode wav %q: %w", path, err)
-	}
-
-	if intBuffer == nil || intBuffer.Format == nil {
-		return nil, 0, fmt.Errorf("invalid decoded buffer: %s", path)
-	}
-
-	bitDepth := intBuffer.SourceBitDepth
-	if bitDepth <= 0 {
-		bitDepth = 16
-	}
-
-	scale := math.Pow(2, float64(bitDepth-1))
-
-	channels := intBuffer.Format.NumChannels
-	if channels <= 0 {
-		channels = 1
-	}
-
-	samples := make([]float32, len(intBuffer.Data)/channels)
-	for i := range samples {
-		samples[i] = float32(float64(intBuffer.Data[i*channels]) / scale)
-	}
-
-	return samples, intBuffer.Format.SampleRate, nil
 }

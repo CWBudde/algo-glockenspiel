@@ -6,8 +6,10 @@
 // reasoning and MissingWasmError below for what a user sees when the build step
 // was skipped.
 //
-// Fitting over HTTP -- the job manager, the JSON endpoints and the SSE progress
-// stream -- is Phase 4.2 and deliberately absent here.
+// Fitting over HTTP is Phase 4.2 and lives beside this file: job.go owns the
+// single-slot job manager, fit.go the JSON endpoints, events.go the SSE
+// progress stream and params.go the request parsing. This file stays the
+// static, read-only half.
 package server
 
 import (
@@ -26,6 +28,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -78,6 +81,10 @@ type Config struct {
 	// ShutdownTimeout bounds the graceful shutdown. Zero means
 	// defaultShutdownTimeout.
 	ShutdownTimeout time.Duration
+
+	// MaxReferenceBytes caps an uploaded reference recording. Zero means
+	// defaultMaxReferenceBytes; see there for why that number.
+	MaxReferenceBytes int64
 }
 
 // staticAsset is one embedded file, prepared once at startup. The tree is a
@@ -93,6 +100,15 @@ type staticAsset struct {
 type Server struct {
 	config Config
 	assets map[string]staticAsset
+
+	// jobs owns the one fit slot. It is reached from every request goroutine
+	// and from the goroutine running a fit, and is safe for all of them.
+	jobs jobManager
+
+	// shutdown is closed once, before http.Server.Shutdown is called, to end
+	// the responses that would otherwise never end. See Stop.
+	shutdown     chan struct{}
+	shutdownOnce sync.Once
 }
 
 // New prepares a server from cfg. It fails when the embedded tree is unusable,
@@ -116,7 +132,11 @@ func New(cfg Config) (*Server, error) {
 		cfg.ShutdownTimeout = defaultShutdownTimeout
 	}
 
-	return &Server{config: cfg, assets: assets}, nil
+	return &Server{
+		config:   cfg,
+		assets:   assets,
+		shutdown: make(chan struct{}),
+	}, nil
 }
 
 // loadStaticAssets reads the whole embedded tree into memory, computing the
@@ -205,6 +225,21 @@ func (s *Server) MissingWasmError() error {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/version", s.handleVersion)
+
+	// The fit family. These are exact patterns, so an unknown path under
+	// /api/fit/ would otherwise fall through to the static handler and be
+	// answered as a missing asset; the subtree pattern below keeps it inside
+	// the API. It does not shadow the exact patterns, which ServeMux prefers
+	// as the more specific match, and it does not cause a redirect from
+	// "/api/fit" either, because that path is registered in its own right.
+	mux.HandleFunc("/api/fit", s.handleFitStatus)
+	mux.HandleFunc("/api/fit/start", s.handleFitStart)
+	mux.HandleFunc("/api/fit/cancel", s.handleFitCancel)
+	mux.HandleFunc("/api/fit/events", s.handleFitEvents)
+	mux.HandleFunc("/api/fit/preset", s.handleFitPreset)
+	mux.HandleFunc("/api/fit/audio", s.handleFitAudio)
+	mux.HandleFunc("/api/fit/", http.NotFound)
+
 	mux.HandleFunc(distURLPrefix, s.handleDist)
 	// A subtree pattern makes ServeMux redirect "/dist" to "/dist/". Register
 	// the bare path as well so that a request for the directory is the plain
@@ -422,6 +457,14 @@ func (s *Server) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		s.logf("shutting down")
 
+		// Before Shutdown, not after. Shutdown waits for active connections to
+		// finish, and an SSE progress stream is an active connection forever:
+		// leaving one open would burn the entire ShutdownTimeout on every
+		// Ctrl-C and turn a graceful exit into a five-second hang. This also
+		// ends the fit itself, so a search does not keep a core busy after the
+		// server that owns it has gone.
+		s.Stop()
+
 		// The shutdown deadline must not hang off the cancelled ctx, or
 		// in-flight requests would be cut off immediately instead of being
 		// given their grace period.
@@ -434,6 +477,23 @@ func (s *Server) Run(ctx context.Context) error {
 
 		return nil
 	}
+}
+
+// Stop releases everything that would otherwise outlive a graceful shutdown:
+// the never-ending SSE responses, and the fit they are reporting on.
+//
+// Run calls it, so a caller that uses Run needs nothing else. It is exported
+// for callers that mount Handler in a server of their own -- and for tests --
+// because without it a fit goroutine survives the thing that started it.
+//
+// It is idempotent: closing a closed channel panics, and cancelling a fit that
+// has already finished is a no-op by construction.
+func (s *Server) Stop() {
+	s.shutdownOnce.Do(func() {
+		close(s.shutdown)
+	})
+
+	s.jobs.cancelActive()
 }
 
 // logf writes one line to the configured log sink, if there is one.
