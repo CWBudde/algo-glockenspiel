@@ -50,6 +50,70 @@ func processRotorBlocksGeneric(re, im, cosCoeff, sinCoeff, amp []float32, blocks
 	}
 }
 
+// processVoiceRotorsGeneric is the portable reference kernel for the
+// voice-major layout, and the oracle every packed voice kernel is validated
+// against. It advances rotors rotors of LaneWidth voices each over the whole
+// chunk and accumulates into acc, which is [samples][LaneWidth] interleaved.
+//
+// Three things differ from processRotorBlocksGeneric, and all three follow from
+// the lane index being a voice index rather than a rotor index:
+//
+//   - the excitation is a lane vector, not a broadcast scalar. Lane l of sample
+//     i is input[i*LaneWidth+l], so every voice is driven by its own stream;
+//   - nothing folds horizontally. Lane l of acc is voice l's output and stays
+//     that way, because summing over rotors is already the whole reduction;
+//   - the walk is over rotor pairs rather than block pairs. A rotor is one
+//     LaneWidth vector here, so a pair is two of them -- the same 64 bytes the
+//     rotor-major kernels take as a block pair, which is why the packed kernels
+//     keep the same stride and the same offsets.
+//
+// The accumulation order is rule four of the contract: within a pair the two
+// rotors are summed first, and pairs are then accumulated in ascending order,
+// the first pair writing acc so no caller has to zero it.
+//
+// samples is derived from acc; input must be readable one frame past that,
+// because the packed kernels compute amp*x one sample ahead.
+func processVoiceRotorsGeneric(re, im, cosCoeff, sinCoeff, amp []float32, rotors int, input, acc []float32) {
+	samples := len(acc) / LaneWidth
+
+	for rotor := 0; rotor+1 < rotors; rotor += 2 {
+		lo := rotor * LaneWidth
+		hi := lo + 2*LaneWidth
+
+		rePair := re[lo:hi:hi]
+		imPair := im[lo:hi:hi]
+		cosPair := cosCoeff[lo:hi:hi]
+		sinPair := sinCoeff[lo:hi:hi]
+		ampPair := amp[lo:hi:hi]
+
+		for i := range samples {
+			x := input[i*LaneWidth : i*LaneWidth+LaneWidth : i*LaneWidth+LaneWidth]
+			out := acc[i*LaneWidth : i*LaneWidth+LaneWidth : i*LaneWidth+LaneWidth]
+
+			for lane := range LaneWidth {
+				second := LaneWidth + lane
+
+				var first, next float32
+
+				rePair[lane], imPair[lane], first = advanceRotor(
+					rePair[lane], imPair[lane], cosPair[lane], sinPair[lane], ampPair[lane], x[lane],
+				)
+				rePair[second], imPair[second], next = advanceRotor(
+					rePair[second], imPair[second], cosPair[second], sinPair[second], ampPair[second], x[lane],
+				)
+
+				folded := first + next
+
+				if rotor == 0 {
+					out[lane] = folded
+				} else {
+					out[lane] += folded
+				}
+			}
+		}
+	}
+}
+
 // advanceRotor advances one rotor by one sample. It returns the rotor's new
 // state and its output term, and the caller stores the state back.
 //

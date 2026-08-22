@@ -156,7 +156,10 @@ conversions as noise should read this paragraph first**: the last one in
 
 ## The numeric contract
 
-Three rules, and every future backend is judged by them.
+Four rules, and every future backend is judged by them. The first three are
+about the rotor-major bank and are unchanged by anything below; the fourth
+covers the voice-major path and is stated at the end of this section, because it
+is about a layout the rest of this section has not described yet.
 
 **Packed kernels are the reference, and they agree with each other to the bit.**
 A backend that has FMA fuses; two backends that both have FMA must produce
@@ -428,6 +431,39 @@ every target. Note that this cuts against an older instinct: it is now correct
 to require the portable kernel to be bit-identical to itself across
 architectures, and any prose or test still saying otherwise is stale.
 
+### The fourth rule: the voice-major accumulation order
+
+`VoiceBank` renders up to `LaneWidth` voices at once by making the lane index
+the voice index. "The voice-major bank" below describes the layout; this is the
+rule its kernels are held to.
+
+**Summing over rotors is the whole reduction, and its order is contractual.**
+The kernels advance rotors in pairs. Within a pair the two rotors' output terms
+are added together first; pairs then accumulate into the output in ascending
+order, the first pair writing it and every later pair adding into it. Written
+out, four rotors give `(t0 + t1) + (t2 + t3)` per voice and per sample, and a
+backend that accumulates `t0 + t1 + t2 + t3` left to right is a different
+program, not a faster one. This is rule two's argument applied to the axis that
+survived — floating-point addition is still not associative — but it is a
+different sum over different operands, so it is a separate rule rather than a
+restatement.
+
+**Rule two does not apply to this path at all.** There is no lane fold to order.
+`reduceLanes` has no voice-major counterpart, and adding one would be a bug: it
+would sum eight unrelated voices into one signal. A backend author looking for
+the horizontal fold should find this paragraph instead of inventing one.
+
+Rules one and three carry over unchanged and are enforced by the same harness.
+`FuzzOscBankMatchesGeneric` drives both layouts from one corpus,
+`processVoiceRotorsGeneric` is the oracle, and `goldenVoiceFused` /
+`goldenVoicePortable` in `golden_test.go` pin the cross-architecture claim the
+way `goldenFused` and `goldenPortable` do for the rotor-major path. The
+tolerance is `voiceContractTolerance`, which is the same bound with two honest
+substitutions: the error envelope runs over one voice's rotors driven by one
+voice's excitation rather than over the whole bank, because that is what a lane
+accumulates, and the fold term counts this path's adds — one per rotor pair and
+one per later pair — instead of the six a horizontal reduction paid.
+
 ## The SSE2 kernel
 
 `oscbank_sse2_amd64.s` takes the same block pair as the AVX2 kernel and splits
@@ -458,6 +494,71 @@ first — about four uops per frame, which is what the scalar loop already costs
 The reduction is memory-shaped, not arithmetic-shaped. A third implementation of
 a summation order that rule two pins exactly would be one more place to get rule
 two wrong, for nothing.
+
+## The voice-major bank
+
+Everything above describes `Bank`, which is rotor-major: one voice's `N*M`
+rotors fill the lanes, one scalar excitation is broadcast to all of them, and
+`reduceLanes` folds the lanes down to one scalar per sample. `VoiceBank`
+(`voicebank.go`) turns that array inside out. The rotor arrays become
+`[rotor][voice]`: rotor `r` of every voice sits contiguously in one lane vector,
+so one packed step advances the same partial of eight different voices.
+
+Every voice of a bank has the same shape — the same oscillator count and the
+same harmonic count, differing only in frequency, decay and amplitude. That is
+what a polyphonic engine holds anyway, one preset and many notes, and it is what
+makes the layout rectangular. A voice carrying fewer oscillators than the shape
+leaves its trailing rotors inert, the same way `Bank`'s padding lanes are inert,
+and a lane with no voice at all holds zero coefficients and zero amplitude
+forever.
+
+Two things follow, and both are the point.
+
+The excitation stops being a scalar. `input` is `[samples][LaneWidth]`
+interleaved, so every voice is driven by its own stream. In the packed kernels
+that is a vector load where the rotor-major ones issue a `VBROADCASTSS` or a
+`VLD1R`, which costs nothing; the one-sample lookahead that keeps `amp*x` off
+the critical path widens with it, so the guard element at the end of the scratch
+buffer becomes a guard _frame_.
+
+And the horizontal fold disappears. Summing over rotors already produces one
+value per voice, so the accumulator is the output and separating the voices is
+the caller's deinterleave. This is worth being precise about, because "the fold
+moved" would be the wrong summary: the fold is gone. Rule two of the contract
+pins the order in which four accumulator lanes are summed, and on this path
+there is nothing to sum — a kernel that folded lanes here would be adding eight
+unrelated voices together. What replaces rule two is rule four, above, which
+fixes the order of the sum that does happen: the one over rotors.
+
+### What it costs
+
+Idle lanes. The bank advances all `LaneWidth` lanes whether or not they carry a
+voice, so with fewer sounding voices than lanes the work is the same as with
+eight. A single sustained voice is therefore _slower_ in this layout than in
+`Bank`, where that voice's own rotors fill the lanes — which is exactly why the
+rotor-major path stays. Offline rendering, the fitting objectives and every
+golden vector in this package go through `Bank` and are unaffected by any of
+this; nothing in `model` changed.
+
+Counting vector steps rather than time: `V` sounding voices of `R = N*M` rotors
+each cost `V * ceil(R / LaneWidth)` vector steps rotor-major and `R` vector
+steps voice-major, whatever `V` is, up to `LaneWidth`. For the four-oscillator,
+four-harmonic presets this project ships, `R` is 16 and `ceil(R / LaneWidth)` is
+2, so the two are level at eight voices and the rotor-major path is ahead below
+that. Presets whose rotor count is not a multiple of the lane width tilt it the
+other way, because the padding a single voice carries is pure waste there and
+disappears here. **These are instruction counts, not measurements.** No
+voice-major row has been benchmarked yet, and none should be quoted until it
+has; `BenchmarkVoiceBank8Voices2x3` exists to be that measurement and its
+numbers are not in this document.
+
+There is no cross-voice arithmetic anywhere on the path, which is what makes the
+layout testable in the strongest possible way:
+`TestVoiceBankIsBitIdenticalToSingleVoiceRenders` asserts that eight voices
+rendered together produce the same float32 words as eight voices rendered one at
+a time, on every backend, with no tolerance. A tolerance there would pass while
+lanes leaked into each other, which is the one bug this layout can have and the
+rotor-major one cannot.
 
 ## Measured performance
 
@@ -532,10 +633,13 @@ note. It clones now, and `TestRenderingIsIndependentOfPresetState` guards it.
 
 ## Known limits
 
-- Cross-voice lane packing is not implemented. A bank fills its lanes from one
-  voice's oscillators; the realtime engine still renders voices serially. Packing
-  `voices x oscillators` needs per-lane excitation and per-voice output
-  separation, which belongs with the audio-path work in Phase 2.
+- Cross-voice lane packing exists as a bank and has no caller. `VoiceBank` and
+  its three packed kernels are landed and tested — per-lane excitation and
+  per-voice output separation are done — but `RealtimeEngine.ProcessBlock` still
+  renders voices serially through `Bank`, so voice count still costs linearly in
+  everything that ships. Adopting it in `internal/synth` is the remaining half of
+  the audio-path work in Phase 2, and it needs a voice engine that keeps its
+  voices in lane order and deinterleaves the result.
 - AVX2, SSE2 and NEON are packed. Everything else runs the portable kernel,
   which is about 7x slower. AVX-512 is deferred, because CI cannot
   prove it correct on a runner pool that only sometimes has the instructions.
