@@ -26,17 +26,20 @@ const wantLegacyCorrelation = 0.95
 // file's 32-bit floats as integers, so the test compared a render against a
 // square wave.
 //
-// It is still skipped, and the reason has changed from an environment variable
-// to a fact: the shipped preset does not match this reference. Measured with
-// the decoder fixed, the correlation is -0.5261. That is the Chebyshev shaper's
-// DC offset, which holds the bar at a steady level where the reference decays
-// into silence within 0.557 s, and the preset re-fit that follows from removing
-// it. Ungate this test in that change, not before -- an assertion nobody can
-// satisfy is worth no more than the phantom file was.
+// It ran skipped for one commit, for a stated reason rather than an environment
+// variable: the shipped preset did not track this reference, correlation
+// -0.5261, which was the Chebyshev shaper's DC offset holding the bar at a
+// steady level where the reference decays into silence within 0.557 s. Both
+// halves of that are now fixed -- the shaper maps silence to silence and the
+// preset has been re-fitted against this file -- and the correlation is 0.9655,
+// so the gate is gone and the assertion runs.
+//
+// Note that the correlation is computed without time alignment, while the
+// optimizer's objective aligns candidates before scoring. That makes this a
+// strictly stronger check than the fit it came from: two presets can score the
+// same against the objective and land differently here, and one of the two
+// candidate re-fits did exactly that at -0.4157.
 func TestLegacyComparisonA4(t *testing.T) {
-	t.Skip("the shipped preset does not track this reference yet: correlation -0.5261, " +
-		"pending the shaper DC fix and the preset re-fit")
-
 	reference, sampleRate, err := wavio.LoadMono(filepath.FromSlash("../../testdata/reference/legacy_synth_a4.wav"))
 	if err != nil {
 		t.Fatalf("load reference: %v", err)

@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/cwbudde/glockenspiel/assets"
 	"github.com/cwbudde/glockenspiel/model"
 )
 
@@ -106,5 +107,49 @@ func TestSnapshotCopiesChebyshevGainsIndependentlyOfModeCount(t *testing.T) {
 		if snapshot.ChebyshevGains[i] != want {
 			t.Fatalf("gain %d = %v, want %v", i, snapshot.ChebyshevGains[i], want)
 		}
+	}
+}
+
+// TestDefaultSnapshotMatchesTheShippedPreset is the guard on the one piece of
+// duplicated data in this package.
+//
+// defaultSnapshot is a transcription of assets/presets/default.json, kept as a
+// literal so that this package's only dependency stays model -- it is the
+// surface Phase 6 splits into its own module, and an external module cannot
+// import internal/preset, which is what reaching for assets would pull in. A
+// literal can drift, and this one had, twice: 5d7af10 rescaled every mode
+// amplitude by 0.1147 and left the plugin 18.8 dB loud, and the Chebyshev DC
+// fix plus the re-fit that followed it left the plugin rendering at -37.42 dBFS
+// against the preset's -3.19.
+//
+// Neither showed up anywhere, because nothing compared the two. This does. When
+// the preset is re-fitted, the numbers above move with it.
+//
+// The import of assets lives here rather than in the package proper for the
+// same reason the literal does: a test is far easier to relocate than a runtime
+// dependency when the split happens.
+func TestDefaultSnapshotMatchesTheShippedPreset(t *testing.T) {
+	shipped, err := assets.DefaultPreset()
+	if err != nil {
+		t.Fatalf("load the shipped preset: %v", err)
+	}
+
+	want := SnapshotFromBarParams(&shipped.Parameters)
+	if got := DefaultSnapshot(); got != want {
+		t.Errorf("the plugin default has drifted from assets/presets/default.json\n got: %+v\nwant: %+v", got, want)
+	}
+
+	// SnapshotFromBarParams silently takes the first numModes modes and the
+	// first numChebyshevGains gains, so a preset that outgrew either would make
+	// the comparison above pass while describing something the plugin cannot
+	// represent.
+	if len(shipped.Parameters.Modes) != numModes {
+		t.Errorf("the shipped preset carries %d modes, but the plugin exposes %d",
+			len(shipped.Parameters.Modes), numModes)
+	}
+
+	if len(shipped.Parameters.Chebyshev.HarmonicGains) != numChebyshevGains {
+		t.Errorf("the shipped preset carries %d Chebyshev gains, but the plugin exposes %d",
+			len(shipped.Parameters.Chebyshev.HarmonicGains), numChebyshevGains)
 	}
 }

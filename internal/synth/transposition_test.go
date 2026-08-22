@@ -330,3 +330,57 @@ func TestSearchBoundIsAuthorableOnlyUpToNote75(t *testing.T) {
 			got, model.DecayMsSearchMax)
 	}
 }
+
+// TestBaseFrequencyDoesNotReachTheAudio pins the property the `just
+// refit-default` recipe leans on when it says the fit's base_frequency may be
+// normalised back to 440 by hand.
+//
+// base_frequency is carried through TransposeToNote and range-checked by
+// ValidateBarParams, and that is the whole of its life in the model: Bar builds
+// its oscillators from each mode's own Frequency, so nothing downstream ever
+// reads it. Where it does matter is internal/optimizer, which encodes a mode's
+// frequency as log10(Frequency / BaseFrequency) -- it is the anchor the search
+// space is expressed against, not a parameter of the instrument. A fit is
+// therefore free to drift it anywhere that still spans its modes, and the fit
+// that produced the shipped preset drifted it to 1499 Hz.
+//
+// Setting it back to 440 has to be free, and this says it is. The notes are the
+// two ends of the keyboard plus the preset's own, because transposition scales
+// base_frequency by the same ratio as everything else, so a note far from the
+// preset's is where an accidental dependency would show first.
+func TestBaseFrequencyDoesNotReachTheAudio(t *testing.T) {
+	shipped := loadTestPreset(t)
+
+	drifted := shipped.Clone()
+	drifted.Parameters.BaseFrequency = 1499.2075119356841
+
+	if drifted.Parameters.BaseFrequency == shipped.Parameters.BaseFrequency {
+		t.Fatal("the two presets carry the same base_frequency, so this proves nothing")
+	}
+
+	for _, note := range []int{KeyboardFirstNote, shipped.Note, KeyboardLastNote} {
+		want := renderWholeNote(t, shipped, note)
+		got := renderWholeNote(t, drifted, note)
+
+		if len(got) != len(want) {
+			t.Fatalf("note %d: %d samples against %d", note, len(got), len(want))
+		}
+
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("note %d: sample %d is %v, want %v", note, i, got[i], want[i])
+			}
+		}
+	}
+}
+
+func renderWholeNote(t *testing.T, p *preset.Preset, note int) []float32 {
+	t.Helper()
+
+	synthesizer, err := NewSynthesizer(p, 44100)
+	if err != nil {
+		t.Fatalf("NewSynthesizer: %v", err)
+	}
+
+	return synthesizer.RenderNote(note, 100, 1.0)
+}

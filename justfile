@@ -61,8 +61,8 @@ bench-arm64 *ARGS:
 #
 # The fit drifts base_frequency, which is harmless and worth normalising back to 440
 # by hand: it never reaches the audio, only the optimizer's frequency encoding, where
-# it is the anchor mode frequencies are expressed against. TestBaseFrequencyDoesNot
-# ReachTheAudio pins that.
+# it is the anchor mode frequencies are expressed against. That is pinned by
+# TestBaseFrequencyDoesNotReachTheAudio in internal/synth/transposition_test.go.
 
 # Re-fit the shipped default preset against its reference recording
 refit-default *ARGS:
