@@ -494,7 +494,8 @@ Both rows are medians of those ten iterations, and both come out of that one
 binary, so they share a thermal state. On arm64 `BenchmarkBank4x4` _is_ the NEON
 path — Advanced SIMD is mandatory in ARMv8-A, so there is no runtime gate to
 turn off and no `…NEON`-suffixed benchmark. `BenchmarkBank4x4Portable` in
-`kernel_arm64_test.go` drives the reference kernel directly for the comparison.
+`internal/oscbank/kernel_arm64_test.go` drives the reference kernel directly for
+the comparison.
 
 The ratio is 5.3x, which is the number worth carrying, and it is wider than the
 amd64 SSE2-to-portable ratio of about 3x for the reason this section predicted:

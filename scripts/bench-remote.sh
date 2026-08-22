@@ -2,11 +2,12 @@
 #
 # Runs `go test` on a remote host over ssh, against a copy of the working tree.
 #
-# It exists for the arm64 side of docs/oscillator-bank.md. The NEON kernel is
-# only reachable here under qemu-user, which is a translation layer: trustworthy
-# for correctness, worthless for timing. Any number in the benchmark table has
-# to come off native hardware, and this script is how that hardware is reached
-# reproducibly instead of by hand.
+# It exists for the arm64 side of docs/oscillator-bank.md. On an amd64
+# development machine the only way to execute the NEON kernel at all is
+# qemu-user, which is a translation layer: trustworthy for correctness,
+# worthless for timing. Any number in the benchmark table has to come off native
+# arm64 hardware, and this script is how that hardware is reached reproducibly
+# instead of by hand.
 #
 # The tree is rsynced rather than pulled from git, so uncommitted work is
 # measured too -- which is the point when the change under test is the kernel.
@@ -43,7 +44,30 @@ fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Every one of the three inputs reaches a remote shell, so each is checked
+# before it is used rather than trusted.
+#
+# The host goes to ssh and rsync as a bare argument: a value starting with "-"
+# is parsed as an option instead of a destination.
 host="$GLOCKENSPIEL_ARM64_HOST"
+case "$host" in
+-*)
+	echo "Error: GLOCKENSPIEL_ARM64_HOST must not start with '-': $host" >&2
+	echo "       ssh would parse it as an option rather than a destination." >&2
+	exit 2
+	;;
+esac
+
+# An allowlist rather than a metacharacter blocklist: the destination is only
+# ever [user@]host or [user@][v6addr], so anything outside that alphabet is a
+# mistake, and enumerating what is allowed cannot miss a case the way
+# enumerating what is forbidden can.
+if ! printf %s "$host" | grep -Eq '^[][A-Za-z0-9._@:%-]+$'; then
+	echo "Error: GLOCKENSPIEL_ARM64_HOST is not a plain ssh destination:" >&2
+	echo "       $host" >&2
+	echo "       Expected [user@]host, for example user@192.0.2.10." >&2
+	exit 2
+fi
 
 # The remote home directory is resolved once, over ssh, and every remote path is
 # built absolute from it. Leaving "$HOME" in the strings does not work: rsync
@@ -58,6 +82,49 @@ fi
 
 remote_go="${GLOCKENSPIEL_ARM64_GO:-$remote_home/go/bin/go}"
 remote_dir="${GLOCKENSPIEL_ARM64_DIR:-$remote_home/.cache/glockenspiel-bench}"
+
+# The sync below runs with --delete, which removes everything in the destination
+# that is not in the checkout. Pointed at a shared directory that is not a
+# mistake with a small blast radius, so the destination is refused unless it is
+# a dedicated scratch directory: absolute, at least two components deep, and
+# neither the remote home itself nor a system root.
+case "$remote_dir" in
+/*) ;;
+*)
+	echo "Error: GLOCKENSPIEL_ARM64_DIR must be an absolute path: $remote_dir" >&2
+	exit 2
+	;;
+esac
+
+# Stripped after the absolute-path check, not before, so that "/" is reported by
+# the depth check below rather than as an empty relative path.
+remote_dir="${remote_dir%/}"
+
+case "$remote_dir" in
+*/../* | */..)
+	echo "Error: GLOCKENSPIEL_ARM64_DIR must not contain '..': $remote_dir" >&2
+	exit 2
+	;;
+esac
+
+if [ "$remote_dir" = "$remote_home" ]; then
+	echo "Error: GLOCKENSPIEL_ARM64_DIR is the remote home directory." >&2
+	echo "       The sync runs with --delete and would remove everything in" >&2
+	echo "       it that is not in this checkout. Use a scratch subdirectory," >&2
+	echo "       for example $remote_home/.cache/glockenspiel-bench." >&2
+	exit 2
+fi
+
+# Two components below the root, so "/", "/tmp" and "/Users/someone" are all
+# refused while "/Users/someone/.cache/glockenspiel-bench" is not.
+remote_dir_depth="$(printf %s "${remote_dir#/}" | awk -F/ '{print NF}')"
+if [ "${remote_dir_depth:-0}" -lt 2 ]; then
+	echo "Error: GLOCKENSPIEL_ARM64_DIR is too shallow to sync into with" >&2
+	echo "       --delete: $remote_dir" >&2
+	echo "       Use a dedicated scratch directory at least two levels deep," >&2
+	echo "       for example $remote_home/.cache/glockenspiel-bench." >&2
+	exit 2
+fi
 
 # The default selection is the set docs/oscillator-bank.md quotes. They are run
 # together on purpose: the packed-versus-portable ratio is only meaningful when
@@ -87,7 +154,7 @@ rsync -az --delete \
 	--exclude 'bin/' \
 	--exclude '.claude/' \
 	--exclude 'node_modules/' \
-	--rsync-path="mkdir -p $remote_dir && rsync" \
+	--rsync-path="mkdir -p $(printf %q "$remote_dir") && rsync" \
 	"$repo_root/" "$host:$remote_dir/"
 
 # GOPATH is set explicitly because a Go installed by unpacking the tarball into
