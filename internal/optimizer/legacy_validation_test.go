@@ -29,7 +29,7 @@ func TestOptimizationImprovesFitAgainstLegacyReference(t *testing.T) {
 	initial.Parameters.FilterFrequency = clampToRange(initial.Parameters.FilterFrequency*1.18, model.FilterFrequencyMinHz, model.FilterFrequencyMaxHz)
 	initial.Parameters.Modes[0].Amplitude = clampToRange(initial.Parameters.Modes[0].Amplitude*legacyAmplitudePerturbation, model.AmplitudeMin, model.AmplitudeMax)
 	initial.Parameters.Modes[0].Frequency = clampToRange(initial.Parameters.Modes[0].Frequency*0.93, model.FrequencyMinHz, model.FrequencyMaxHz)
-	initial.Parameters.Modes[0].DecayMs = clampToRange(initial.Parameters.Modes[0].DecayMs*0.8, model.DecayMsMin, model.DecayMsMax)
+	initial.Parameters.Modes[0].DecayMs = clampToRange(initial.Parameters.Modes[0].DecayMs*0.8, model.DecayMsMin, model.DecayMsSearchMax)
 
 	bounds := legacyValidationBounds(&legacyPreset.Parameters)
 
@@ -173,7 +173,7 @@ func legacyValidationBounds(target *model.BarParams) ParamBounds {
 		BaseFrequency: Range{Min: target.BaseFrequency, Max: target.BaseFrequency},
 		Amplitude:     Range{Min: model.AmplitudeMin, Max: model.AmplitudeMax},
 		FrequencyMult: Range{Min: 0.05, Max: 12},
-		DecayMs:       Range{Min: model.DecayMsMin, Max: model.DecayMsMax},
+		DecayMs:       Range{Min: model.DecayMsMin, Max: model.DecayMsSearchMax},
 		HarmonicGain:  Range{Min: model.HarmonicGainMin, Max: model.HarmonicGainMax},
 	}
 }

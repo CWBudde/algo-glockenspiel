@@ -381,6 +381,25 @@ func (p *Processor) rebuildVoices() error {
 	return nil
 }
 
+// scaledParamsForNote transposes a parameter set from baseNote to note. It is
+// an independent copy of synth.scaledParamsForNote and has to stay consistent
+// with it: the plugin and the standalone engine must not disagree about what a
+// preset sounds like a fifth down.
+//
+// Dividing DecayMs by the ratio is deliberate and correct -- a bar an octave
+// lower rings about twice as long -- but it means the decays this returns are
+// larger than anything the parameter table lets a user dial in. That is why
+// model.ValidateBarParams measures against model.DecayMsValidationMax (5000 ms)
+// rather than the authoring bound model.DecayMsSearchMax (500 ms): at 500 ms
+// and note 36 against a base of 69 the ratio is 0.14865, so NewBar below sees
+// 3364 ms. While the ceiling was the authoring bound, both callers of this
+// function -- note-on and rebuildVoices -- failed for every low note, the
+// plugin returned an error, and the note never sounded.
+//
+// The by-value params argument does not alias the caller's state despite the
+// writes to params.Modes[i]: both call sites pass p.snapshot.ToBarParams(),
+// which allocates a fresh Modes slice on every call (plugin/vst3/params.go).
+// The slice header being copied is therefore already private to this call.
 func scaledParamsForNote(params model.BarParams, note, baseNote int) model.BarParams {
 	ratio := math.Pow(2, float64(note-baseNote)/12)
 	params.BaseFrequency *= ratio

@@ -2,6 +2,7 @@ package synth
 
 import (
 	"math"
+	"sync/atomic"
 
 	"github.com/cwbudde/glockenspiel/internal/oscbank"
 )
@@ -69,6 +70,12 @@ type RealtimeEngine struct {
 	noteDuration  float64
 	renderOptions RenderOptions
 	maxVoices     int
+
+	// droppedNoteOns and lastDroppedNote are the diagnostic for a note-on the
+	// engine could not turn into a voice. See NoteOn for why the engine counts
+	// rather than reports, and why these are atomics.
+	droppedNoteOns  atomic.Uint64
+	lastDroppedNote atomic.Int32
 }
 
 // newVoiceSlots returns an empty voice list of maxVoices capacity whose slots
@@ -121,9 +128,26 @@ func (e *RealtimeEngine) SetMasterGain(gain float32) {
 }
 
 // NoteOn retriggers the requested bar.
+//
+// A note whose voice cannot be built is counted rather than reported. NoteOn
+// runs on the audio thread -- the browser's audio callback, the plugin's
+// process call -- where the usual ways of not losing an error are all
+// unavailable: returning one would push the handling into a caller that has
+// nowhere to put it either, logging takes a lock and formats a string, and
+// wrapping it into a channel or a slice allocates. Two atomic stores cost a few
+// nanoseconds, never block, never allocate, and leave the failure visible to
+// anything that can read a counter: a test, a debug overlay, a health check.
+//
+// The alternative that was here before -- dropping the error on the floor --
+// is what made the dead low register invisible. Notes 36..52 produced no sound
+// and no trace of having been asked for, so the bug read as "the low keys are
+// quiet" rather than as "the engine is refusing them".
 func (e *RealtimeEngine) NoteOn(note, velocity int) {
 	stream, err := e.synth.NewVoice(note, velocity, e.noteDuration, e.renderOptions)
 	if err != nil {
+		e.lastDroppedNote.Store(int32(note))
+		e.droppedNoteOns.Add(1)
+
 		return
 	}
 
@@ -255,6 +279,34 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 	}
 
 	return buf
+}
+
+// DroppedNoteOns reports how many note-ons the engine could not turn into a
+// voice over its lifetime. It is safe to call from any thread, and a non-zero
+// value always means a key was struck and produced nothing.
+//
+// The counter is monotonic and deliberately never reset: a caller that wants a
+// rate takes two readings and subtracts, which is a thing a reader can do on
+// its own thread, whereas a reset is a write the audio thread would have to
+// coordinate with.
+func (e *RealtimeEngine) DroppedNoteOns() uint64 {
+	return e.droppedNoteOns.Load()
+}
+
+// LastDroppedNote reports the MIDI note of the most recent dropped note-on, or
+// -1 if none has been dropped.
+//
+// It is the smallest thing that makes the counter actionable: a bare count says
+// something is wrong, the note says where to look. It is not synchronised with
+// the counter -- reading both is two loads, not one snapshot -- because making
+// it atomic as a pair would need a lock on the audio thread to serve a purely
+// diagnostic read.
+func (e *RealtimeEngine) LastDroppedNote() int {
+	if e.droppedNoteOns.Load() == 0 {
+		return -1
+	}
+
+	return int(e.lastDroppedNote.Load())
 }
 
 // ActiveVoices reports how many voices are currently alive.

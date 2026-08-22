@@ -402,17 +402,29 @@ Acceptance criteria:
 
 Goal: fix the three level bugs. All of them live in Go and are unit-testable without a browser.
 
-- [ ] Make master gain reach sounding notes. `internal/synth/realtime.go:103` bakes
-      `gainsForNote(note, e.masterGain)` into the voice at NoteOn, and `ProcessBlock`
-      (`:161-221`) multiplies only by the stored `v.left`/`v.right`, so `SetMasterGain` has no
-      effect on a ringing note.
-- [ ] Fix `gainsForNote` (`internal/synth/realtime.go:228-241`). It hardcodes `firstNote = 72`
-      over 24 semitones while the UI spans MIDI 36 to 96 (`web/ui.js:3-4`); note 36 yields
-      pan -2.48, left 1.74x gain and an inverted right channel.
-- [ ] Resolve the default preset's level, carried over from Phase 3: `assets/presets/default.json`
-      renders at a peak of about 6.17, roughly +15.8 dBFS. Any fit against a normalized
-      recording has to travel ~16 dB before modal structure matters, and a 16-bit render clips
-      beyond recognition. Either rescale the amplitudes or default `fit` to `--normalize-gain`.
+- [x] Make master gain reach sounding notes. `ProcessBlock` now reads `e.masterGain` once per
+      block and folds it into the per-voice pan coefficients there, so `SetMasterGain` reaches a
+      note that is already ringing. The voice stores unit-gain coefficients only.
+- [x] Fix `gainsForNote`. It spans `KeyboardFirstNote`..`KeyboardLastNote` (36..96) and clamps
+      the position before it becomes a pan, so every MIDI value — including the 0..35 and 97..127
+      a stray note-on can carry — yields two gains inside [0, 1] and no phase inversion.
+- [x] Resolve the default preset's level, carried over from Phase 3. The amplitudes were divided
+      by 8.72, and `TestDefaultPresetRendersNearMinusThreeDBFS` pins the result at −3 dBFS at
+      44.1 kHz so it cannot drift back. This closes the item as written; it does not level the
+      keyboard, see below.
+- [x] Un-mute the low register. `scaledParamsForNote` divides `DecayMs` by the transposition
+      ratio, which is correct, but the single `DecayMsMax = 500` served both as the validation
+      ceiling and as the optimizer's search bound: the shipped preset's 188.2 ms mode becomes
+      1266 ms at note 36, `ValidateBarParams` refused it, and `NoteOn` discarded the error, so
+      MIDI 36..52 — the bottom 17 of the 61 playable keys — were silent and left no trace. The
+      constant is split into `DecayMsValidationMax` (5000 ms, clearing the search bound
+      transposed to note 36 at 3364 ms) and `DecayMsSearchMax` (500 ms, unchanged), and
+      `RealtimeEngine` counts refused note-ons rather than dropping them.
+
+Still open, deliberately not fixed here: the peak level across the keyboard spans 27.8 dB with
+the shipped preset — +13.8 dBFS at note 36 down to −14.0 dBFS at note 96 — because the modes
+carry a fixed amplitude while the low notes' longer decays accumulate far more energy. A per-note
+gain law wants calibrating against the whole range at once and is its own change.
 
 ### Phase 5.2: Audio transport
 

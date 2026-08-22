@@ -128,6 +128,15 @@ func (s *Synthesizer) NewVoice(note, velocity int, duration float64, options Ren
 // scaledParamsForNote transposes the preset to another note. The clone is not
 // optional: BarParams.Modes is a slice, so a plain struct copy would scale the
 // preset's own modes on every note.
+//
+// Dividing DecayMs by the ratio is the physically right thing and stays: a bar
+// an octave lower rings roughly twice as long, so transposing down has to
+// lengthen the decay. What it means downstream is that the decays handed to
+// model.NewBar are systematically larger than the ones the preset file holds --
+// the shipped preset's 188.2 ms first mode becomes 1266 ms at MIDI note 36 --
+// which is why model.ValidateBarParams measures against DecayMsValidationMax
+// rather than the authoring bound DecayMsSearchMax. While those two were one
+// constant at 500 ms, notes 36..52 could not be built at all.
 func (s *Synthesizer) scaledParamsForNote(note int) model.BarParams {
 	scaled := s.preset.Parameters.Clone()
 	ratio := math.Pow(2, float64(note-s.preset.Note)/12)
