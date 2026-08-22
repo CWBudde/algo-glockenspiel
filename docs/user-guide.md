@@ -216,6 +216,12 @@ repository. The three rendered results are not: they were written under `out/`, 
 gitignored local scratch. Reproduce them by running the same fit three times with
 `--metric rms`, `--metric log` and `--metric spectral` into separate `--work-dir`s.
 
+**That comparison predates the float-WAV decode fix and has not been re-taken.** The
+reference is 32-bit IEEE float, and until `internal/wavio` learned to read that format it
+decoded to a square wave — so all three metrics were compared on a signal the file does not
+contain. Read the three bullets above as a record of what was run, not as current guidance
+on which metric to pick. See [testdata/reference/README.md](../testdata/reference/README.md).
+
 Practical conclusion:
 
 - start with `simple` + `rms` or `log`

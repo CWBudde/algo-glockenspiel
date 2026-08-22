@@ -63,6 +63,21 @@ const pcm16Peak = 32767.0
 // server-side failure (500).
 var ErrInvalidWAV = errors.New("not a valid wav file")
 
+// ErrUnsupportedWAV reports a stream that is a valid WAV but carries a sample
+// format this package refuses to guess at. It is separate from ErrInvalidWAV
+// because the two mean different things to an HTTP caller and to a person: the
+// file is fine, we will not read it.
+var ErrUnsupportedWAV = errors.New("unsupported wav sample format")
+
+// The format tags a WAVE fmt chunk can carry. go-audio surfaces the tag as
+// Decoder.WavAudioFormat but decodes every one of them as integer PCM, which is
+// the reason this package has to look at it.
+const (
+	wavFormatPCM        = 1
+	wavFormatIEEEFloat  = 3
+	wavFormatExtensible = 0xFFFE
+)
+
 // LoadMono reads a WAV file from disk and returns its first channel together
 // with the sample rate the file declares.
 func LoadMono(path string) ([]float32, int, error) {
@@ -79,8 +94,14 @@ func LoadMono(path string) ([]float32, int, error) {
 }
 
 // DecodeMono decodes a WAV stream and returns its first channel as float32
-// samples in [-1,1] plus the declared sample rate. source only names the origin
-// in error messages; it is never used as a path.
+// samples plus the declared sample rate. source only names the origin in error
+// messages; it is never used as a path.
+//
+// Integer PCM lands in [-1,1] by construction, since it is divided by the
+// widest magnitude its bit depth can hold. IEEE float carries whatever was
+// written, which for a file mastered above full scale is legitimately outside
+// that range -- clamping it here would quietly reshape a reference rather than
+// read it. Every sample is finite, though: see rejectNonFinite.
 //
 // A multi-channel file is reduced by taking channel zero rather than by mixing
 // down. The fitting objective compares one rendered voice against the
@@ -109,7 +130,10 @@ func DecodeMono(reader io.ReadSeeker, source string) ([]float32, int, error) {
 		bitDepth = encodeBitDepth
 	}
 
-	scale := math.Pow(2, float64(bitDepth-1))
+	convert, err := sampleConverter(decoder.WavAudioFormat, bitDepth, source)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	channels := intBuffer.Format.NumChannels
 	if channels <= 0 {
@@ -118,10 +142,104 @@ func DecodeMono(reader io.ReadSeeker, source string) ([]float32, int, error) {
 
 	samples := make([]float32, len(intBuffer.Data)/channels)
 	for i := range samples {
-		samples[i] = float32(float64(intBuffer.Data[i*channels]) / scale)
+		samples[i] = convert(intBuffer.Data[i*channels])
+	}
+
+	// Only the float path can produce a non-finite sample, so only it pays for
+	// the scan.
+	if decoder.WavAudioFormat == wavFormatIEEEFloat {
+		if err := rejectNonFinite(samples, source); err != nil {
+			return nil, 0, err
+		}
 	}
 
 	return samples, intBuffer.Format.SampleRate, nil
+}
+
+// rejectNonFinite fails a decode that produced a NaN or an infinity.
+//
+// An integer sample cannot be either, but a float file can carry both, and
+// nothing downstream is prepared for them. internal/optimizer's
+// validateObjectiveInputs checks only that a reference is non-empty, so a
+// single NaN makes every RMS and every correlation against that reference NaN
+// as well: the objective stops ordering candidates, the optimizer spends its
+// whole budget comparing values none of which is better than any other, and it
+// reports a fit at the end as though it had found one.
+//
+// Failing here rather than sanitising is the same call the format check above
+// makes. There is no defensible value to substitute -- zero invents silence
+// where the file says something is wrong, and clamping an infinity to full
+// scale invents a transient -- and a reference the caller believes in is worth
+// a message rather than a repair.
+func rejectNonFinite(samples []float32, source string) error {
+	for i, sample := range samples {
+		if math.IsInf(float64(sample), 0) || math.IsNaN(float64(sample)) {
+			return fmt.Errorf("%s: %w: sample %d is %v", source, ErrInvalidWAV, i, sample)
+		}
+	}
+
+	return nil
+}
+
+// sampleConverter returns the function that turns one go-audio sample word into
+// a float32 in [-1,1], chosen by the format tag the fmt chunk declares.
+//
+// go-audio hands every format back as an int, including IEEE float: its 32-bit
+// reader is int(int32(binary.LittleEndian.Uint32(...))) and its float path
+// carries "TODO: fix the float64 conversion (current int implementation)". So a
+// float sample arrives here as its own bit pattern read as a signed integer,
+// and dividing that by 2^31 is not a decode, it is a reinterpretation.
+//
+// What that produced is worth naming, because it is not a subtle error and it
+// went unnoticed for the life of the repository. Every float32 in [0.06, 1.0]
+// has an exponent that puts its bit pattern between 0x3D80.. and 0x3F80..;
+// divided by 2^31 that is roughly +0.49, and the sign bit turns the negatives
+// into roughly -0.51. Any recording at a sane level therefore decoded to a
+// square wave of about +-0.5, whatever it actually contained. The shipped
+// reference at testdata/reference/legacy_synth_a4.wav is a struck bar with peak
+// 1.0, RMS 0.193 and a crest factor of 5.18; through the old path it arrived as
+// RMS 0.5004 with a crest factor of 1.14. internal/cli/fit.go and
+// internal/server/fit.go both read user references through here, so every fit
+// against a 32-bit float WAV -- the format a DAW exports by default -- was
+// fitting a square wave.
+func sampleConverter(format uint16, bitDepth int, source string) (func(int) float32, error) {
+	if format == wavFormatIEEEFloat {
+		if bitDepth != 32 {
+			return nil, fmt.Errorf("%s: %w: %d-bit IEEE float", source, ErrUnsupportedWAV, bitDepth)
+		}
+
+		// Back through the same door go-audio came out of: the int holds the
+		// sign-extended 32 bits of the original float, so narrowing to int32
+		// and reading those bits as a float32 is exact for every value,
+		// denormals and infinities included.
+		return func(sample int) float32 {
+			return math.Float32frombits(uint32(int32(sample)))
+		}, nil
+	}
+
+	// WAVE_FORMAT_EXTENSIBLE names its real format in a subformat GUID that
+	// go-audio does not surface, so at 32 bits there is no telling PCM from
+	// float -- and the two differ by about 30 dB, silently. Below 32 bits the
+	// ambiguity does not arise: nothing writes 8-, 16- or 24-bit IEEE float, so
+	// an extensible file that narrow is PCM and decodes as it always has.
+	if format == wavFormatExtensible && bitDepth >= 32 {
+		return nil, fmt.Errorf(
+			"%s: %w: WAVE_FORMAT_EXTENSIBLE at %d bits, which may be PCM or float; "+
+				"re-export as 16- or 24-bit PCM, or as plain 32-bit float",
+			source, ErrUnsupportedWAV, bitDepth,
+		)
+	}
+
+	// Everything else is integer PCM. A tag of zero -- a fmt chunk that carried
+	// none -- is treated as PCM for the same reason a missing bit depth is
+	// treated as 16: this package's own files are 16-bit PCM and guessing beats
+	// refusing. An unrecognised tag lands here too, decoding exactly as it did
+	// before this function existed.
+	scale := math.Pow(2, float64(bitDepth-1))
+
+	return func(sample int) float32 {
+		return float32(float64(sample) / scale)
+	}, nil
 }
 
 // WriteMono encodes samples as a 16-bit mono WAV at path, creating the parent
