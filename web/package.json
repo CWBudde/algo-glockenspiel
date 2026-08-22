@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "npm run wood:check && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "wood:generate": "node scripts/generate-wood-textures.mjs",
+    "wood:check": "node --test scripts/generate-wood-textures.test.mjs && node scripts/generate-wood-textures.mjs --check"
   },
   "dependencies": {
     "chart.js": "^4.5.0",

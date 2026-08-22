@@ -20,9 +20,10 @@ web/
     audio/            the engine worker, the worklet, and the AudioContext graph
     api/              the typed fit-API client and the wire types
     features/optimize/  the fit form, the event stream, the chart, the audition
-    lib/              note geometry and the procedural wood texture
+    lib/              note geometry and shared wood-species presets
     styles/           the stylesheet
-  assets/             SVG source assets, inlined or hashed by Vite
+  assets/             SVG source assets and baked procedural wood textures
+  scripts/            deterministic Node asset generators
   wasm_exec.js        vendored from the Go toolchain; never edit
   dist/              build output, gitignored
 ```
@@ -52,6 +53,20 @@ neither step erases the other's output whichever one changed.
 Everything in `web/dist` is a build artifact: the directory is gitignored and
 the page will not run without it. `web/package-lock.json`, on the other hand, is
 tracked — `npm ci` is what makes a local build and a CI build the same build.
+
+The four wood panels are generated source assets rather than runtime canvas
+work. Their shared species parameters live in `src/lib/wood-presets.json`; the
+browser imports the resulting PNGs from `assets/wood`. Regenerate them after a
+parameter or sampler change, then commit the PNGs:
+
+```bash
+npm --prefix web run wood:generate
+```
+
+`npm run build` starts with `wood:check`, which renders the same deterministic
+pixels in memory and fails when a tracked image is missing or stale. The check
+compares inflated scanlines rather than compressed bytes, because Node releases
+can encode the same pixels into different zlib streams.
 
 To build only the module:
 

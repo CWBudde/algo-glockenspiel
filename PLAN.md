@@ -628,10 +628,10 @@ Goal: a smaller, cache-busted payload behind a bridge that says what it means.
 
 Goal: fast first paint, usable by keyboard, and no controls that lie.
 
-- [ ] Bake the wood textures at build time. Still open, and moved rather than changed by the
-      4.3 rewrite: the generator is now `web/src/lib/wood.ts`, still a synchronous 1024x576
-      pixel-by-pixel fill running before first paint and again on every species change. Keep
-      the generator as a build tool.
+- [x] Bake the wood textures at build time. The sampler and all four species are preserved in a
+      deterministic Node generator backed by shared JSON presets. It writes tracked 1024x576
+      PNGs using only Node's built-in zlib; `wood:check` gates the normal web build, while the
+      browser now switches imported static URLs without canvas work before first paint.
 - [x] Fix the printed key hints. `computeNoteLayout` now derives every natural and accidental
       label from `keyBindingFor`, the same source used by `computeKeyMap`. A focused Vitest
       regression checks every bound bar against the keyboard listener map.
