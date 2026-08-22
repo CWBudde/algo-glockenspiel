@@ -1,7 +1,7 @@
 {
   "version": "1.0",
   "name": "Edge Cases",
-  "note": 127,
+  "note": 36,
   "parameters": {
     "input_mix": 2.0,
     "filter_frequency": 20000.0,

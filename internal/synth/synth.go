@@ -128,20 +128,75 @@ func (s *Synthesizer) NewVoice(note, velocity int, duration float64, options Ren
 // scaledParamsForNote transposes the preset to another note. The clone is not
 // optional: BarParams.Modes is a slice, so a plain struct copy would scale the
 // preset's own modes on every note.
+//
+// The transposition itself lives in model.TransposeToNote, shared with the
+// plugin and with preset validation. Validation decides whether a preset is
+// playable by transposing it to the ends of the keyboard, so it has to compute
+// the same ratio this does, down to the last bit -- otherwise a preset could be
+// cleared for a note that then fails to build.
+//
+// What it means downstream is that the decays handed to model.NewBar are
+// systematically larger than the ones the preset file holds -- the shipped
+// preset's 188.2 ms first mode becomes 1266 ms at MIDI note 36 -- which is why
+// model.ValidateBarParams measures against DecayMsValidationMax rather than the
+// authoring bound DecayMsSearchMax. While those two were one constant at 500 ms,
+// notes 36..52 could not be built at all.
 func (s *Synthesizer) scaledParamsForNote(note int) model.BarParams {
 	scaled := s.preset.Parameters.Clone()
-	ratio := math.Pow(2, float64(note-s.preset.Note)/12)
+	model.TransposeToNote(&scaled, s.preset.Note, note)
 
-	scaled.BaseFrequency *= ratio
+	return scaled
+}
+
+// peakForNote renders one strike of the given note and returns its peak level
+// in linear units, or 0 if the note cannot be rendered at all.
+//
+// It exists to calibrate the realtime engine's per-note level trim, and it is
+// deliberately a measurement rather than a formula. See calibrateNoteTrims in
+// realtime.go for why the level cannot be predicted from the note alone.
+//
+// The render window is the longest decay the preset has *after* transposition,
+// which is where the naive choice goes wrong: the peak of a multi-mode bar is
+// not the attack transient. The modes beat against each other, and the sample
+// where they first line up can be far into the note -- 167.5 ms for the shipped
+// preset at MIDI 36, where a fixed 50 ms window would have measured a peak
+// 4.7 dB below the real one and left the trim that much too loud. Measured
+// across both presets in the repo and every note of the keyboard, the true peak
+// always lands within half of that window, so one whole decay carries a factor
+// of two in hand.
+//
+// The floor keeps a very short decay from producing a window of a few samples.
+// The ceiling can never bind for a preset that passed validation, since
+// DecayMsValidationMax is the largest transposed decay that exists; it is there
+// so that a future ceiling change degrades into a slightly low measurement
+// rather than into a multi-second engine construction.
+func (s *Synthesizer) peakForNote(note, velocity int) float64 {
+	const (
+		minWindowSeconds = 0.02
+		maxWindowSeconds = model.DecayMsValidationMax / 1000
+	)
+
+	scaled := s.scaledParamsForNote(note)
+
+	window := 0.0
 
 	for i := range scaled.Modes {
-		scaled.Modes[i].Frequency *= ratio
-		if ratio > 0 {
-			scaled.Modes[i].DecayMs /= ratio
+		if decay := scaled.Modes[i].DecayMs / 1000; decay > window {
+			window = decay
 		}
 	}
 
-	return scaled
+	window = math.Min(math.Max(window, minWindowSeconds), maxWindowSeconds)
+
+	peak := 0.0
+
+	for _, sample := range s.RenderNote(note, velocity, window) {
+		if abs := math.Abs(float64(sample)); abs > peak {
+			peak = abs
+		}
+	}
+
+	return peak
 }
 
 func shouldStop(block []float32, threshold float64) bool {

@@ -62,6 +62,12 @@ type Snapshot struct {
 	ModeDecayMs      [numModes]float64
 }
 
+// parameterSpecs is the host-visible automation surface. Every range here is an
+// authoring range, so the decay knobs take model.DecayMsSearchMax rather than
+// the far wider model.DecayMsValidationMax: what reaches validation is the
+// transposed value, which scaledParamsForNote in the processor divides by the
+// note ratio, and stretching the knob to the validation ceiling would spend ten
+// times the automation resolution on decays no one dials in by hand.
 var parameterSpecs = []ParameterSpec{
 	{ID: ParamInputMix, Key: "input_mix", Name: "Input Mix", Unit: "", Min: model.InputMixMin, Max: model.InputMixMax, Default: 0},
 	{ID: ParamFilterFrequency, Key: "filter_frequency", Name: "Filter Frequency", Unit: "Hz", Min: model.FilterFrequencyMinHz, Max: model.FilterFrequencyMaxHz, Default: 8000},
@@ -73,16 +79,16 @@ var parameterSpecs = []ParameterSpec{
 	{ID: ParamChebyshevGain4, Key: "chebyshev_gain_4", Name: "Chebyshev Gain 4", Unit: "", Min: model.HarmonicGainMin, Max: model.HarmonicGainMax, Default: 0},
 	{ID: ParamMode1Amplitude, Key: "mode_1_amplitude", Name: "Mode 1 Amplitude", Unit: "", Min: model.AmplitudeMin, Max: model.AmplitudeMax, Default: 1},
 	{ID: ParamMode1Frequency, Key: "mode_1_frequency", Name: "Mode 1 Frequency", Unit: "Hz", Min: model.FrequencyMinHz, Max: model.FrequencyMaxHz, Default: 440},
-	{ID: ParamMode1DecayMs, Key: "mode_1_decay_ms", Name: "Mode 1 Decay", Unit: "ms", Min: model.DecayMsMin, Max: model.DecayMsMax, Default: 100},
+	{ID: ParamMode1DecayMs, Key: "mode_1_decay_ms", Name: "Mode 1 Decay", Unit: "ms", Min: model.DecayMsMin, Max: model.DecayMsSearchMax, Default: 100},
 	{ID: ParamMode2Amplitude, Key: "mode_2_amplitude", Name: "Mode 2 Amplitude", Unit: "", Min: model.AmplitudeMin, Max: model.AmplitudeMax, Default: 0.5},
 	{ID: ParamMode2Frequency, Key: "mode_2_frequency", Name: "Mode 2 Frequency", Unit: "Hz", Min: model.FrequencyMinHz, Max: model.FrequencyMaxHz, Default: 880},
-	{ID: ParamMode2DecayMs, Key: "mode_2_decay_ms", Name: "Mode 2 Decay", Unit: "ms", Min: model.DecayMsMin, Max: model.DecayMsMax, Default: 100},
+	{ID: ParamMode2DecayMs, Key: "mode_2_decay_ms", Name: "Mode 2 Decay", Unit: "ms", Min: model.DecayMsMin, Max: model.DecayMsSearchMax, Default: 100},
 	{ID: ParamMode3Amplitude, Key: "mode_3_amplitude", Name: "Mode 3 Amplitude", Unit: "", Min: model.AmplitudeMin, Max: model.AmplitudeMax, Default: 0.25},
 	{ID: ParamMode3Frequency, Key: "mode_3_frequency", Name: "Mode 3 Frequency", Unit: "Hz", Min: model.FrequencyMinHz, Max: model.FrequencyMaxHz, Default: 1320},
-	{ID: ParamMode3DecayMs, Key: "mode_3_decay_ms", Name: "Mode 3 Decay", Unit: "ms", Min: model.DecayMsMin, Max: model.DecayMsMax, Default: 100},
+	{ID: ParamMode3DecayMs, Key: "mode_3_decay_ms", Name: "Mode 3 Decay", Unit: "ms", Min: model.DecayMsMin, Max: model.DecayMsSearchMax, Default: 100},
 	{ID: ParamMode4Amplitude, Key: "mode_4_amplitude", Name: "Mode 4 Amplitude", Unit: "", Min: model.AmplitudeMin, Max: model.AmplitudeMax, Default: 0.125},
 	{ID: ParamMode4Frequency, Key: "mode_4_frequency", Name: "Mode 4 Frequency", Unit: "Hz", Min: model.FrequencyMinHz, Max: model.FrequencyMaxHz, Default: 1760},
-	{ID: ParamMode4DecayMs, Key: "mode_4_decay_ms", Name: "Mode 4 Decay", Unit: "ms", Min: model.DecayMsMin, Max: model.DecayMsMax, Default: 100},
+	{ID: ParamMode4DecayMs, Key: "mode_4_decay_ms", Name: "Mode 4 Decay", Unit: "ms", Min: model.DecayMsMin, Max: model.DecayMsSearchMax, Default: 100},
 }
 
 var defaultSnapshot = Snapshot{

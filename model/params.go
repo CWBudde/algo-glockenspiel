@@ -27,7 +27,54 @@ const (
 	FrequencyMaxHz = 50000.0
 
 	DecayMsMin = 0.1
-	DecayMsMax = 500.0
+
+	// DecayMsValidationMax is the hard ceiling ValidateBarParams enforces: the
+	// widest decay a BarParams may carry at the moment it is handed to NewBar.
+	//
+	// It is deliberately far above the range a preset is *authored* in, because
+	// the params NewBar sees are not the params the preset file holds. Playing
+	// a preset at a note other than the one it was fitted at transposes it, and
+	// transposition divides every decay by the frequency ratio -- correctly so,
+	// since a bar an octave lower rings roughly twice as long. Transposing down
+	// therefore inflates the decays that reach validation.
+	//
+	// The number is a policy, not a derivation: five seconds is the longest a
+	// struck bar may ring on this instrument, measured where the ringing actually
+	// happens, which is after transposition. Everything else follows from it.
+	// What a preset file may be *written* with follows from it too, and is
+	// therefore not a constant -- see [AuthoredDecayMsMax] and
+	// [ValidateAuthoredBarParams]. A preset at note 36 may carry the full 5000 ms,
+	// one at note 69 only 743 ms, one at note 100 only 124 ms; all three ring for
+	// the same five seconds at the bottom key.
+	//
+	// An earlier revision of this constant derived 5000 from base note 69 alone
+	// -- 500 ms at the top of the optimizer's search box, transposed from note 69
+	// to note 36, is 3364 ms, rounded up for headroom. That derivation quietly
+	// assumed the only base note that exists is 69. Preset.Note is authorable
+	// across the whole MIDI range, so it bought nothing: a preset authored at
+	// note 100 with a 500 ms decay needs 20159 ms at note 36 and its low register
+	// went dead exactly as before. The ceiling cannot guarantee playability on
+	// its own, whatever value it takes, because it does not know the base note.
+	// The base-note-aware check is what guarantees it.
+	//
+	// This constant used to be a single DecayMsMax doing both jobs at 500 ms,
+	// and the consequence was that MIDI notes 36..52 -- the bottom 17 of the 61
+	// playable keys -- were silent: the shipped preset's 188.2 ms first mode
+	// becomes 1266 ms at note 36, ValidateBarParams refused it, NewBar failed,
+	// and the note-on was discarded without a sound or a diagnostic.
+	DecayMsValidationMax = 5000.0
+
+	// DecayMsSearchMax is the upper end of the optimizer's decay search box and
+	// of the plugin's decay knobs -- the range a preset is authored in, as
+	// opposed to the range it may legally reach after transposition.
+	//
+	// It stays at the 500 ms it has always been. Widening it is not a free
+	// change: the optimizer log-encodes decay into the unit cube, so stretching
+	// the box by an order of magnitude changes the step size every fit takes
+	// through that dimension, for reasons that have nothing to do with the
+	// transposition problem DecayMsValidationMax solves. 500 ms is also already
+	// generous for a struck metal bar's individual mode.
+	DecayMsSearchMax = 500.0
 
 	HarmonicGainMin = 0.0
 	HarmonicGainMax = 2.0
@@ -39,7 +86,7 @@ type ParamBounds struct {
 	FilterFreq    [2]float64 // [20.0, 20000.0] Hz, log scale
 	Amplitude     [2]float64 // [-2.0, 2.0]
 	FrequencyMult [2]float64 // [0.5, 10.0] * base_frequency
-	DecayMs       [2]float64 // [0.1, 500.0] milliseconds
+	DecayMs       [2]float64 // [0.1, 500.0] milliseconds, the authoring range
 	HarmonicGain  [2]float64 // [0.0, 2.0] per harmonic
 }
 
@@ -49,7 +96,7 @@ var DefaultParamBounds = ParamBounds{
 	FilterFreq:    [2]float64{FilterFrequencyMinHz, FilterFrequencyMaxHz},
 	Amplitude:     [2]float64{AmplitudeMin, AmplitudeMax},
 	FrequencyMult: [2]float64{0.5, 10.0},
-	DecayMs:       [2]float64{DecayMsMin, DecayMsMax},
+	DecayMs:       [2]float64{DecayMsMin, DecayMsSearchMax},
 	HarmonicGain:  [2]float64{HarmonicGainMin, HarmonicGainMax},
 }
 
@@ -304,8 +351,10 @@ func ValidateBarParams(params *BarParams) error {
 			return rangeErrorf("modes[%d].frequency", modeIndex, mode.Frequency, FrequencyMinHz, FrequencyMaxHz)
 		}
 
-		if !isFiniteInRange(mode.DecayMs, DecayMsMin, DecayMsMax) {
-			return rangeErrorf("modes[%d].decay_ms", modeIndex, mode.DecayMs, DecayMsMin, DecayMsMax)
+		// The validation ceiling, not the authoring bound: these params may
+		// already have been transposed down, which inflates every decay.
+		if !isFiniteInRange(mode.DecayMs, DecayMsMin, DecayMsValidationMax) {
+			return rangeErrorf("modes[%d].decay_ms", modeIndex, mode.DecayMs, DecayMsMin, DecayMsValidationMax)
 		}
 	}
 

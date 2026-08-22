@@ -60,9 +60,13 @@ func TestValidateBarParamsModeFrequencyOutOfRange(t *testing.T) {
 	assertFieldError(t, err, "modes[1].frequency")
 }
 
+// TestValidateBarParamsModeDecayOutOfRange checks the validation ceiling, so it
+// has to overshoot DecayMsValidationMax rather than the narrower authoring
+// bound: a decay between the two is legal here on purpose, because that is the
+// band a transposed-down preset lands in.
 func TestValidateBarParamsModeDecayOutOfRange(t *testing.T) {
 	params := validTestParams()
-	params.Modes[0].DecayMs = DecayMsMax + 1
+	params.Modes[0].DecayMs = DecayMsValidationMax + 1
 
 	err := ValidateBarParams(&params)
 	assertFieldError(t, err, "modes[0].decay_ms")
