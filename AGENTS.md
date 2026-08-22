@@ -28,6 +28,8 @@ Assembly under `internal/oscbank` and `model` is Go Plan 9 syntax and is held to
 - `just test`: run the main Go test suite with a local cache
 - `just test-race`: run tests with the race detector
 - `just bench`: run benchmarks
+- `just bench-arm64`: run the `oscbank` benchmarks on a remote native arm64 host through
+  `scripts/bench-remote.sh`; set `GLOCKENSPIEL_ARM64_HOST=user@host` first
 - `just lint`: run `golangci-lint`
 - `just fmt`: format the repo through `treefmt`
 - `just ci`: run formatting checks, tests, lint, and module tidiness

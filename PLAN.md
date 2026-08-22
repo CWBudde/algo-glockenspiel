@@ -57,9 +57,6 @@ What does not match the goal:
 
 - Cross-voice lane packing is missing. A bank fills its lanes from one voice's oscillators and
   `internal/synth/realtime.go` renders voices serially, so voice count still costs linearly.
-- The NEON kernel has no measured throughput. It is exercised under qemu-user, which is
-  worthless for timing, so the NEON row of the benchmark table in `docs/oscillator-bank.md` is
-  still `TODO` pending a native arm64 host.
 - AVX-512 is deferred rather than written, with the reason in `## Deferred`.
 - The optimizer tab has no code. `serve` does: it hosts the app and the fit API
   (Phase 4.1 and 4.2), but nothing in `web/` calls the API yet, so fitting from the browser
@@ -140,11 +137,14 @@ Acceptance criteria:
       dispatch path and the differential, golden-vector and fuzz harnesses all iterate it.
       `.github/workflows/test-unit.yaml` runs `ubuntu-latest` at `GOAMD64=v1` and `v3` and
       `ubuntu-24.04-arm`, so every kernel is executed by CI on hardware that has it.
-- [ ] A benchmark table in `docs/` records ns/op per backend against the scalar reference.
-      Partly: the table in [docs/oscillator-bank.md](docs/oscillator-bank.md#measured-performance)
-      has AVX2, SSE2 and portable rows, and the NEON row is `TODO`. qemu-user is a translation
-      layer, so a number taken there would be fiction; this stays open until the kernel can be
-      benchmarked on a native arm64 host.
+- [x] A benchmark table in `docs/` records ns/op per backend against the scalar reference.
+      The table in [docs/oscillator-bank.md](docs/oscillator-bank.md#measured-performance) has
+      AVX2, SSE2 and portable rows from an i7-1255U and NEON and portable rows from a native
+      Apple M5, the last two medians of ten iterations of one run: 1319 ns/block packed
+      against 7009 portable, a ratio of 5.3x. `scripts/bench-remote.sh` is how that host is
+      reached, so the row can be re-taken rather than only trusted. The doc records what the
+      number does not cover: macOS has no CPU pinning and the host was somebody's laptop, so
+      the ratio is the result and the absolute nanoseconds are an upper bound.
 - [x] No allocation and no mutex acquisition on the audio path. Both halves are now closed.
       **Allocation — closed.** `RealtimeEngine.ProcessBlock` is allocation-free, pinned by
       `TestProcessBlockDoesNotAllocateAfterFirstBlock`, and so is note-on. `NoteOn` used to
@@ -276,10 +276,11 @@ deferred — see `## Deferred` for why a green CI would not be evidence of corre
       (`TestSSE2IsBitIdenticalToPortable`).
 - [x] Extend the `docs/oscillator-bank.md` performance table with one row per backend against
       the scalar reference, and update "Known limits", which used to read "Only AVX2 is
-      packed". Both done. One number is still outstanding rather than wrong: the NEON row
-      reads `TODO`, because the kernel is only reachable here under qemu-user and a timing
-      taken through a translation layer would be fiction. The doc says where to take it from
-      and what to take alongside it.
+      packed". Both done, and the NEON row that read `TODO` while the only arm64 here was
+      qemu-user now carries a native Apple M5 measurement with its portable reference from the
+      same run. "Known limits" no longer says the portable kernel is about 7x slower without
+      qualification: that is the amd64 figure, and the arm64 one is 5.3x against a portable
+      reference that has no FMA to give up.
 
 ### Phase 2.4: The audio path
 
@@ -665,8 +666,7 @@ Goal: document what is undocumented, retire what is finished.
 
 Phases 0, 1 and 3 are closed. Phases 2, 4, 5, 6 and 7 are open.
 
-**Phase 2 has two open items: one in 2.4, and one measurement that needs hardware nobody
-here has.** 2.1, 2.2 and 2.3 are done as subphases: the dead
+**Phase 2 has one open item, in 2.4.** 2.1, 2.2 and 2.3 are done as subphases: the dead
 assembly is gone, every layout an `.s` file assumes is pinned at compile time,
 the numeric contract is written down with a harness that enforces it, and three packed kernels
 — AVX2, SSE2, NEON — are registered in `availableBackends()`
@@ -686,12 +686,14 @@ scope, its per-note-on block buffers and its pooled voices. What is left of 2.4:
 The model work both items wanted — a bar that can be pointed at new parameters instead of
 rebuilt — is in place and exercised on the audio path: `Bar.UpdateParams`, `BarParams.CopyInto`.
 
-**The other open item, and not code:** the NEON row of the benchmark table in
-`docs/oscillator-bank.md` needs a native arm64 host. Everything here runs the kernel under
-qemu-user, which is trustworthy for correctness and worthless for timing, so the row stays
-`TODO` rather than being filled in with a translated number. Take
-`BenchmarkBank4x4Portable` in the same run — the interesting figure is the ratio, and it will
-not be the amd64 ratio.
+The NEON row of the benchmark table in `docs/oscillator-bank.md` is closed too.
+It is measured on a native Apple M5 rather than under qemu-user, with
+`BenchmarkBank4x4Portable` from the same binary and the same run: 1319 ns/block against 7009,
+a ratio of 5.3x rather than the amd64 7x, because the portable reference has no FMA on arm64.
+`scripts/bench-remote.sh` (`just bench-arm64`, with `GLOCKENSPIEL_ARM64_HOST=user@host`)
+rsyncs the tree to that host and runs the benchmark set there, so re-taking the row is one
+command. It is worth re-taking on a quieter machine: macOS has no `taskset`, the host was in
+use, and the doc says so.
 
 Independent of all of that, and pickable in any order: **5.1** (three level bugs, all in Go,
 all unit-testable), **4.1** (the `serve` skeleton) and **7.3** (a docs page for the web app,
