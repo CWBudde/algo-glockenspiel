@@ -39,10 +39,24 @@ func main() {
 	api.Set("setMasterGain", js.FuncOf(wasmSetMasterGain))
 	api.Set("processBlock", js.FuncOf(wasmProcessBlock))
 
-	// The js.Func values above are never released. That is deliberate: they
-	// live exactly as long as the module, and main blocks below rather than
-	// returning, because a returned main tears the Go runtime down and every
-	// exported function with it.
+	// The js.Func values above are never released, and no Go reference to them
+	// is kept. Both are deliberate, and neither leaves the exports open to the
+	// garbage collector.
+	//
+	// js.FuncOf stores the Go closure in a package-level map inside syscall/js,
+	// keyed by an id that only Release deletes, so the callback stays reachable
+	// from Go whether or not the caller holds the returned js.Func. The JS side
+	// is likewise independent: _makeFuncWrapper in wasm_exec.js returns a
+	// closure over that same id, not over the handle table, so it keeps working
+	// after the js.Value that carried it is collected. Measured against Go
+	// 1.26.5 with this exact pattern -- the func passed straight into Set and
+	// dropped -- runtime.GC does fire finalizeRef and does return the handle id
+	// to _idPool, and the exports still answer correctly afterwards, including
+	// once that id has been recycled for an unrelated value.
+	//
+	// Not releasing them is the separate half: they live exactly as long as the
+	// module, and main blocks below rather than returning, because a returned
+	// main tears the Go runtime down and every exported function with it.
 	js.Global().Set(namespaceName, api)
 	signalReady(api)
 

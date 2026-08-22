@@ -4,11 +4,14 @@
 # a manifest naming the content hash of the module, which web/main.js appends to
 # the fetch URL for cache busting.
 #
+# It refuses to build when the tracked web/wasm_exec.js does not match the Go
+# toolchain in use, because the two share an ABI.
+#
 # Usage:
 #   scripts/build-wasm.sh                      build the module
-#   scripts/build-wasm.sh --refresh-wasm-exec  also update the tracked
+#   scripts/build-wasm.sh --refresh-wasm-exec  update the tracked
 #                                              web/wasm_exec.js from the current
-#                                              Go toolchain
+#                                              Go toolchain, then build
 set -euo pipefail
 
 REFRESH_WASM_EXEC=0
@@ -22,6 +25,51 @@ for arg in "$@"; do
 		;;
 	esac
 done
+
+# wasm_exec.js is tracked in git and embedded into the serve binary, so copying
+# it over on every build silently dirtied the working tree and could commit a
+# toolchain change nobody chose. It is refreshed on request instead, and a
+# tracked copy that no longer matches the toolchain in use is a hard error: the
+# shim is the ABI between the module and the browser, so a mismatched pair is a
+# demo that fails at load or, worse, inside the audio callback, in ways that
+# look like a bug in this repository. Reporting success and shipping that pair
+# is the one outcome worth ruling out, so the check runs before the compiler
+# does -- a failed build then leaves no freshly dated module next to a shim it
+# does not match.
+#
+# The comparison is the whole file rather than a version probe, and that is not
+# as trigger-happy as it sounds: lib/wasm/wasm_exec.js is byte-identical across
+# Go 1.22.10, 1.24.2, 1.25.0 and 1.26.5, so patch and minor bumps do not move
+# it. When it does move, it moves because the ABI moved.
+GOROOT=$(go env GOROOT)
+WASM_EXEC_SRC=""
+for candidate in "$GOROOT/lib/wasm/wasm_exec.js" "$GOROOT/misc/wasm/wasm_exec.js"; do
+	if [ -f "$candidate" ]; then
+		WASM_EXEC_SRC="$candidate"
+		break
+	fi
+done
+
+if [ -z "$WASM_EXEC_SRC" ]; then
+	echo "Error: wasm_exec.js not found in GOROOT" >&2
+	exit 1
+fi
+
+if [ "$REFRESH_WASM_EXEC" -eq 1 ]; then
+	cp "$WASM_EXEC_SRC" web/wasm_exec.js
+	echo "Refreshed web/wasm_exec.js from $WASM_EXEC_SRC"
+elif ! cmp -s "$WASM_EXEC_SRC" web/wasm_exec.js; then
+	echo "Error: web/wasm_exec.js does not match the Go toolchain in use." >&2
+	echo "       tracked:   web/wasm_exec.js" >&2
+	echo "       toolchain: $WASM_EXEC_SRC" >&2
+	echo "" >&2
+	echo "       The shim and the module share an ABI, so building against a" >&2
+	echo "       mismatched pair produces a demo that does not run. Refresh it" >&2
+	echo "       and commit the result if the Go toolchain changed:" >&2
+	echo "" >&2
+	echo "         $0 --refresh-wasm-exec" >&2
+	exit 1
+fi
 
 echo "Building WASM glockenspiel demo..."
 
@@ -99,35 +147,6 @@ cat >web/dist/manifest.json <<EOF
   "bytes": $SIZE_FINAL
 }
 EOF
-
-# wasm_exec.js is tracked in git and embedded into the serve binary, so copying
-# it over on every build silently dirtied the working tree and could commit a
-# toolchain change nobody chose. It is refreshed on request instead; the check
-# below still says when the tracked copy no longer matches the toolchain in use,
-# because a mismatch there breaks the module in ways that look like a bug in
-# this repository.
-GOROOT=$(go env GOROOT)
-WASM_EXEC_SRC=""
-for candidate in "$GOROOT/lib/wasm/wasm_exec.js" "$GOROOT/misc/wasm/wasm_exec.js"; do
-	if [ -f "$candidate" ]; then
-		WASM_EXEC_SRC="$candidate"
-		break
-	fi
-done
-
-if [ -z "$WASM_EXEC_SRC" ]; then
-	echo "Error: wasm_exec.js not found in GOROOT" >&2
-	exit 1
-fi
-
-if [ "$REFRESH_WASM_EXEC" -eq 1 ]; then
-	cp "$WASM_EXEC_SRC" web/wasm_exec.js
-	echo "Refreshed web/wasm_exec.js from $WASM_EXEC_SRC"
-elif ! cmp -s "$WASM_EXEC_SRC" web/wasm_exec.js; then
-	echo "Note: web/wasm_exec.js differs from $WASM_EXEC_SRC" >&2
-	echo "      Run '$0 --refresh-wasm-exec' and commit the result if the" >&2
-	echo "      Go toolchain changed." >&2
-fi
 
 echo "Build complete. Files in web/dist/"
 printf 'Module: %s bytes (%s before wasm-opt), hash %s\n' "$SIZE_FINAL" "$SIZE_RAW" "$HASH"

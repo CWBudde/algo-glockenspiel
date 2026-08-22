@@ -443,7 +443,9 @@ Goal: a smaller, cache-busted payload behind a bridge that says what it means.
       content-hash cache busting, and stop it overwriting the tracked `web/wasm_exec.js`.
       3,476,521 -> 3,212,389 bytes with `wasm-opt` installed; the pass is optional, the hash
       travels in the query string so the artifact keeps the name `internal/server` expects,
-      and `--refresh-wasm-exec` updates `web/wasm_exec.js` deliberately.
+      and `--refresh-wasm-exec` updates `web/wasm_exec.js` deliberately. A tracked
+      `web/wasm_exec.js` that does not match the toolchain fails the build before the
+      compiler runs, rather than shipping a module paired with a shim of another ABI.
 - [x] Document the TinyGo decision either way. Nothing in `docs/`, `README.md` or `web/README.md`
       mentions it today. Decided against for now; see `docs/tinygo-evaluation.md`.
 
