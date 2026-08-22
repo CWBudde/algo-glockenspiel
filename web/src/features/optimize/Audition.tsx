@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { FitSnapshot } from "../../api/types";
 
@@ -47,22 +47,46 @@ export function Audition({ snapshot }: AuditionProps) {
   // reference's default length and to no rendered audio without an effect
   // resetting anything -- a reset in an effect would be a cascading render, and
   // a render of a stale player would briefly offer the previous fit's audio.
+  //
+  // The typed length is kept as the text the field holds, not as a number: an
+  // emptied or half-typed field has no number in it, and feeding the resulting
+  // NaN back into a controlled `value` renders "NaN" into the box.
   const [chosen, setChosen] = useState<{
     jobId: string | null;
-    duration: number;
+    text: string;
   } | null>(null);
   const [rendered, setRendered] = useState<{
     jobId: string | null;
     url: string;
   } | null>(null);
 
-  const duration =
+  const durationText =
     chosen !== null && chosen.jobId === jobId
-      ? chosen.duration
-      : defaultDuration(referenceSeconds);
+      ? chosen.text
+      : String(defaultDuration(referenceSeconds));
+
+  // An empty field is Number("") === 0, which the bounds check below rejects
+  // just as the server would.
+  const duration = durationText.trim() === "" ? 0 : Number(durationText);
 
   const audioUrl =
     rendered !== null && rendered.jobId === jobId ? rendered.url : null;
+
+  const playerRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const player = playerRef.current;
+
+    if (player === null || audioUrl === null) {
+      return;
+    }
+
+    // The button says "render and play", so the render is started rather than
+    // merely offered. A browser that refuses the autoplay leaves the controls
+    // sitting there ready, which is all the fallback this needs -- hence the
+    // rejection is swallowed rather than shown.
+    void player.play().catch(() => undefined);
+  }, [audioUrl]);
 
   if (snapshot === null || !hasPreset) {
     return (
@@ -91,7 +115,11 @@ export function Audition({ snapshot }: AuditionProps) {
     setRendered({ jobId, url: `api/fit/audio?${query.toString()}` });
   };
 
-  const durationInvalid = !(duration > 0 && duration <= maxRenderSeconds);
+  const durationInvalid = !(
+    Number.isFinite(duration) &&
+    duration > 0 &&
+    duration <= maxRenderSeconds
+  );
 
   return (
     <section className="optimize-audition" aria-labelledby="audition-heading">
@@ -111,10 +139,10 @@ export function Audition({ snapshot }: AuditionProps) {
             min={0.1}
             max={maxRenderSeconds}
             step={0.1}
-            value={duration}
+            value={durationText}
             aria-describedby="audition-duration-hint"
             onChange={(event) => {
-              setChosen({ jobId, duration: event.target.valueAsNumber });
+              setChosen({ jobId, text: event.target.value });
             }}
           />
         </label>
@@ -139,7 +167,12 @@ export function Audition({ snapshot }: AuditionProps) {
 
       {audioUrl !== null && (
         // No caption track: a rendered instrument note carries no speech.
-        <audio className="audition-player" controls src={audioUrl}>
+        <audio
+          ref={playerRef}
+          className="audition-player"
+          controls
+          src={audioUrl}
+        >
           Your browser cannot play the rendered preset.
         </audio>
       )}

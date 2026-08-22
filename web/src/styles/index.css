@@ -843,7 +843,7 @@ h1 {
 .audition-controls {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
+  align-items: flex-end;
   margin-top: 10px;
   gap: 12px;
 }
