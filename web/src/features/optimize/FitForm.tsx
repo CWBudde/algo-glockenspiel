@@ -810,7 +810,12 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
                 onChange={(event) => {
                   setScalar("mayflySeed", event.target.value);
                 }}
-                type="number"
+                // A text field, not a number one: the seed is an exact int64
+                // decimal string, and a number input is free to hand back a
+                // normalised value -- "1e+19" for a seed near the top of the
+                // range -- which BigInt() then refuses. inputMode still brings
+                // up the numeric keypad.
+                type="text"
                 value={scalars.mayflySeed}
               />
               {fieldError("mayflySeed")}
