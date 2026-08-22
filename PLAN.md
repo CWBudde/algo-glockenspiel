@@ -721,9 +721,12 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       pointer press and sounding-note feedback are separate subtle states without activation-code
       changes. Playwright now pins all 25 named buttons plus the 15/10 material split; the three
       Play references were intentionally updated while Optimize remains unchanged.
-- [ ] **5.5.7 — Make the keyboard supporting, not competing.** Reduce its height and contrast while
-      keeping every piano key clickable, named and visibly focusable. Preserve its C2–C7 range and
-      active-note synchronization with the bars.
+- [x] **5.5.7 — Make the keyboard supporting, not competing.** The keybed is shorter, flatter and
+      lower-contrast, with muted graphite accidentals, quieter ivory naturals, smaller shadows and
+      restrained active colors beneath the brass/bronze rack. Its component and focus rules are
+      unchanged. Playwright pins all 61 unique accessible names, the 36/25 key split, MIDI 36–96
+      endpoints, data-note hooks and the active-style hook. The visible desktop/tablet references
+      were intentionally updated; mobile (keyboard below the fold) and Optimize remain exact.
 - [ ] **5.5.8 — Fix the mobile playfield.** Put the rack and keyboard in one horizontal pitch
       viewport with a shared minimum instrument width. Keep the control deck stationary, retain
       touch-action behavior, and verify the first and last notes can be reached at 390px without

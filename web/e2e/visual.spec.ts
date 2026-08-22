@@ -140,6 +140,50 @@ test("rack exposes every bar with material and accessible-name hooks", async ({
   expect(new Set(names).size).toBe(25);
 });
 
+test("keyboard keeps its full named range and active-state hook", async ({
+  page,
+}) => {
+  await installStableEngine(page);
+  await page.goto("/#/play");
+  await expect(page.getByText(ENGINE_READY, { exact: true })).toBeVisible();
+
+  const keyboard = page.getByRole("region", { name: "Piano alignment" });
+  const keys = keyboard.getByRole("button");
+  const whites = keyboard.locator(".piano-key.white");
+  const blacks = keyboard.locator(".piano-key.black");
+  const first = keyboard.locator('.piano-key[data-note="36"]');
+  const last = keyboard.locator('.piano-key[data-note="96"]');
+
+  await expect(keys).toHaveCount(61);
+  await expect(whites).toHaveCount(36);
+  await expect(blacks).toHaveCount(25);
+  await expect(first).toHaveAccessibleName("C2");
+  await expect(last).toHaveAccessibleName("C7");
+
+  const names = await keys.evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute("aria-label")),
+  );
+  const notes = await keys.evaluateAll((elements) =>
+    elements.map((element) => Number((element as HTMLElement).dataset.note)),
+  );
+  expect(names.every((name) => name !== null && name.length > 0)).toBe(true);
+  expect(new Set(names).size).toBe(61);
+  expect(new Set(notes).size).toBe(61);
+  expect(Math.min(...notes)).toBe(36);
+  expect(Math.max(...notes)).toBe(96);
+
+  const pianoC4 = keyboard.locator('.piano-key[data-note="60"]');
+  const restingBackground = await pianoC4.evaluate(
+    (element) => getComputedStyle(element).backgroundImage,
+  );
+  await pianoC4.evaluate((element) => element.classList.add("is-active"));
+  await expect(pianoC4).toHaveClass(/\bis-active\b/);
+  const activeBackground = await pianoC4.evaluate(
+    (element) => getComputedStyle(element).backgroundImage,
+  );
+  expect(activeBackground).not.toBe(restingBackground);
+});
+
 test("performance deck keeps native controls and live engine status", async ({
   page,
 }) => {

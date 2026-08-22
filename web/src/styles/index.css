@@ -543,14 +543,14 @@ h1 {
 
 .keyboard-panel {
   position: relative;
-  border-top: 1px solid rgba(72, 55, 39, 0.18);
-  background: #e7dfd3;
-  padding: var(--space-md) var(--space-3xl) var(--space-2xl);
+  border-top: 1px solid rgba(72, 55, 39, 0.12);
+  background: #ece7df;
+  padding: var(--space-sm) var(--space-3xl) var(--space-lg);
 }
 
 .keyboard {
   position: relative;
-  height: 126px;
+  height: 92px;
   margin: 0 auto;
   --keyboard-white-unit: calc(100% / var(--keyboard-white-count, 15));
 }
@@ -565,50 +565,50 @@ h1 {
 .piano-key.white {
   top: 0;
   width: var(--keyboard-white-unit);
-  height: 116px;
-  border-radius: 0 0 var(--radius-control) var(--radius-control);
-  background: linear-gradient(180deg, #fffdf8 0%, #f2e6d3 72%, #d3be9c 100%);
+  height: 84px;
+  border-radius: 0 0 5px 5px;
+  background: linear-gradient(180deg, #f8f6f1 0%, #ebe6dd 76%, #d8d0c4 100%);
   box-shadow:
-    inset -1px 0 0 rgba(83, 58, 37, 0.24),
-    inset 0 -8px 10px rgba(96, 74, 49, 0.18);
+    inset -1px 0 0 rgba(72, 61, 50, 0.14),
+    inset 0 -3px 5px rgba(72, 61, 50, 0.08);
 }
 
 .piano-key.black {
   z-index: 2;
   top: 0;
   width: calc(var(--keyboard-white-unit) * 0.56);
-  height: 72px;
-  border-radius: 0 0 7px 7px;
-  background: linear-gradient(180deg, #5e3420 0%, #2a160d 100%);
+  height: 52px;
+  border-radius: 0 0 4px 4px;
+  background: linear-gradient(180deg, #625950 0%, #46403a 100%);
   box-shadow:
-    inset 0 1px 0 rgba(255, 244, 233, 0.08),
-    0 8px 10px rgba(33, 13, 4, 0.28);
+    inset 0 1px 0 rgba(255, 248, 238, 0.08),
+    0 2px 3px rgba(35, 29, 24, 0.14);
 }
 
 .piano-key.is-active {
-  filter: brightness(1.08) saturate(1.1);
+  filter: brightness(1.04) saturate(1.04);
 }
 
 .piano-key.white.is-active {
-  background: linear-gradient(180deg, #fff2de 0%, #f2d4b0 72%, #d49f63 100%);
+  background: linear-gradient(180deg, #f5ebd9 0%, #ead8bb 76%, #cdb58f 100%);
 }
 
 .piano-key.black.is-active {
-  background: linear-gradient(180deg, #b44a30 0%, #6b170f 100%);
+  background: linear-gradient(180deg, #806a50 0%, #554638 100%);
 }
 
 .piano-note {
   position: absolute;
-  bottom: 8px;
+  bottom: var(--space-xs);
   left: 50%;
   transform: translateX(-50%);
-  color: rgba(83, 55, 28, 0.52);
+  color: rgba(69, 59, 48, 0.44);
   font-size: 0.7rem;
   letter-spacing: 0.06em;
 }
 
 .piano-key.black .piano-note {
-  color: rgba(255, 246, 236, 0.72);
+  color: rgba(248, 242, 234, 0.58);
 }
 
 @media (max-width: 1080px) {
