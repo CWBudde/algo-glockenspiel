@@ -16,7 +16,7 @@ export type BarKind = "natural" | "accidental";
 
 const BAR_WIDTH_PX: Readonly<Record<BarKind, number>> = {
   natural: 32,
-  accidental: 28,
+  accidental: 32,
 };
 
 const BAR_LANE_HEIGHT_PX: Readonly<Record<BarKind, number>> = {

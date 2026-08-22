@@ -716,6 +716,14 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
     );
   }
 
+  const [naturalWidth, accidentalWidth] = await Promise.all([
+    naturals.first().evaluate((element) => element.getBoundingClientRect().width),
+    accidentals
+      .first()
+      .evaluate((element) => element.getBoundingClientRect().width),
+  ]);
+  expect(accidentalWidth).toBeCloseTo(naturalWidth, 1);
+
   await expect(rack.locator(".row-support")).toHaveCount(4);
   await expect(rack.locator(".rail")).toHaveCount(0);
 

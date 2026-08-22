@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 360" preserveAspectRatio="none">
   <defs>
-    <linearGradient id="face" x1="8" y1="180" x2="64" y2="180" gradientUnits="userSpaceOnUse">
+    <linearGradient id="face" x1="6" y1="180" x2="66" y2="180" gradientUnits="userSpaceOnUse">
       <stop stop-color="#3F342B"/>
       <stop offset=".2" stop-color="#71583F"/>
       <stop offset=".46" stop-color="#514036"/>
@@ -14,11 +14,11 @@
       <stop offset="1" stop-color="#17120F" stop-opacity=".24"/>
     </linearGradient>
   </defs>
-  <rect x="8" y="8" width="56" height="344" rx="9" fill="url(#face)" stroke="#2D2520" stroke-width="1.5"/>
-  <rect x="9.5" y="9.5" width="53" height="341" rx="8" fill="url(#sheen)"/>
+  <rect x="6" y="8" width="60" height="344" rx="9" fill="url(#face)" stroke="#2D2520" stroke-width="1.5"/>
+  <rect x="7.5" y="9.5" width="57" height="341" rx="8" fill="url(#sheen)"/>
   <g fill="none" stroke="#E0C49B" stroke-linecap="round" opacity=".1">
-    <path d="M15 101h42"/>
-    <path d="M15 184h42"/>
-    <path d="M15 267h42"/>
+    <path d="M12 101h48"/>
+    <path d="M12 184h48"/>
+    <path d="M12 267h48"/>
   </g>
 </svg>

@@ -64,7 +64,10 @@ describe("rack depth geometry", () => {
     );
 
     expect(new Set(naturalWidths)).toEqual(new Set([32]));
-    expect(new Set(accidentalWidths)).toEqual(new Set([28]));
+    expect(new Set(accidentalWidths)).toEqual(new Set([32]));
+    expect(new Set([...naturalWidths, ...accidentalWidths])).toEqual(
+      new Set([32]),
+    );
   });
 
   it.each<BarKind>(["natural", "accidental"])(
