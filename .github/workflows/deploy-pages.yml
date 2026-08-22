@@ -11,6 +11,12 @@ on:
       - "go.mod"
       - "go.sum"
       - "internal/**"
+      # model/ was moved out of internal/ and is the DSP core the WASM demo
+      # pulls in transitively through cmd/glockenspiel-wasm. Without this entry
+      # a change to the entire synthesis core -- bar, modes, excitation -- left
+      # the published demo running the previous build, with nothing failing to
+      # signal it.
+      - "model/**"
       - "scripts/build-wasm.sh"
       - "web/**"
   workflow_dispatch:
