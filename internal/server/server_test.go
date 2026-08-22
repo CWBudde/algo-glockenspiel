@@ -221,6 +221,24 @@ func TestStaticRevalidatesWithETag(t *testing.T) {
 	}
 }
 
+func TestHashedAssetsCacheForever(t *testing.T) {
+	handler := newTestServer(t, testDist(t)).Handler()
+
+	response := get(t, handler, "/assets/index-abc123.js")
+	_ = response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.StatusCode)
+	}
+
+	// The name carries Vite's content hash, so the URL can never change
+	// meaning and the browser has nothing left to revalidate.
+	const want = "public, max-age=31536000, immutable"
+	if got := response.Header.Get("Cache-Control"); got != want {
+		t.Fatalf("cache control = %q, want %q", got, want)
+	}
+}
+
 func TestWasmServedFromDisk(t *testing.T) {
 	distDir := testDist(t)
 	write(t, distDir, "glockenspiel.wasm", "\x00asm")

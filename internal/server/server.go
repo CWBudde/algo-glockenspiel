@@ -42,6 +42,11 @@ const (
 	// project sub-path.
 	indexFileName = "index.html"
 
+	// assetsDirName is the sub-directory Vite writes the content-hashed
+	// bundle into. Its file names carry the hash, which is what lets the
+	// files under it be cached indefinitely; see cacheControlFor.
+	assetsDirName = "assets"
+
 	// placeholderFileName is the embedded page shown when the build is
 	// missing. It is the only file compiled into the binary.
 	placeholderFileName = "placeholder.html"
@@ -324,13 +329,29 @@ func (s *Server) handleStatic(writer http.ResponseWriter, request *http.Request)
 
 	writer.Header().Set("Content-Type", contentTypeFor(name))
 	writer.Header().Set("ETag", etag)
-	// Vite fingerprints the bundle's file names, but index.html, the module and
-	// the manifest keep fixed names, so the browser must revalidate rather than
-	// sit on a stale copy. The ETag keeps that revalidation down to a 304.
-	writer.Header().Set("Cache-Control", "no-cache")
+	writer.Header().Set("Cache-Control", cacheControlFor(name))
 	// A zero modtime suppresses Last-Modified, and with it the coarse
 	// If-Modified-Since path; the ETag above is the only validator.
 	http.ServeContent(writer, request, name, time.Time{}, file)
+}
+
+// cacheControlFor picks the caching policy for a file in the dist tree.
+//
+// Vite writes the bundle under assets/ with a content hash in every file name,
+// so those URLs can never change meaning: a rebuild produces new names rather
+// than new bytes behind an old name. They are worth caching for good, which is
+// what "immutable" buys -- the browser stops revalidating them even on a
+// reload.
+//
+// Everything else keeps a fixed name -- index.html, glockenspiel.wasm,
+// manifest.json, wasm_exec.js -- so the browser has to ask whether its copy is
+// still current. The ETag keeps that question down to a 304.
+func cacheControlFor(name string) string {
+	if strings.HasPrefix(name, assetsDirName+"/") {
+		return "public, max-age=31536000, immutable"
+	}
+
+	return "no-cache"
 }
 
 // writeDistError answers a request for a file that could not be opened.
