@@ -258,8 +258,12 @@ timeout on every Ctrl-C. `Run` therefore closes the streams — and cancels the
 running fit — _before_ it calls `Shutdown`. A fit does not outlive the server
 that started it.
 
-## Scope
+## The browser side
 
-The browser side is Phase 4.3: nothing under `web/` calls any of this yet, so
-fitting from a page still means fitting with `curl` against the same port the
-page is served from.
+The Optimize tab of the app this server hosts is a client of everything above:
+it starts a fit from a form, watches `/api/fit/events`, draws the cost curve,
+and auditions and downloads the result. See
+[web-app.md](web-app.md#the-optimize-loop).
+
+Nothing else is: the tab is the only consumer, and `curl` against the same port
+remains a first-class way to drive a fit.

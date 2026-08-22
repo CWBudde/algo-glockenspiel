@@ -919,6 +919,151 @@ h1 {
   gap: 6px;
 }
 
+/* ------------------------------------------------------------------ */
+/* Fit progress                                                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A canvas is opaque to a screen reader, so the chart repeats its reading as
+ * text. That text has to stay in the accessibility tree, which rules out both
+ * `display: none` and `visibility: hidden`.
+ */
+.visually-hidden {
+  position: absolute;
+  overflow: hidden;
+  clip-path: inset(50%);
+  margin: -1px;
+  width: 1px;
+  height: 1px;
+  white-space: nowrap;
+}
+
+.fit-progress {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.cost-chart-canvas {
+  position: relative;
+  padding: 10px 12px;
+  height: 280px;
+  border: 1px solid rgba(85, 52, 24, 0.35);
+  border-radius: 12px;
+  background: rgba(255, 250, 240, 0.72);
+}
+
+.fit-status h3,
+.optimize-audition h3 {
+  margin: 0 0 8px;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.fit-status-grid {
+  display: grid;
+  margin: 0;
+  gap: 8px 18px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.fit-status-grid dt {
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.fit-status-grid dd {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.fit-status-grid dd[data-state="failed"] {
+  color: #8c2f16;
+}
+
+.fit-status-error {
+  margin: 10px 0 0;
+  color: #8c2f16;
+}
+
+.optimize-note {
+  margin: 6px 0 0;
+  max-width: 62ch;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.audition-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-top: 10px;
+  gap: 12px;
+}
+
+.audition-field {
+  display: grid;
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  gap: 4px;
+}
+
+.audition-field input {
+  padding: 6px 8px;
+  width: 8ch;
+  border: 1px solid rgba(85, 52, 24, 0.45);
+  border-radius: 8px;
+  background: rgba(255, 250, 240, 0.9);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.92rem;
+  text-transform: none;
+}
+
+.audition-controls button,
+.audition-download {
+  padding: 8px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--gold), #c99850);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.audition-controls button[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.audition-player {
+  margin-top: 12px;
+  width: 100%;
+  max-width: 520px;
+}
+
+/*
+ * The focus block above names its controls one by one; these are the new ones.
+ */
+.audition-controls button:focus-visible,
+.audition-field input:focus-visible,
+.audition-download:focus-visible,
+.audition-player:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 @media (max-width: 760px) {
   .studio-topbar {
     flex-wrap: wrap;

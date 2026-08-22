@@ -1,6 +1,6 @@
 import { useId, useMemo, useRef, useState } from "react";
 
-import { cancelFit, FitApiError, startFit } from "../../api/fit";
+import { cancelFit, FitApiError, getFitStatus, startFit } from "../../api/fit";
 import {
   BOUNDS_KEYS,
   DEFAULT_FIT_REQUEST,
@@ -32,9 +32,24 @@ import {
 export interface FitFormProps {
   /** The job the page is currently watching, if any. */
   snapshot: FitSnapshot | null;
-  /** Called with the snapshot every start and cancel answers with. */
-  onSnapshot: (snapshot: FitSnapshot) => void;
+  /**
+   * Called with the snapshot every start and cancel answers with. The start
+   * call also passes the `maxIterations` it sent, because the server does not
+   * echo the request back and the progress panel reads "n of m" against it.
+   */
+  onSnapshot: (snapshot: FitSnapshot, maxIterations?: number) => void;
 }
+
+/**
+ * What buildForm answers with: the finished body plus the `maxIterations` it
+ * sent, or the per-field errors that stopped it.
+ *
+ * Named rather than written inline because prettier 3.8 and 3.9 format a
+ * multi-line union differently and each rewrites the other's output; on one
+ * line every 3.x agrees. See the note in the CI format job.
+ */
+type BuiltBody = { form: FormData; maxIterations: number };
+type BuiltForm = BuiltBody | { errors: FieldErrors };
 
 /** The scalar fields, held as strings so a half-typed number is not clobbered. */
 interface ScalarFields {
@@ -287,7 +302,7 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
    * Validates everything and builds the multipart body, or returns the field
    * errors. Nothing is uploaded until this succeeds.
    */
-  function buildForm(): { form: FormData } | { errors: FieldErrors } {
+  function buildForm(): BuiltForm {
     const found: FieldErrors = {};
 
     const reference = referenceRef.current?.files?.[0] ?? null;
@@ -450,7 +465,7 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
       form.append("mayflySeed", String(seed));
     }
 
-    return { form };
+    return { form, maxIterations: (maxIterations as { value: number }).value };
   }
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -474,7 +489,7 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
     try {
       const started = await startFit(built.form);
 
-      onSnapshot(started);
+      onSnapshot(started, built.maxIterations);
       setNotice(`Fit ${started.jobId} started.`);
     } catch (cause) {
       if (cause instanceof FitApiError) {
@@ -485,11 +500,36 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
             ? `${cause.message}. Cancel it first, or wait for it to finish.`
             : cause.message,
         );
+
+        if (cause.isConflict) {
+          await watchTheRunningFit();
+        }
       } else {
         setFormError("The fit could not be started.");
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * Makes the fit that holds the slot the job this page is watching.
+   *
+   * A 409 says another tab or a CLI client owns the single slot, so the job
+   * behind the conflict is not the one on screen -- the page may be showing an
+   * older, finished run, or nothing at all. Without this the Cancel button the
+   * error message points at stays disabled and the advice cannot be followed
+   * without a reload. No `maxIterations` is passed with the snapshot: this
+   * page did not send the request and does not know the limit.
+   */
+  async function watchTheRunningFit() {
+    try {
+      onSnapshot(await getFitStatus());
+    } catch {
+      // The conflict itself is already on screen and is the actionable half.
+      // A follow-up read that fails as well adds nothing the user can act on,
+      // and replacing the conflict message with its error would take the
+      // useful half away.
     }
   }
 
@@ -842,7 +882,9 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
         <p className="fit-hint">
           Every dimension is optional; one left empty keeps its default.
           Supplied bounds are a hard constraint, so the box is not widened to
-          contain the starting preset.
+          contain the starting preset. A server built before the bounds field
+          was added to the fit API ignores the document rather than refusing it,
+          so on such a server the fit runs against the default box.
         </p>
 
         {fieldError("bounds")}

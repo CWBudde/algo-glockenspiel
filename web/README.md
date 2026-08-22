@@ -3,7 +3,9 @@
 The browser front end: a React 19 + TypeScript app built with Vite, driving the
 Go synthesis core through WebAssembly. The instrument view mirrors the
 plugin-editor mockup under `plugin/vst3/ui/` and uses the same note geometry,
-piano alignment and control layout.
+piano alignment and control layout. [../docs/web-app.md](../docs/web-app.md)
+describes the architecture and the reasoning behind it; this file is about
+building, running and using it.
 
 ## Layout
 
@@ -12,10 +14,12 @@ web/
   index.html          Vite's entry document; loads wasm_exec.js, then the app
   placeholder.html    embedded in the binary, shown when dist is not built
   src/
-    App.tsx           tab bar and hash router
+    App.tsx           tab bar, hash router and the audio engine
     routes/           PlayPage, OptimizePage
     components/       Topbar, PresetStrip, ControlRail, Dial, Rack, Keyboard
     audio/            the WASM load sequence and the AudioContext graph
+    api/              the typed fit-API client and the wire types
+    features/optimize/  the fit form, the event stream, the chart, the audition
     lib/              note geometry and the procedural wood texture
     styles/           the stylesheet
   assets/             SVG source assets, inlined or hashed by Vite
@@ -107,6 +111,41 @@ out. Routing is on the URL fragment — `#/play`, `#/optimize` — because the
 server answers an unknown path with a hard 404 by design and neither it nor
 Pages has a rewrite rule.
 
+## Optimize
+
+The **Optimize** tab fits the model against a reference recording, using the fit
+API of the `glockenspiel serve` process that is hosting the page. It needs that
+process: the tab probes `GET api/version` on mount and, where nothing answers,
+renders the command that makes the API reachable instead of a form that would
+fail on submit. That is the GitHub Pages case, and it is the only difference
+between the hosted build and a local one.
+
+The loop:
+
+1. Choose a reference WAV — up to 16 MiB, mono or the first channel of a
+   multi-channel file — and optionally a starting preset and narrowed bounds.
+2. Choose the metric (`rms`, `log`, `spectral`), the optimizer (`simple`,
+   `mayfly`) and the scalars. The defaults are the `fit` command's own, so a
+   preset fitted from the browser and one fitted from the terminal are the same
+   fit. Every field is held to the server's range before anything is uploaded.
+3. **Start fit.** The server runs one fit at a time; a second start is refused
+   with "a fit is already running", which the form shows in those words.
+4. The cost curve, the counters and the stop reason fill live from
+   `api/fit/events`, a Server-Sent Events stream carrying a whole status object
+   per report. Nothing polls.
+5. **Cancel fit** stops it. A cancelled run keeps the best parameters it found,
+   so the audition and the download stay available.
+6. **Render and play** auditions the fitted preset at the note and velocity the
+   fit ran against; **Download preset JSON** saves it in the schema
+   `glockenspiel synth --preset` loads.
+
+The wire types live in `src/api/types.ts`, transcribed by hand from the Go
+structs that produce them. Renaming a field in the server is meant to become a
+type error here.
+
+See [../docs/serve.md](../docs/serve.md) for the API itself and
+[../docs/web-app.md](../docs/web-app.md) for how the tab is put together.
+
 ## The WASM Bridge
 
 `cmd/glockenspiel-wasm` publishes exactly one global, `glockenspielWasm`,
@@ -125,6 +164,11 @@ NaN. See the comment on `interleavedFrames`.
 ## Usage
 
 - Click or tap bars and keys to strike notes, or Tab to one and press Enter
-- Use the printed keyboard bindings for quick play
+- Use the printed keyboard bindings for quick play. Note a carried-over bug: the
+  hints printed on the natural bars are indexed by position among the naturals
+  while the key map uses the semitone offset, so from D4 upwards a bar names a
+  key that strikes a different note. The keyboard itself is right; the label is
+  not. See the comment in `src/lib/layout.ts`
 - Adjust `Velocity` for attack strength
 - Adjust `Volume` for overall output gain, including while a note rings
+- Switch to **Optimize** to fit a preset against a recording; see above
