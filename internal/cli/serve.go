@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/cwbudde/glockenspiel/internal/server"
-	"github.com/cwbudde/glockenspiel/web"
+	"github.com/cwbudde/algo-glockenspiel/internal/server"
+	"github.com/cwbudde/algo-glockenspiel/web"
 	"github.com/spf13/cobra"
 )
 

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/wavio"
+	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
 )
 
 // quantisationStep is one 16-bit LSB. Every round-trip assertion below is

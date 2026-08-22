@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cwbudde/glockenspiel/internal/preset"
-	"github.com/cwbudde/glockenspiel/internal/server"
-	"github.com/cwbudde/glockenspiel/internal/wavio"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/internal/server"
+	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
 )
 
 // fitSnapshot mirrors the JSON the fit endpoints answer with. It is spelled out

@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/cpufeat"
+	"github.com/cwbudde/algo-glockenspiel/internal/cpufeat"
 )
 
 // This file implements the numeric contract from docs/oscillator-bank.md so the

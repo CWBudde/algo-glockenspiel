@@ -4,8 +4,8 @@ import (
 	"math"
 	"sync/atomic"
 
-	"github.com/cwbudde/glockenspiel/internal/oscbank"
-	"github.com/cwbudde/glockenspiel/model"
+	"github.com/cwbudde/algo-glockenspiel/internal/oscbank"
+	"github.com/cwbudde/algo-glockenspiel/model"
 )
 
 const (

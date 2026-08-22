@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 )
 
 // wantKeyboardSpreadDB is the level spread the realtime engine is allowed

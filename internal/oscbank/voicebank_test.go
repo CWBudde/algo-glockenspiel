@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/cpufeat"
+	"github.com/cwbudde/algo-glockenspiel/internal/cpufeat"
 )
 
 // voiceTestOscillators builds one voice's configuration. Every voice of a bank

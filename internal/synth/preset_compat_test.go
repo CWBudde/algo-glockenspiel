@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/preset"
-	"github.com/cwbudde/glockenspiel/model"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/model"
 )
 
 func shippedPresetPaths(t *testing.T) []string {

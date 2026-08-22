@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/preset"
-	"github.com/cwbudde/glockenspiel/internal/synth"
-	"github.com/cwbudde/glockenspiel/model"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/internal/synth"
+	"github.com/cwbudde/algo-glockenspiel/model"
 )
 
 func TestOptimizationRecoversSyntheticReferenceWithinTolerance(t *testing.T) {

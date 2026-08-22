@@ -6,8 +6,8 @@ import (
 	"syscall/js"
 	"unsafe"
 
-	embeddedassets "github.com/cwbudde/glockenspiel/assets"
-	"github.com/cwbudde/glockenspiel/internal/synth"
+	embeddedassets "github.com/cwbudde/algo-glockenspiel/assets"
+	"github.com/cwbudde/algo-glockenspiel/internal/synth"
 )
 
 const (

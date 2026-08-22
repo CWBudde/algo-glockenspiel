@@ -5,7 +5,7 @@ package oscbank
 import (
 	"unsafe"
 
-	"github.com/cwbudde/glockenspiel/internal/cpufeat"
+	"github.com/cwbudde/algo-glockenspiel/internal/cpufeat"
 )
 
 // reduceAVX2Frames is how many output frames one pass of reduceLanesAVX2

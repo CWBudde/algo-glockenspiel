@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/cwbudde/glockenspiel/model"
+	"github.com/cwbudde/algo-glockenspiel/model"
 )
 
 // scalarParameterCount covers input mix, filter frequency and base frequency;

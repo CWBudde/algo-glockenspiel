@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/cwbudde/glockenspiel/internal/cli"
+	"github.com/cwbudde/algo-glockenspiel/internal/cli"
 )
 
 func main() {
