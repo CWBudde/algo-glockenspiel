@@ -8,15 +8,32 @@ import "github.com/cwbudde/glockenspiel/internal/cpufeat"
 const avx2RMSErrorBlock = 8
 
 // avx2RMSErrorMinLen is the length from which the vector kernel is worth its
-// call overhead. Measured kernel-to-kernel on an i7-1255U: at 8 samples the two
-// paths are level (2 ns each), at 16 the kernel is already ~1.5x ahead (2 ns vs
-// 3 ns) and the gap keeps widening (4096 samples: 518 ns vs 950 ns). The
-// previous threshold of 32 was an unmeasured guess that left 16..31 on the slow
-// path.
+// call overhead. Re-measured kernel-to-kernel on an i7-1255U (medians of
+// -benchtime 2s -count 7; the box was neither quiesced nor pinned to a
+// performance governor, so read the ratios rather than the absolute
+// nanoseconds): at 8 samples the two paths are level (3.8 ns vs 4.1 ns), at 16
+// the kernel is already ~2.2x ahead (4.2 ns vs 9.3 ns), and the gap keeps
+// widening -- 32 samples 5.9 ns vs 19.5 ns, 64 samples 10.3 ns vs 37.5 ns,
+// 4096 samples 539 ns vs 949 ns. The threshold of 16 therefore still sits
+// exactly where the curves cross; the older threshold of 32 was an unmeasured
+// guess that left 16..31 on the slow path.
 //
-// Note that BenchmarkSquaredDiffSum measures the whole dispatch, which is
-// dominated for short slices by the ~20 ns cpufeat.Detect() spends on two mutex
-// acquisitions - a fixed cost this threshold cannot influence.
+// BenchmarkSquaredDiffSum measures the whole dispatch, so its short-slice
+// numbers sit well above the kernel-to-kernel ones: at 8 samples the dispatch
+// arm costs 11.3 ns against the generic arm's 2.3 ns. That gap is plain call
+// overhead, not lock traffic. squaredDiffSumGeneric inlines into its own
+// benchmark, while squaredDiffSum does not inline and cpufeat.Detect cannot
+// either -- its cold path carries a defer -- so the dispatch arm pays two
+// out-of-line calls the generic arm does not.
+//
+// Detect's own work is a single atomic pointer load: 7.9 ns/op against
+// 7.2 ns/op for a //go:noinline function that just returns a zero Features,
+// measured back to back on the same box -- under a nanosecond above the bare
+// call. An earlier revision of this comment blamed "~20 ns spent on two mutex
+// acquisitions"; that described Detect before it was rewritten around
+// atomic.Pointer, and since cpufeat warms the cache from its own init not even
+// the first caller takes the lock. Either way it is a fixed cost that this
+// threshold cannot influence.
 const avx2RMSErrorMinLen = 2 * avx2RMSErrorBlock
 
 func squaredDiffSum(synth, ref []float32) float64 {
