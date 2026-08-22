@@ -410,8 +410,8 @@ Goal: fix the three level bugs. All of them live in Go and are unit-testable wit
       a stray note-on can carry — yields two gains inside [0, 1] and no phase inversion.
 - [x] Resolve the default preset's level, carried over from Phase 3. The amplitudes were divided
       by 8.72, and `TestDefaultPresetRendersNearMinusThreeDBFS` pins the result at −3 dBFS at
-      44.1 kHz so it cannot drift back. This closes the item as written; it does not level the
-      keyboard, see below.
+      44.1 kHz so it cannot drift back. This closes the item as written, at the preset's own
+      note; levelling the rest of the keyboard is the separate item below.
 - [x] Un-mute the low register. `scaledParamsForNote` divides `DecayMs` by the transposition
       ratio, which is correct, but the single `DecayMsMax = 500` served both as the validation
       ceiling and as the optimizer's search bound: the shipped preset's 188.2 ms mode becomes
@@ -421,10 +421,19 @@ Goal: fix the three level bugs. All of them live in Go and are unit-testable wit
       transposed to note 36 at 3364 ms) and `DecayMsSearchMax` (500 ms, unchanged), and
       `RealtimeEngine` counts refused note-ons rather than dropping them.
 
-Still open, deliberately not fixed here: the peak level across the keyboard spans 27.8 dB with
-the shipped preset — +13.8 dBFS at note 36 down to −14.0 dBFS at note 96 — because the modes
-carry a fixed amplitude while the low notes' longer decays accumulate far more energy. A per-note
-gain law wants calibrating against the whole range at once and is its own change.
+- [x] Level the keyboard. Un-muting the low register exposed a 27.78 dB peak spread across
+      36..96 with the shipped preset (+13.8 dBFS at note 36, −14.0 dBFS at note 96), which the
+      realtime limiter turned into audible distortion: notes 36..50 clipped at the engine's
+      default gain, 33425 samples on note 36 alone. `RealtimeEngine` now measures the loaded
+      preset once per playable note at construction and normalises every note to the level of
+      the preset's own note. The law is measured rather than written down because it is not a
+      property of transposition: the shipped preset tilts −0.46 dB/semitone because its four
+      modes beat against each other, while single-mode `testdata/presets/minimal` is flat, so
+      any fixed curve is wrong for one of them. Realtime spread is now 4.08 dB and no note
+      clips at maximum velocity and maximum master gain. The remaining 4.08 dB is the stereo
+      pan alone — 20·log10(0.8/0.5) exactly — and is energy-preserving by construction, so it
+      is not a level error and is not a target for further reduction. The offline path
+      (`RenderNote`) is deliberately left untrimmed: the optimizer fits against it.
 
 ### Phase 5.2: Audio transport
 

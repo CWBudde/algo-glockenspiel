@@ -153,6 +153,57 @@ func (s *Synthesizer) scaledParamsForNote(note int) model.BarParams {
 	return scaled
 }
 
+// peakForNote renders one strike of the given note and returns its peak level
+// in linear units, or 0 if the note cannot be rendered at all.
+//
+// It exists to calibrate the realtime engine's per-note level trim, and it is
+// deliberately a measurement rather than a formula. See calibrateNoteTrims in
+// realtime.go for why the level cannot be predicted from the note alone.
+//
+// The render window is the longest decay the preset has *after* transposition,
+// which is where the naive choice goes wrong: the peak of a multi-mode bar is
+// not the attack transient. The modes beat against each other, and the sample
+// where they first line up can be far into the note -- 167.5 ms for the shipped
+// preset at MIDI 36, where a fixed 50 ms window would have measured a peak
+// 4.7 dB below the real one and left the trim that much too loud. Measured
+// across both presets in the repo and every note of the keyboard, the true peak
+// always lands within half of that window, so one whole decay carries a factor
+// of two in hand.
+//
+// The floor keeps a very short decay from producing a window of a few samples.
+// The ceiling can never bind for a preset that passed validation, since
+// DecayMsValidationMax is the largest transposed decay that exists; it is there
+// so that a future ceiling change degrades into a slightly low measurement
+// rather than into a multi-second engine construction.
+func (s *Synthesizer) peakForNote(note, velocity int) float64 {
+	const (
+		minWindowSeconds = 0.02
+		maxWindowSeconds = model.DecayMsValidationMax / 1000
+	)
+
+	scaled := s.scaledParamsForNote(note)
+
+	window := 0.0
+
+	for i := range scaled.Modes {
+		if decay := scaled.Modes[i].DecayMs / 1000; decay > window {
+			window = decay
+		}
+	}
+
+	window = math.Min(math.Max(window, minWindowSeconds), maxWindowSeconds)
+
+	peak := 0.0
+
+	for _, sample := range s.RenderNote(note, velocity, window) {
+		if abs := math.Abs(float64(sample)); abs > peak {
+			peak = abs
+		}
+	}
+
+	return peak
+}
+
 func shouldStop(block []float32, threshold float64) bool {
 	if len(block) == 0 {
 		return true

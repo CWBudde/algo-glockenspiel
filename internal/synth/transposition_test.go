@@ -83,13 +83,20 @@ func TestEveryKeyboardNoteRendersAudio(t *testing.T) {
 // nothing does not. Only the counter distinguishes "the engine refused the
 // note" from "the note decayed away", which is the distinction that was missing
 // entirely while NoteOn discarded the error.
+// One engine is shared across the sweep rather than one per note: building an
+// engine calibrates the level trims, which is 61 renders, and paying that 61
+// times over would make this test the slowest in the package for no added
+// coverage. Each note is drained before the next is struck, so the isolation
+// that matters -- one voice at a time -- is preserved.
 func TestRealtimeEngineSoundsEveryKeyboardNote(t *testing.T) {
+	engine := newTestEngine(t)
+
 	for note := KeyboardFirstNote; note <= KeyboardLastNote; note++ {
-		engine := newTestEngine(t)
+		before := engine.DroppedNoteOns()
 
 		engine.NoteOn(note, 100)
 
-		if dropped := engine.DroppedNoteOns(); dropped != 0 {
+		if dropped := engine.DroppedNoteOns() - before; dropped != 0 {
 			t.Errorf("note %d: engine dropped the note-on (%d dropped, last dropped note %d)",
 				note, dropped, engine.LastDroppedNote())
 
@@ -104,11 +111,17 @@ func TestRealtimeEngineSoundsEveryKeyboardNote(t *testing.T) {
 
 		peak := 0.0
 
-		for block := 0; block < 64; block++ {
+		for block := 0; block < 4000 && engine.ActiveVoices() > 0; block++ {
 			out := engine.ProcessBlock(defaultRealtimeBlockFrames)
 			if blockPeak := peakOf(out); blockPeak > peak {
 				peak = blockPeak
 			}
+		}
+
+		if engine.ActiveVoices() != 0 {
+			t.Errorf("note %d never retired, so the next note would sum on top of it", note)
+
+			return
 		}
 
 		if peak < silenceThreshold {

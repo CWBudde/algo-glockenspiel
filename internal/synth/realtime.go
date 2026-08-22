@@ -71,6 +71,12 @@ type RealtimeEngine struct {
 	renderOptions RenderOptions
 	maxVoices     int
 
+	// noteTrims is the per-note level trim, indexed by note-trimsFirst, and
+	// read once per note-on. Built by calibrateNoteTrims at construction, never
+	// written afterwards, so the audio thread only ever loads from it.
+	noteTrims  []float32
+	trimsFirst int
+
 	// droppedNoteOns and lastDroppedNote are the diagnostic for a note-on the
 	// engine could not turn into a voice. See NoteOn for why the engine counts
 	// rather than reports, and why these are atomics.
@@ -99,6 +105,14 @@ func newVoiceSlots(maxVoices, frames int) []realtimeVoice {
 }
 
 // NewRealtimeEngine creates a block-rendering engine for interactive playback.
+//
+// Construction measures the preset once per playable note to build the level
+// trim table, which costs 44 ms (best of seven) for the shipped preset at 48 kHz. That is
+// paid once, off the audio thread, by the one caller that builds an engine
+// (cmd/glockenspiel-wasm at startup). It is deliberately not paid by
+// NewSynthesizer: internal/optimizer/objective.go builds a synthesizer per
+// candidate evaluation, and 61 extra renders per evaluation would make fitting
+// unusable.
 func NewRealtimeEngine(s *Synthesizer) *RealtimeEngine {
 	return &RealtimeEngine{
 		synth:        s,
@@ -110,8 +124,99 @@ func NewRealtimeEngine(s *Synthesizer) *RealtimeEngine {
 			AutoStop:  true,
 			DecayDBFS: defaultVoiceDecayDBFS,
 		},
-		maxVoices: defaultRealtimeMaxVoices,
+		maxVoices:  defaultRealtimeMaxVoices,
+		noteTrims:  calibrateNoteTrims(s),
+		trimsFirst: KeyboardFirstNote,
 	}
+}
+
+// calibrateNoteTrims measures the preset at every playable note and returns the
+// gain each note needs to sit at the level of the preset's own note.
+//
+// == Why the law is measured rather than written down ==
+//
+// The obvious approach is a formula: the peak level of the shipped preset falls
+// almost linearly with pitch, 27.78 dB across the keyboard at about -0.46 dB
+// per semitone, and a straight line through that fits to within 0.93 dB. It is
+// wrong anyway, and the second preset in the repo is what proves it.
+//
+// The slope is not a property of transposition. It is a property of *this*
+// preset having four modes: the peak of a multi-mode bar is where the modes
+// beat into phase, and how much of that beat pattern fits inside the decay
+// envelope grows as the decay does, i.e. as 1/ratio. testdata/presets/minimal
+// has a single mode and therefore nothing to beat against, and its level is
+// flat to within 0.3 dB from note 36 to note 78 -- measured, not assumed.
+// Applying the shipped preset's -0.46 dB/semitone line to it would *introduce*
+// some 28 dB of tilt where there is currently none. Even the physically
+// motivated law, multiplying by the transposition ratio (-0.5017 dB/semitone,
+// the exactly-undo-the-decay-inflation law), leaves 2.32 dB of residual on the
+// shipped preset and turns minimal's 11.30 dB spread into 20.39 dB.
+//
+// No fixed curve can serve both, because the level-versus-pitch relationship is
+// a consequence of the preset's mode structure. Measuring it costs 61 renders
+// at engine construction and is exact for whatever preset is actually loaded,
+// including one a fit produces tomorrow.
+//
+// == The reference and the clamp ==
+//
+// Every note is normalised to the preset's own note, so a preset keeps the
+// level it was authored and fitted at and only the *other* notes move. That
+// also means the shipped preset's -3 dBFS stays -3 dBFS.
+//
+// Velocity is not a variable here: measured across both presets and every note,
+// the peak scales with velocity to within 0.01 dB of a constant factor, so a
+// trim measured at one velocity levels the keyboard at all of them. The
+// calibration uses the maximum, 127, so the headroom the trims buy is headroom
+// at the loudest strike a MIDI keyboard can send.
+//
+// The clamp is a guard against pathology, not a design parameter: a note that
+// renders almost nothing -- a preset whose modes cancel at some pitch, a fit
+// that went somewhere strange -- would otherwise ask for an unbounded boost and
+// amplify numerical noise to full scale. +/-36 dB is far outside anything the
+// two real presets need (they span -16.1 dB to +11.7 dB).
+func calibrateNoteTrims(synthesizer *Synthesizer) []float32 {
+	const (
+		calibrationVelocity = 127
+		minTrim             = 1.0 / 64
+		maxTrim             = 64.0
+	)
+
+	trims := make([]float32, KeyboardLastNote-KeyboardFirstNote+1)
+	for i := range trims {
+		trims[i] = 1
+	}
+
+	reference := synthesizer.peakForNote(synthesizer.preset.Note, calibrationVelocity)
+	if reference <= 0 {
+		// The preset is silent at its own note, so there is nothing to
+		// normalise against. Leaving every trim at unity keeps the engine
+		// behaving exactly as it did before calibration existed.
+		return trims
+	}
+
+	for note := KeyboardFirstNote; note <= KeyboardLastNote; note++ {
+		peak := synthesizer.peakForNote(note, calibrationVelocity)
+		if peak <= 0 {
+			continue
+		}
+
+		trims[note-KeyboardFirstNote] = float32(math.Min(math.Max(reference/peak, minTrim), maxTrim))
+	}
+
+	return trims
+}
+
+// trimForNote returns the level trim for a note, or 1 for a note outside the
+// keyboard. An out-of-range note-on is already an oddity -- gainsForNote clamps
+// its pan rather than extrapolating -- and extrapolating a level for it would
+// be inventing a measurement instead of declining to make one.
+func (e *RealtimeEngine) trimForNote(note int) float32 {
+	index := note - e.trimsFirst
+	if index < 0 || index >= len(e.noteTrims) {
+		return 1
+	}
+
+	return e.noteTrims[index]
 }
 
 // SetMasterGain updates engine output gain.
@@ -151,7 +256,20 @@ func (e *RealtimeEngine) NoteOn(note, velocity int) {
 		return
 	}
 
+	// The pan law and the level law are applied here rather than in
+	// ProcessBlock, and stay two separate functions rather than one combined
+	// one. gainsForNote redistributes a note's energy between the channels and
+	// its two gains sum to 1 by construction, which is the invariant that keeps
+	// panning from becoming a volume change; the trim is the note's volume.
+	// Folding them together would destroy that invariant and with it the test
+	// that guards it. Multiplying afterwards keeps the mix at the same two
+	// multiplies per sample it has always cost, with the master gain still
+	// applied per block on top so it reaches a ringing note.
+	trim := e.trimForNote(note)
+
 	left, right := gainsForNote(note)
+	left *= trim
+	right *= trim
 
 	for i := range e.voices {
 		if e.voices[i].note == note {
