@@ -144,6 +144,11 @@ export const OPTIMIZER_NAMES: readonly OptimizerName[] = [
  * number read as seconds, exactly as `fit --time-budget` reads it. The
  * `timeBudgetMs` of Go's `fitRequest` is an internal representation and is
  * never sent.
+ *
+ * `mayflySeed` is a decimal **string** for a related reason: the server reads
+ * it with `strconv.ParseInt` into an int64, and a JS `Number` stops
+ * representing every integer past 2^53, so a seed carried as a `number` could
+ * reach the server as a different one than the user typed.
  */
 export interface FitRequestFields {
   note: number;
@@ -157,7 +162,7 @@ export interface FitRequestFields {
   normalizeGain: boolean;
   mayflyVariant: MayflyVariant;
   mayflyPopulation: number;
-  mayflySeed: number;
+  mayflySeed: string;
 }
 
 /**
@@ -177,7 +182,7 @@ export const DEFAULT_FIT_REQUEST: FitRequestFields = {
   normalizeGain: false,
   mayflyVariant: "desma",
   mayflyPopulation: 10,
-  mayflySeed: 1,
+  mayflySeed: "1",
 };
 
 /**

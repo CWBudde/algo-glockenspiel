@@ -60,7 +60,7 @@ const INITIAL_SCALARS: ScalarFields = {
   reportEvery: String(DEFAULT_FIT_REQUEST.reportEvery),
   timeBudget: DEFAULT_FIT_REQUEST.timeBudget,
   mayflyPopulation: String(DEFAULT_FIT_REQUEST.mayflyPopulation),
-  mayflySeed: String(DEFAULT_FIT_REQUEST.mayflySeed),
+  mayflySeed: DEFAULT_FIT_REQUEST.mayflySeed,
 };
 
 const EMPTY_BOUNDS_ROWS: BoundsRows = Object.fromEntries(
