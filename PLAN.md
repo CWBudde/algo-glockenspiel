@@ -22,8 +22,8 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | 1     | Configurable oscillator bank | done                              |
 | 2     | Real SIMD on three targets   | done                              |
 | 3     | Optimizer                    | done                              |
-| 4     | Serve and the optimizer UI   | open — 4.1 and 4.2 done, 4.3 open |
-| 5     | Web app                      | open — no code yet                |
+| 4     | Serve and the optimizer UI   | done                              |
+| 5     | Web app                      | open — 5.1 and 5.3 done           |
 | 6     | Split out VST3               | open — 6.1 all but the last audit |
 | 7     | Documentation                | open — 7.1 and 7.2 done           |
 
@@ -389,8 +389,18 @@ Acceptance criteria:
 - [x] `serve` hosts the UI and the API. The static app from Phase 4.1 and the fit endpoints
       from Phase 4.2 are registered by the same `Handler()`, so one process on one port is
       the whole story. What the browser does with the API is 4.3.
-- [ ] A fit can be started, watched, auditioned, and downloaded from the browser.
-- [ ] The Pages build degrades gracefully with no server.
+- [x] A fit can be started, watched, auditioned, and downloaded from the browser.
+      All four, from the Optimize tab of a React front end: `POST api/fit/start` from a
+      validated form, `api/fit/events` for the live curve, `api/fit/audio` behind a Render
+      button and `api/fit/preset` behind a link. Driven end to end against
+      `testdata/reference/legacy_synth_a4.wav`; the downloaded JSON renders with
+      `glockenspiel synth --preset`.
+- [x] The Pages build degrades gracefully with no server. The tab probes `GET api/version`
+      once on mount — which 404s through the static handler where there is no API, since
+      there is no `/api/` catch-all — and renders the `glockenspiel serve` command and the
+      CLI equivalent instead of a form that would fail on submit. Confirmed against
+      `npx serve web/dist` with no Go process: Play works completely, Optimize explains
+      itself. Running the optimizer in WASM stays deferred.
 
 ### Phase 4.1: The server skeleton — DONE (2026-08-21)
 
@@ -434,16 +444,48 @@ Goal: the CLI's fitting stack, reachable over HTTP.
       `internal/optimizer/legacy_validation_test.go` each carried their own copy — so it
       was extracted into `internal/wavio` first and all three migrated onto it.
 
-### Phase 4.3: The Optimize tab
+### Phase 4.3: The Optimize tab — DONE (2026-08-22)
 
 Goal: the browser side of the same loop.
 
-- [ ] A tab bar in `web/index.html`: **Play** and **Optimize**. There is no tab markup today.
-- [ ] Optimize: upload a reference WAV, choose metric, optimizer and bounds, start and cancel.
-- [ ] A live cost curve fed from the SSE stream, an audition button for the fitted preset, and
-      a download.
-- [ ] The Pages build detects the missing API and explains that Optimize needs the local CLI.
-      Running the optimizer in WASM stays a later option, not a blocker.
+- [x] A tab bar in `web/index.html`: **Play** and **Optimize**. It is not in `index.html` any
+      more: the whole front end was rewritten as Vite + React 19 + TypeScript, and the tab
+      bar is `src/components/Topbar.tsx` over a hash router in `src/App.tsx`. The rewrite was
+      the decision this sub-phase turned on. An Optimize tab is a file upload, a dozen
+      validated controls, an SSE subscription, a live chart, an audio player and a download —
+      a stateful form on top of a stateful stream — which is where 40 KB of hand-written DOM
+      builders with every piece of state as a module-level `let` stops paying for itself.
+      TypeScript earned its place separately: the fit API's wire shapes are eleven Go structs,
+      and `src/api/types.ts` transcribes them by hand for the same reason
+      `internal/server/fit_test.go` re-declares `fitSnapshot` locally — a field renamed in the
+      server should be a failing build, not a silently undefined value at runtime.
+- [x] Optimize: upload a reference WAV, choose metric, optimizer and bounds, start and cancel.
+      `src/features/optimize/FitForm.tsx`. Bounds were not on the API at all — `--bounds` was
+      CLI-only and `buildObjective` always took `DefaultParamBounds` — so the optional
+      `bounds` multipart field was added on its own branch, which must land before the front
+      end does. Every scalar is held client-side to the range `internal/server/params.go`
+      holds it to, because a 400 that arrives after a 16 MiB upload is a slow way to learn
+      that `note` was 200, and the 409 is surfaced as "a fit is already running" rather than
+      as a generic failure.
+- [x] A live cost curve fed from the SSE stream, an audition button for the fitted preset, and
+      a download. `useFitEvents.ts`, `CostChart.tsx`, `FitStatus.tsx` and `Audition.tsx`.
+      Three things about the stream shaped the code: it carries no `id:` and no `retry:`, so a
+      source left open past a terminal event is reconnected and re-handed the same snapshot
+      forever and must be closed; every `data:` is a whole snapshot rather than a delta, which
+      is what makes attaching mid-run correct immediately; and `hasPreset` is not
+      `state === "succeeded"`, because a run cancelled after its first report still has a best
+      preset — so the audition gates on the former. There is no polling anywhere in the tab:
+      the one non-stream read is a single `GET api/fit` on mount, so a reload lands back on a
+      running fit with Cancel reachable instead of stranding the server's single slot.
+- [x] The Pages build detects the missing API and explains that Optimize needs the local CLI.
+      `useApiAvailable.ts`, and the served root moved with it: a Vite bundle is a build
+      artifact with hashed names and cannot be `go:embed`ed without making the binary's
+      contents depend on whether someone ran a build step, so `DistDir` became the served root
+      and the embedded tree shrank to one placeholder page naming `just build-web`. Pages now
+      uploads `web/dist`. Running the optimizer in WASM stays deferred.
+
+The architecture, the WASM bridge, the two-step build and the Optimize loop are written up in
+[docs/web-app.md](docs/web-app.md), which also closes Phase 7.3's first bullet.
 
 ## Phase 5: Web App
 
@@ -553,21 +595,33 @@ Goal: a smaller, cache-busted payload behind a bridge that says what it means.
 
 Goal: fast first paint, usable by keyboard, and no controls that lie.
 
-- [ ] Bake the wood textures at build time. `web/wood-texture.js` is 611 lines — larger than the
-      rest of the front end — and `createWoodTexture` (`:222-248`) fills a 1024x576 canvas pixel
-      by pixel synchronously before first paint and before the WASM fetch starts
-      (`web/main.js:154`), then again on every species change (`:133`). Keep the generator as a
-      build tool.
-- [ ] Accessibility. `web/styles.css` has zero occurrences of `focus`, `outline`, `touch-action`
-      or `user-select`; bars and keys bind only `pointerdown` (`web/ui.js:228,260`) so they are
-      tabbable but not activatable; black and non-C white keys get empty labels
-      (`web/ui.js:249-255`) with no `aria-label`; the status element (`web/index.html:88`) has
-      no `aria-live`.
-- [ ] Wire or remove the inert controls: the hamburger button (`web/index.html:24-26`, no
-      handler), `#preset-select` (`:32-34`, one hardcoded option, no binding) and the disabled
-      Save/Load buttons (`:42-43`).
-- [ ] Fix the `<h1>` (`web/index.html:20`), which still reads "Algo Glockenspiel VST3" on a page
-      that is not a VST3.
+- [ ] Bake the wood textures at build time. Still open, and moved rather than changed by the
+      4.3 rewrite: the generator is now `web/src/lib/wood.ts`, still a synchronous 1024x576
+      pixel-by-pixel fill running before first paint and again on every species change. Keep
+      the generator as a build tool.
+- [ ] Fix the printed key hints. `computeNoteLayout` labels the natural bars by their position
+      among the naturals while `computeKeyMap` — what the keyboard listener actually uses —
+      keys on the semitone offset, so from D4 upwards a bar prints a key that strikes a
+      different note. The bug predates the rewrite; 4.3 carried it over verbatim and
+      documented it in `web/src/lib/layout.ts` rather than fixing it silently, so that the
+      port changed nothing but the framework. It belongs here, under "no controls that lie".
+- [x] Accessibility. Done with the React rewrite in 4.3, because retrofitting it into markup
+      that was being replaced anyway would have cost several times more. Bars and keys are
+      real `<button>`s, so click, Enter and Space all strike, and every one carries an
+      `aria-label` — the black and non-C white keys used to have no accessible name at all,
+      46 of the 61. `:focus-visible` outlines are defined for every control; a Tab to a piano
+      key reports a 3 px ring in the browser. The status panel and the fit status are
+      `aria-live="polite"`, and the cost chart — a canvas, opaque to a screen reader —
+      repeats its reading as visually-hidden live text.
+
+      Not done: the Lighthouse ≥ 90 number in this phase's acceptance criteria has not been
+      measured. The individual items above were checked directly instead.
+
+- [x] Wire or remove the inert controls: removed with the rewrite. The hamburger, the
+      one-hardcoded-option preset select and the disabled Save/Load buttons are all gone.
+      Deleting beats shipping controls that lie.
+- [x] Fix the `<h1>`, which still read "Algo Glockenspiel VST3" on a page that is not a VST3.
+      It reads "Algo Glockenspiel".
 
 ## Phase 6: Split Out VST3
 
@@ -637,8 +691,8 @@ Goal: make the docs describe the project that exists.
 Acceptance criteria:
 
 - [x] README describes what the repo actually contains.
-- [ ] The web app is documented. `web/README.md` covers building and serving it; it has no
-      page in `docs/`, which is Phase 7.3.
+- [x] The web app is documented. `web/README.md` covers building, serving and using it, and
+      [docs/web-app.md](docs/web-app.md) covers how it is built and why (Phase 7.3).
 - [ ] `out/` is migrated and removed.
 
 ### Phase 7.1: README
@@ -684,7 +738,13 @@ in a document that is about to move is work thrown away twice.
 
 Goal: document what is undocumented, retire what is finished.
 
-- [ ] Document the web app in `docs/`; it has no page today.
+- [x] Document the web app in `docs/`. [docs/web-app.md](docs/web-app.md): the architecture
+      after the React rewrite, the WASM bridge — the `glockenspielWasm` global, the
+      `__glockenspielWasmReady` handshake and the detached-`ArrayBuffer` hazard behind
+      `interleavedFrames` — the two-step build and why the served root is the dist tree, why
+      routing is hash-based, the Optimize loop, and why Pages cannot fit. `web/README.md`
+      gained an Optimize section, and `docs/serve.md`'s "nothing under `web/` calls any of
+      this yet" is no longer true and no longer says so.
 - [ ] Retire `docs/vst3-evaluation.md` and `docs/vst3go-spike.md` with the 6.3 split, or mark
       them historical. They are the two documents Phase 7.2 deliberately left alone:
       `docs/vst3go-spike.md:62` still lists `internal/model` in a package list, which is the
