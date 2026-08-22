@@ -1,10 +1,11 @@
 // Package server hosts the glockenspiel web app over HTTP.
 //
-// The hand-written part of the app is served from an embedded file system, the
-// generated WebAssembly module from disk. That split exists because web/dist is
-// gitignored and only appears after `just build-web`; see web/embed.go for the
-// reasoning and MissingWasmError below for what a user sees when the build step
-// was skipped.
+// The whole app is served from disk, out of the --dist directory that
+// `just build-web` fills: the React bundle, its content-hashed assets and the
+// WebAssembly module all land there. The binary embeds one page, a placeholder
+// naming the build command, and answers with it when the build is missing; see
+// web/embed.go for why nothing else is embedded and MissingAppError below for
+// what a user sees when the build step was skipped.
 //
 // Fitting over HTTP is Phase 4.2 and lives beside this file: job.go owns the
 // single-slot job manager, fit.go the JSON endpoints, events.go the SSE
@@ -13,7 +14,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -33,16 +33,23 @@ import (
 )
 
 const (
-	// distURLPrefix is where the generated artifacts live in the URL space.
-	// web/main.js fetches "dist/glockenspiel.wasm" relative to the page, so
-	// this path is fixed by the front end, not a free choice.
-	distURLPrefix = "/dist/"
-
 	// wasmFileName is the module scripts/build-wasm.sh writes into web/dist.
 	wasmFileName = "glockenspiel.wasm"
 
-	// indexFileName is served for the site root.
+	// indexFileName is the built page served for the site root. The front end
+	// asks for the module and the manifest by paths relative to it, which is
+	// what lets one bundle work at the server root and under the GitHub Pages
+	// project sub-path.
 	indexFileName = "index.html"
+
+	// assetsDirName is the sub-directory Vite writes the content-hashed
+	// bundle into. Its file names carry the hash, which is what lets the
+	// files under it be cached indefinitely; see cacheControlFor.
+	assetsDirName = "assets"
+
+	// placeholderFileName is the embedded page shown when the build is
+	// missing. It is the only file compiled into the binary.
+	placeholderFileName = "placeholder.html"
 
 	// defaultShutdownTimeout bounds how long a graceful shutdown waits for
 	// in-flight requests before the process gives up on them.
@@ -66,13 +73,13 @@ type Config struct {
 	// Version is reported by the version endpoint.
 	Version string
 
-	// Static is the embedded web tree, rooted so that index.html is at the
-	// top. Pass web.StaticFS().
+	// Static is the embedded fallback tree, rooted so that placeholder.html
+	// is at the top. Pass web.StaticFS().
 	Static fs.FS
 
-	// DistDir is the directory holding the generated WebAssembly module,
-	// normally web/dist. It may be missing on disk; requests for the module
-	// then fail loudly rather than silently.
+	// DistDir is the directory holding the built app and the generated
+	// WebAssembly module, normally web/dist. It may be missing on disk;
+	// requests then fail loudly rather than silently.
 	DistDir string
 
 	// Log receives the startup and shutdown lines. A nil Log discards them.
@@ -124,8 +131,8 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 
-	if _, ok := assets[indexFileName]; !ok {
-		return nil, fmt.Errorf("server: embedded web tree has no %s", indexFileName)
+	if _, ok := assets[placeholderFileName]; !ok {
+		return nil, fmt.Errorf("server: embedded web tree has no %s", placeholderFileName)
 	}
 
 	if cfg.ShutdownTimeout <= 0 {
@@ -200,27 +207,6 @@ func formatETag(sum []byte) string {
 	return `"` + base64.RawURLEncoding.EncodeToString(sum[:16]) + `"`
 }
 
-// MissingWasmError reports why the WebAssembly module cannot be served, or nil
-// when it is in place. Callers use it to warn at startup; the handlers repeat
-// the check per request so that a build finished after startup is picked up
-// without a restart.
-func (s *Server) MissingWasmError() error {
-	if s.config.DistDir == "" {
-		return errors.New("no dist directory configured")
-	}
-
-	info, err := os.Stat(filepath.Join(s.config.DistDir, wasmFileName))
-	if err != nil {
-		return err
-	}
-
-	if info.IsDir() {
-		return fmt.Errorf("%s is a directory", wasmFileName)
-	}
-
-	return nil
-}
-
 // Handler builds the route table.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -240,11 +226,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fit/audio", s.handleFitAudio)
 	mux.HandleFunc("/api/fit/", http.NotFound)
 
-	mux.HandleFunc(distURLPrefix, s.handleDist)
-	// A subtree pattern makes ServeMux redirect "/dist" to "/dist/". Register
-	// the bare path as well so that a request for the directory is the plain
-	// 404 the documentation promises, rather than a 301 into a 404.
-	mux.HandleFunc(strings.TrimSuffix(distURLPrefix, "/"), http.NotFound)
 	mux.HandleFunc("/", s.handleStatic)
 
 	return mux
@@ -271,10 +252,13 @@ func (s *Server) handleVersion(writer http.ResponseWriter, request *http.Request
 	}
 }
 
-// handleStatic serves the embedded tree. Anything that is not a known file is
-// a 404: there is no directory listing and no fallback to index.html, because a
-// silent fallback would turn a mistyped asset path into a page that loads and
-// then misbehaves.
+// handleStatic serves the built app from the dist directory on disk.
+//
+// Anything that is not a file in that tree is a 404: there is no directory
+// listing and no fallback to index.html, because a silent fallback would turn a
+// mistyped asset path into a page that loads and then misbehaves. The front end
+// routes on the URL fragment for exactly that reason -- a fragment never
+// reaches this handler, so a second tab costs no route here.
 func (s *Server) handleStatic(writer http.ResponseWriter, request *http.Request) {
 	if !allowReadMethods(writer, request) {
 		return
@@ -284,33 +268,6 @@ func (s *Server) handleStatic(writer http.ResponseWriter, request *http.Request)
 	if name == "" {
 		name = indexFileName
 	}
-
-	asset, ok := s.assets[name]
-	if !ok {
-		http.NotFound(writer, request)
-
-		return
-	}
-
-	writer.Header().Set("Content-Type", asset.contentType)
-	writer.Header().Set("ETag", asset.etag)
-	// Nothing here is content-addressed -- fingerprinted asset names are
-	// Phase 5.3 -- so the browser must revalidate rather than sit on a stale
-	// copy. The ETag keeps that revalidation down to a 304.
-	writer.Header().Set("Cache-Control", "no-cache")
-
-	// A zero modtime suppresses Last-Modified, which would otherwise be the
-	// build time of the binary and carries no information the ETag lacks.
-	http.ServeContent(writer, request, name, time.Time{}, bytes.NewReader(asset.data))
-}
-
-// handleDist serves the generated artifacts from disk.
-func (s *Server) handleDist(writer http.ResponseWriter, request *http.Request) {
-	if !allowReadMethods(writer, request) {
-		return
-	}
-
-	name := strings.TrimPrefix(request.URL.Path, distURLPrefix)
 
 	// net/http normalises "." and ".." out of the request path before a
 	// handler runs, but it only knows forward slashes. A percent-encoded
@@ -372,19 +329,39 @@ func (s *Server) handleDist(writer http.ResponseWriter, request *http.Request) {
 
 	writer.Header().Set("Content-Type", contentTypeFor(name))
 	writer.Header().Set("ETag", etag)
-	writer.Header().Set("Cache-Control", "no-cache")
+	writer.Header().Set("Cache-Control", cacheControlFor(name))
 	// A zero modtime suppresses Last-Modified, and with it the coarse
 	// If-Modified-Since path; the ETag above is the only validator.
 	http.ServeContent(writer, request, name, time.Time{}, file)
 }
 
-// writeDistError answers a request for an artifact that could not be opened.
+// cacheControlFor picks the caching policy for a file in the dist tree.
 //
-// A missing module is the interesting case: it means a build step was skipped,
-// so it earns a 503 carrying the fix rather than a bare 404 that the browser
-// console would show as an anonymous failed fetch. Everything else -- a
-// permission problem, an I/O error, a symlink leaving the directory -- is not
-// fixed by rebuilding, so it must not send the user to `just build-web`.
+// Vite writes the bundle under assets/ with a content hash in every file name,
+// so those URLs can never change meaning: a rebuild produces new names rather
+// than new bytes behind an old name. They are worth caching for good, which is
+// what "immutable" buys -- the browser stops revalidating them even on a
+// reload.
+//
+// Everything else keeps a fixed name -- index.html, glockenspiel.wasm,
+// manifest.json, wasm_exec.js -- so the browser has to ask whether its copy is
+// still current. The ETag keeps that question down to a 304.
+func cacheControlFor(name string) string {
+	if strings.HasPrefix(name, assetsDirName+"/") {
+		return "public, max-age=31536000, immutable"
+	}
+
+	return "no-cache"
+}
+
+// writeDistError answers a request for a file that could not be opened.
+//
+// Two missing files are the interesting case: index.html and the WebAssembly
+// module. Either means a build step was skipped, so they earn a 503 carrying
+// the fix rather than a bare 404 that the browser console would show as an
+// anonymous failed fetch. Everything else -- a permission problem, an I/O
+// error, a symlink leaving the directory -- is not fixed by rebuilding, so it
+// must not send the user to `just build-web`.
 func (s *Server) writeDistError(writer http.ResponseWriter, request *http.Request, name string, cause error) {
 	if !errors.Is(cause, fs.ErrNotExist) {
 		s.logf("serving %s failed: %v", name, cause)
@@ -393,34 +370,106 @@ func (s *Server) writeDistError(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
-	if name != wasmFileName {
+	switch name {
+	case indexFileName:
+		s.logf("request for %s failed: %v", name, cause)
+		s.writePlaceholder(writer, request)
+
+	case wasmFileName:
+		s.logf("request for %s failed: %v", name, cause)
+
+		writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		writer.Header().Set("Cache-Control", "no-store")
+		writer.WriteHeader(http.StatusServiceUnavailable)
+
+		_, _ = io.WriteString(writer, MissingWasmMessage(s.config.DistDir))
+
+	default:
 		http.NotFound(writer, request)
+	}
+}
+
+// writePlaceholder answers a request for the site root when the app has not
+// been built. It is a page rather than a line of text because it is what a
+// browser lands on, and it is a 503 for the same reason the module's message
+// is -- the file is expected to exist and the fix is a command, not a
+// different URL.
+func (s *Server) writePlaceholder(writer http.ResponseWriter, request *http.Request) {
+	asset, ok := s.assets[placeholderFileName]
+	if !ok {
+		// New refuses to build a server without it, so this is unreachable
+		// short of the map being mutated; answer honestly rather than panic.
+		http.Error(writer, MissingAppMessage(s.config.DistDir), http.StatusServiceUnavailable)
 
 		return
 	}
 
-	s.logf("request for %s failed: %v", name, cause)
-
-	writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	writer.Header().Set("Content-Type", asset.contentType)
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.WriteHeader(http.StatusServiceUnavailable)
 
-	_, _ = io.WriteString(writer, MissingWasmMessage(s.config.DistDir))
+	if request.Method == http.MethodHead {
+		return
+	}
+
+	_, _ = writer.Write(asset.data)
+}
+
+// MissingAppError reports why the built app cannot be served, or nil when it
+// is in place. Callers use it to warn at startup; the handlers repeat the
+// check per request so that a build finished after startup is picked up
+// without a restart.
+func (s *Server) MissingAppError() error {
+	return s.missingFileError(indexFileName)
+}
+
+// MissingWasmError reports the same for the WebAssembly module. The two are
+// separate because they come from separate build steps and either can be
+// missing on its own.
+func (s *Server) MissingWasmError() error {
+	return s.missingFileError(wasmFileName)
+}
+
+func (s *Server) missingFileError(name string) error {
+	if s.config.DistDir == "" {
+		return errors.New("no dist directory configured")
+	}
+
+	info, err := os.Stat(filepath.Join(s.config.DistDir, name))
+	if err != nil {
+		return err
+	}
+
+	if info.IsDir() {
+		return fmt.Errorf("%s is a directory", name)
+	}
+
+	return nil
+}
+
+// MissingAppMessage explains a missing app bundle and names the fix. The same
+// text goes to the terminal at startup and, through the placeholder page, to
+// the browser, so both places say exactly one thing.
+func MissingAppMessage(distDir string) string {
+	return missingBuildMessage(distDir, indexFileName, "The web app has not been built")
 }
 
 // MissingWasmMessage explains a missing WebAssembly module and names the fix.
-// The same text goes to the terminal at startup and to the browser on request,
-// so both places say exactly one thing.
 func MissingWasmMessage(distDir string) string {
+	return missingBuildMessage(distDir, wasmFileName, "The WebAssembly module is missing")
+}
+
+func missingBuildMessage(distDir, name, headline string) string {
 	if distDir == "" {
 		distDir = filepath.FromSlash("web/dist")
 	}
 
 	return fmt.Sprintf(
-		"The WebAssembly module is missing: %s was not found.\n"+
-			"It is a build artifact and is not part of a checkout. Build it with `just build-web` "+
-			"(or ./scripts/build-wasm.sh) and reload this page.\n",
-		filepath.Join(distDir, wasmFileName),
+		"%s: %s was not found.\n"+
+			"It is a build artifact and is not part of a checkout. Build it with "+
+			"`just build-web` and reload this page.\n",
+		headline,
+		filepath.Join(distDir, name),
 	)
 }
 

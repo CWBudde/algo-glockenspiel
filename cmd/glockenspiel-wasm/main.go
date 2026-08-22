@@ -21,7 +21,7 @@ const (
 	namespaceName = "glockenspielWasm"
 
 	// readyCallbackName is the hook the page installs before it starts the Go
-	// runtime. Invoking it is the happens-after edge that web/main.js used to
+	// runtime. Invoking it is the happens-after edge that the front end used to
 	// approximate with a 50 ms sleep: it fires from Go once every export is in
 	// place, so there is no window in which the namespace exists but is only
 	// half-populated.

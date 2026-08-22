@@ -8,115 +8,19 @@
       name="description"
       content="Play the physical-model glockenspiel in your browser with a piano-aligned instrument view."
     />
-    <link rel="stylesheet" href="styles.css" />
   </head>
   <body data-ui-surface="web">
-    <main class="studio-shell">
-      <header class="studio-topbar">
-        <div class="brand">
-          <img src="assets/glockenmark.svg" alt="" class="brand-mark" />
-          <div>
-            <p class="brand-kicker">Physical Model Instrument</p>
-            <h1>Algo Glockenspiel VST3</h1>
-          </div>
-        </div>
+    <div id="root"></div>
 
-        <button class="menu-button" type="button" aria-label="Open menu">
-          <span></span><span></span><span></span>
-        </button>
-      </header>
-
-      <section class="preset-strip" aria-label="Preset controls">
-        <label class="preset-field">
-          <span>Preset</span>
-          <select id="preset-select">
-            <option>Default Concert Glockenspiel</option>
-          </select>
-        </label>
-
-        <label class="preset-field">
-          <span>Wood</span>
-          <select id="wood-species" aria-label="Wood species"></select>
-        </label>
-
-        <button type="button" class="preset-action" disabled>Save</button>
-        <button type="button" class="preset-action" disabled>Load</button>
-        <p class="preset-note" id="wood-note">
-          Preset browser wiring is still pending.
-        </p>
-      </section>
-
-      <section class="instrument-card">
-        <div class="instrument-main">
-          <aside class="control-rail" aria-label="Performance controls">
-            <label class="dial-control" for="gain">
-              <span class="dial-label">Volume</span>
-              <div class="dial-assembly">
-                <input
-                  id="gain"
-                  class="dial-input"
-                  type="range"
-                  min="10"
-                  max="100"
-                  value="70"
-                />
-                <div class="dial-face" data-dial-face>
-                  <div class="dial-indicator"></div>
-                </div>
-              </div>
-              <output id="gain-value" for="gain">70%</output>
-            </label>
-
-            <label class="dial-control" for="velocity">
-              <span class="dial-label">Velocity</span>
-              <div class="dial-assembly dial-assembly-small">
-                <input
-                  id="velocity"
-                  class="dial-input"
-                  type="range"
-                  min="1"
-                  max="127"
-                  value="96"
-                />
-                <div class="dial-face" data-dial-face>
-                  <div class="dial-indicator"></div>
-                </div>
-              </div>
-              <output id="velocity-value" for="velocity">96</output>
-            </label>
-
-            <p id="status" class="status-panel">Loading WebAssembly...</p>
-          </aside>
-
-          <section class="instrument-stage" aria-label="Playable glockenspiel">
-            <div class="rack-wrap">
-              <div class="rack-shadow"></div>
-              <div class="rack">
-                <div class="rail rail-sharp-back"></div>
-                <div class="rail rail-sharp-front"></div>
-                <div class="rail rail-natural-back"></div>
-                <div class="rail rail-natural-front"></div>
-                <div
-                  class="note-lane note-lane-sharps"
-                  id="bars-accidental"
-                ></div>
-                <div
-                  class="note-lane note-lane-naturals"
-                  id="bars-natural"
-                ></div>
-                <img src="assets/mallet.svg" alt="" class="mallet" />
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <section class="keyboard-panel" aria-label="Piano alignment">
-          <div class="keyboard" id="piano"></div>
-        </section>
-      </section>
-    </main>
-
-    <script src="wasm_exec.js"></script>
-    <script src="main.js" type="module"></script>
+    <!--
+      wasm_exec.js is vendored from the Go toolchain and must stay
+      byte-identical to it -- scripts/build-wasm.sh refuses to build when it
+      drifts, because the shim and the module share an ABI. It is therefore a
+      classic script rather than a module import: nothing bundles it, nothing
+      transforms it, and it publishes the `Go` constructor the app expects to
+      find before it starts.
+    -->
+    <script src="./wasm_exec.js"></script>
+    <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>

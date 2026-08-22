@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,13 +20,39 @@ import (
 	"github.com/cwbudde/glockenspiel/web"
 )
 
-// testTree stands in for the embedded web tree: one page, one script, one
-// nested asset, which is enough to exercise routing, ETags and listings.
+// testTree stands in for the embedded tree, which now holds exactly one file:
+// the page shown when the app has not been built.
 func testTree() fstest.MapFS {
 	return fstest.MapFS{
-		"index.html":             &fstest.MapFile{Data: []byte("<!doctype html><title>glockenspiel</title>")},
-		"main.js":                &fstest.MapFile{Data: []byte("// main")},
-		"assets/glockenmark.svg": &fstest.MapFile{Data: []byte("<svg/>")},
+		"placeholder.html": &fstest.MapFile{
+			Data: []byte("<!doctype html><title>not built</title><p>Run just build-web</p>"),
+		},
+	}
+}
+
+// testDist stands in for a built web/dist: one page, one bundle, one nested
+// asset, which is enough to exercise routing, ETags and listings.
+func testDist(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	write(t, dir, "index.html", "<!doctype html><title>glockenspiel</title>")
+	write(t, dir, "assets/index-abc123.js", "// main")
+	write(t, dir, "assets/glockenmark.svg", "<svg/>")
+
+	return dir
+}
+
+func write(t *testing.T, dir, name, body string) {
+	t.Helper()
+
+	full := filepath.Join(dir, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
+		t.Fatalf("mkdir for %s: %v", name, err)
+	}
+
+	if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+		t.Fatalf("write %s: %v", name, err)
 	}
 }
 
@@ -62,12 +89,12 @@ func TestNewRejectsUnusableConfig(t *testing.T) {
 
 	empty := fstest.MapFS{"main.js": &fstest.MapFile{Data: []byte("// main")}}
 	if _, err := server.New(server.Config{Static: empty}); err == nil {
-		t.Fatal("expected a tree without index.html to fail")
+		t.Fatal("expected a tree without placeholder.html to fail")
 	}
 }
 
 func TestStaticRoutes(t *testing.T) {
-	handler := newTestServer(t, t.TempDir()).Handler()
+	handler := newTestServer(t, testDist(t)).Handler()
 
 	tests := []struct {
 		name        string
@@ -78,10 +105,10 @@ func TestStaticRoutes(t *testing.T) {
 	}{
 		{name: "root serves index", target: "/", wantStatus: http.StatusOK, wantType: "text/html; charset=utf-8", wantContent: "glockenspiel"},
 		{name: "index by name", target: "/index.html", wantStatus: http.StatusOK, wantType: "text/html; charset=utf-8", wantContent: "glockenspiel"},
-		{name: "script", target: "/main.js", wantStatus: http.StatusOK, wantType: "text/javascript; charset=utf-8", wantContent: "// main"},
+		{name: "bundle", target: "/assets/index-abc123.js", wantStatus: http.StatusOK, wantType: "text/javascript; charset=utf-8", wantContent: "// main"},
 		{name: "nested asset", target: "/assets/glockenmark.svg", wantStatus: http.StatusOK, wantType: "image/svg+xml", wantContent: "<svg/>"},
 		{name: "unknown file", target: "/nope.js", wantStatus: http.StatusNotFound},
-		{name: "embed.go is not part of the tree", target: "/embed.go", wantStatus: http.StatusNotFound},
+		{name: "source is not part of the served tree", target: "/embed.go", wantStatus: http.StatusNotFound},
 	}
 
 	for _, testCase := range tests {
@@ -119,9 +146,9 @@ func TestStaticRoutes(t *testing.T) {
 // server is a file browser. Neither a directory nor its trailing-slash form may
 // produce one.
 func TestNoDirectoryListing(t *testing.T) {
-	handler := newTestServer(t, t.TempDir()).Handler()
+	handler := newTestServer(t, testDist(t)).Handler()
 
-	for _, target := range []string{"/assets", "/assets/", "/dist/", "/dist"} {
+	for _, target := range []string{"/assets", "/assets/"} {
 		response := get(t, handler, target)
 
 		body, err := io.ReadAll(response.Body)
@@ -169,7 +196,7 @@ func TestVersionEndpoint(t *testing.T) {
 }
 
 func TestStaticRevalidatesWithETag(t *testing.T) {
-	handler := newTestServer(t, t.TempDir()).Handler()
+	handler := newTestServer(t, testDist(t)).Handler()
 
 	first := get(t, handler, "/index.html")
 	_ = first.Body.Close()
@@ -194,18 +221,34 @@ func TestStaticRevalidatesWithETag(t *testing.T) {
 	}
 }
 
-func TestWasmServedFromDisk(t *testing.T) {
-	distDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(distDir, "glockenspiel.wasm"), []byte("\x00asm"), 0o600); err != nil {
-		t.Fatalf("write wasm: %v", err)
+func TestHashedAssetsCacheForever(t *testing.T) {
+	handler := newTestServer(t, testDist(t)).Handler()
+
+	response := get(t, handler, "/assets/index-abc123.js")
+	_ = response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.StatusCode)
 	}
+
+	// The name carries Vite's content hash, so the URL can never change
+	// meaning and the browser has nothing left to revalidate.
+	const want = "public, max-age=31536000, immutable"
+	if got := response.Header.Get("Cache-Control"); got != want {
+		t.Fatalf("cache control = %q, want %q", got, want)
+	}
+}
+
+func TestWasmServedFromDisk(t *testing.T) {
+	distDir := testDist(t)
+	write(t, distDir, "glockenspiel.wasm", "\x00asm")
 
 	srv := newTestServer(t, distDir)
 	if err := srv.MissingWasmError(); err != nil {
 		t.Fatalf("expected the module to be found: %v", err)
 	}
 
-	response := get(t, srv.Handler(), "/dist/glockenspiel.wasm")
+	response := get(t, srv.Handler(), "/glockenspiel.wasm")
 	defer func() {
 		_ = response.Body.Close()
 	}()
@@ -222,14 +265,16 @@ func TestWasmServedFromDisk(t *testing.T) {
 // The whole point of not embedding web/dist: a missing module must say what to
 // do about it instead of failing as an anonymous 404.
 func TestMissingWasmExplainsTheFix(t *testing.T) {
-	distDir := t.TempDir()
+	// The app is built, only the module is not: the page must still load, so
+	// the browser reaches the JavaScript that surfaces the message.
+	distDir := testDist(t)
 
 	srv := newTestServer(t, distDir)
 	if srv.MissingWasmError() == nil {
 		t.Fatal("expected a missing module to be reported")
 	}
 
-	response := get(t, srv.Handler(), "/dist/glockenspiel.wasm")
+	response := get(t, srv.Handler(), "/glockenspiel.wasm")
 
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
@@ -246,8 +291,6 @@ func TestMissingWasmExplainsTheFix(t *testing.T) {
 		t.Fatalf("body = %q, want it to name the fix", body)
 	}
 
-	// The page itself still loads, so the browser reaches the JavaScript that
-	// surfaces the message rather than showing nothing at all.
 	index := get(t, srv.Handler(), "/")
 	_ = index.Body.Close()
 
@@ -257,7 +300,48 @@ func TestMissingWasmExplainsTheFix(t *testing.T) {
 
 	// Some other missing artifact is an ordinary 404: only the module gets
 	// the build-step explanation.
-	other := get(t, srv.Handler(), "/dist/other.bin")
+	other := get(t, srv.Handler(), "/other.bin")
+	_ = other.Body.Close()
+
+	if other.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", other.StatusCode)
+	}
+}
+
+// A dist directory with no index.html means `just build-web` was never run.
+// The root must then answer with the embedded placeholder -- a real page, a
+// 503, and the command that fixes it -- rather than a bare 404.
+func TestMissingAppServesThePlaceholder(t *testing.T) {
+	srv := newTestServer(t, t.TempDir())
+
+	if srv.MissingAppError() == nil {
+		t.Fatal("expected a missing app to be reported")
+	}
+
+	response := get(t, srv.Handler(), "/")
+
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	_ = response.Body.Close()
+
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", response.StatusCode)
+	}
+
+	if got := response.Header.Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Fatalf("content type = %q, want HTML", got)
+	}
+
+	if !strings.Contains(string(body), "just build-web") {
+		t.Fatalf("body = %q, want it to name the fix", body)
+	}
+
+	// Only the root gets the page. Any other missing file stays an ordinary
+	// 404, so a mistyped asset path is not answered with a page that loads.
+	other := get(t, srv.Handler(), "/assets/index-abc123.js")
 	_ = other.Body.Close()
 
 	if other.StatusCode != http.StatusNotFound {
@@ -269,10 +353,9 @@ func TestMissingWasmExplainsTheFix(t *testing.T) {
 // they point at. net/http normalises "../" segments before the handler runs, so
 // this pins the outcome rather than the mechanism: whatever the status, the
 // content outside dist stays unreachable.
-// A subtree pattern would otherwise have ServeMux redirect "/dist" to
-// "/dist/"; the documentation promises a plain 404 for a directory.
-func TestDistDirectoryIsNotRedirected(t *testing.T) {
-	response := get(t, newTestServer(t, t.TempDir()).Handler(), "/dist")
+// The documentation promises a plain 404 for a directory, not a 301 into one.
+func TestDirectoryIsNotRedirected(t *testing.T) {
+	response := get(t, newTestServer(t, testDist(t)).Handler(), "/assets")
 	defer func() {
 		_ = response.Body.Close()
 	}()
@@ -283,7 +366,7 @@ func TestDistDirectoryIsNotRedirected(t *testing.T) {
 }
 
 func TestDistRefusesEscapingPaths(t *testing.T) {
-	distDir := t.TempDir()
+	distDir := testDist(t)
 	outsideDir := filepath.Dir(distDir)
 
 	const secret = "TOP-LEVEL-SECRET"
@@ -298,12 +381,12 @@ func TestDistRefusesEscapingPaths(t *testing.T) {
 	// the backslash as a separator again after net/http normalised only the
 	// forward slashes. They must be refused on every platform all the same.
 	targets := []string{
-		"/dist/../outside.txt",
-		"/dist/%2e%2e/outside.txt",
-		"/dist/sub/../../outside.txt",
-		"/dist/..%5coutside.txt",
-		"/dist/%2e%2e%5coutside.txt",
-		"/dist/%5c..%5coutside.txt",
+		"/../outside.txt",
+		"/%2e%2e/outside.txt",
+		"/sub/../../outside.txt",
+		"/..%5coutside.txt",
+		"/%2e%2e%5coutside.txt",
+		"/%5c..%5coutside.txt",
 	}
 
 	for _, target := range targets {
@@ -327,9 +410,9 @@ func TestDistRefusesEscapingPaths(t *testing.T) {
 }
 
 func TestWriteMethodsRejected(t *testing.T) {
-	handler := newTestServer(t, t.TempDir()).Handler()
+	handler := newTestServer(t, testDist(t)).Handler()
 
-	for _, target := range []string{"/", "/api/version", "/dist/glockenspiel.wasm"} {
+	for _, target := range []string{"/", "/api/version", "/glockenspiel.wasm"} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, target, nil))
 
@@ -439,21 +522,43 @@ func waitForListenAddress(t *testing.T, log *syncBuffer) string {
 	return ""
 }
 
-// The embedded tree must actually contain what the page asks for; an empty or
-// partial embed would otherwise only show up in a browser.
+// The real embedded tree must carry the placeholder and nothing else. An empty
+// embed would otherwise only show up in a browser, and a stray file in there
+// would mean a build artifact had crept back into the binary.
 func TestEmbeddedTreeIsComplete(t *testing.T) {
-	handler := newTestServerWithRealTree(t).Handler()
+	srv := newTestServerWithRealTree(t)
 
-	for _, target := range []string{
-		"/", "/index.html", "/main.js", "/ui.js", "/wood-texture.js",
-		"/styles.css", "/wasm_exec.js", "/assets/glockenmark.svg",
-	} {
-		response := get(t, handler, target)
-		_ = response.Body.Close()
+	// t.TempDir gives it an unbuilt dist, so the root falls back to the
+	// embedded page and proves it is really in the binary.
+	response := get(t, srv.Handler(), "/")
 
-		if response.StatusCode != http.StatusOK {
-			t.Fatalf("%s = %d, want 200", target, response.StatusCode)
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	_ = response.Body.Close()
+
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", response.StatusCode)
+	}
+
+	if !strings.Contains(string(body), "just build-web") {
+		t.Fatalf("placeholder = %q, want it to name the build command", body)
+	}
+
+	entries, err := fs.ReadDir(web.StaticFS(), ".")
+	if err != nil {
+		t.Fatalf("read embedded tree: %v", err)
+	}
+
+	if len(entries) != 1 || entries[0].Name() != "placeholder.html" {
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
 		}
+
+		t.Fatalf("embedded tree = %v, want only placeholder.html", names)
 	}
 }
 
@@ -479,7 +584,7 @@ func newTestServerWithRealTree(t *testing.T) *server.Server {
 // validator would answer 304 here and the browser would keep running the old
 // bytes; the ETag is derived from the content instead.
 func TestWasmRevalidatesByContentNotModTime(t *testing.T) {
-	distDir := t.TempDir()
+	distDir := testDist(t)
 	wasmPath := filepath.Join(distDir, "glockenspiel.wasm")
 
 	if err := os.WriteFile(wasmPath, []byte("\x00asm-one"), 0o600); err != nil {
@@ -488,7 +593,7 @@ func TestWasmRevalidatesByContentNotModTime(t *testing.T) {
 
 	handler := newTestServer(t, distDir).Handler()
 
-	first := get(t, handler, "/dist/glockenspiel.wasm")
+	first := get(t, handler, "/glockenspiel.wasm")
 	_ = first.Body.Close()
 
 	etag := first.Header.Get("ETag")
@@ -497,7 +602,7 @@ func TestWasmRevalidatesByContentNotModTime(t *testing.T) {
 	}
 
 	// Unchanged content revalidates cheaply.
-	unchanged := getWithETag(t, handler, "/dist/glockenspiel.wasm", etag)
+	unchanged := getWithETag(t, handler, "/glockenspiel.wasm", etag)
 	if unchanged.Code != http.StatusNotModified {
 		t.Fatalf("status = %d, want 304 for unchanged content", unchanged.Code)
 	}
@@ -517,7 +622,7 @@ func TestWasmRevalidatesByContentNotModTime(t *testing.T) {
 		t.Fatalf("chtimes: %v", err)
 	}
 
-	rebuilt := getWithETag(t, handler, "/dist/glockenspiel.wasm", etag)
+	rebuilt := getWithETag(t, handler, "/glockenspiel.wasm", etag)
 	if rebuilt.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 after a same-second rebuild", rebuilt.Code)
 	}
@@ -554,7 +659,7 @@ func TestUnreadableWasmIsNotReportedAsMissing(t *testing.T) {
 		t.Fatalf("write wasm: %v", err)
 	}
 
-	response := get(t, newTestServer(t, distDir).Handler(), "/dist/glockenspiel.wasm")
+	response := get(t, newTestServer(t, distDir).Handler(), "/glockenspiel.wasm")
 
 	body, err := io.ReadAll(response.Body)
 	if err != nil {

@@ -27,6 +27,7 @@ excludes = [
     "bin/**",
     "dist/**",
     "web/dist/**",
+    "web/node_modules/**",
     "web/wasm_exec.js",
     "*.test",
     "coverage.out",
@@ -68,6 +69,8 @@ includes = [
     "*.yml",
     "*.json",
     "*.js",
+    "*.ts",
+    "*.tsx",
     "*.css",
     "*.html",
 ]

@@ -28,3 +28,6 @@ jobs:
 
   test-wasm:
     uses: ./.github/workflows/test-wasm.yaml
+
+  test-web:
+    uses: ./.github/workflows/test-web.yaml

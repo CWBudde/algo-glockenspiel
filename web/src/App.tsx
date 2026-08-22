@@ -1,0 +1,59 @@
+import { useEffect, useState } from "react";
+
+import { useAudioEngine } from "./audio/useAudioEngine";
+import { useWasmEngine } from "./audio/useWasmEngine";
+import { Topbar } from "./components/Topbar";
+import { OptimizePage } from "./routes/OptimizePage";
+import { PlayPage } from "./routes/PlayPage";
+import { parseRoute, type Route } from "./routes/routes";
+
+/** The dial reads 10..100; the engine takes a linear gain of 0.1..1.0. */
+function gainFromPercent(percent: number): number {
+  return Math.min(1, Math.max(0.1, percent / 100));
+}
+
+export function App() {
+  const [route, setRoute] = useState<Route>(() =>
+    parseRoute(window.location.hash),
+  );
+  const [gainPercent, setGainPercent] = useState(70);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      setRoute(parseRoute(window.location.hash));
+    };
+
+    window.addEventListener("hashchange", onHashChange);
+
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+    };
+  }, []);
+
+  // The engine lives here rather than in PlayPage: switching to Optimize
+  // unmounts the play surface, and neither the Go runtime nor a ringing note
+  // should die because the user looked at another tab.
+  const wasmEngine = useWasmEngine();
+  const audio = useAudioEngine(
+    wasmEngine.wasm,
+    wasmEngine.memoryRef,
+    gainFromPercent(gainPercent),
+  );
+
+  return (
+    <main className="studio-shell">
+      <Topbar route={route} />
+
+      {route === "play" ? (
+        <PlayPage
+          wasmEngine={wasmEngine}
+          audio={audio}
+          gain={gainPercent}
+          onGainChange={setGainPercent}
+        />
+      ) : (
+        <OptimizePage />
+      )}
+    </main>
+  );
+}

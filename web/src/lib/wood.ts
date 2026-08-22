@@ -1,10 +1,109 @@
+// Procedural wood panel texture, ported from web/wood-texture.js unchanged
+// apart from its types. It is a tangential slice through cylindrical tree
+// space: growth rings, z-driven distortion, longitudinal pores and radial rays,
+// shaded through a Beer-Lambert absorption term.
+//
+// It is still a synchronous 1024x576 fill on the main thread, run once per
+// species and then cached as a data URL. Baking the textures at build time is
+// Phase 5.4's item, not this port's.
+
+import woodPanelFallback from "../../assets/wood-panel.svg";
+
+/** An RGB triple, in 0..1 for the shading maths and 0..255 once quantised. */
+type Vec3 = [number, number, number];
+
+/** A point in tree space: x/y across the trunk, z along it. */
+interface Point3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface Polar {
+  r: number;
+  theta: number;
+  rx: number;
+  ry: number;
+  tx: number;
+  ty: number;
+}
+
+interface Distortion {
+  mr: number;
+  mt: number;
+  dmrDz: number;
+  dmtDz: number;
+}
+
+interface Season {
+  latewood: number;
+  earlywood: number;
+  ringNoise: number;
+}
+
+interface Ring extends Season {
+  detail: number;
+}
+
+interface Weighted {
+  weight: number;
+}
+
+/** Every knob the sampler reads. Species presets override a subset of these. */
+interface WoodPreset {
+  boardWidthCm: number;
+  boardHeightCm: number;
+  tangentOffsetCm: number;
+  ringSpacingCm: number;
+  ringWidthJitter: number;
+  latewoodThreshold: number;
+  latewoodTransition: number;
+  beerBase: Vec3;
+  alphaBase: number;
+  alphaLatewood: number;
+  alphaRingNoise: number;
+  alphaDetailNoise: number;
+  poreCellCm: number;
+  poreRadiusEarlyCm: number;
+  poreRadiusLateCm: number;
+  poreDensity: number;
+  poreDarkening: number;
+  rayThetaCell: number;
+  rayHeightCm: number;
+  rayWidthCm: number;
+  rayLengthCm: number;
+  rayStrength: number;
+  rippleAmpCm: number;
+  rippleFreqZ: number;
+  rippleFreqCirc: number;
+  ripple2AmpCm: number;
+  ripple2FreqZ: number;
+  ripple2FreqCirc: number;
+  tangentialAmpCm: number;
+  tangentialFreqZ: number;
+  tangentialFreqCirc: number;
+  finishHighlight: number;
+}
+
+/** A named species: display metadata plus the knobs it moves. */
+interface SpeciesPreset extends Partial<WoodPreset> {
+  name: string;
+  description: string;
+}
+
+export interface WoodSpeciesOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
 const TEXTURE_WIDTH = 1024;
 const TEXTURE_HEIGHT = 576;
 const SEED = 918273;
 
 // The panel texture is a tangential slice through cylindrical tree space:
 // growth rings, z-driven distortion, longitudinal pores, and radial rays.
-const BASE_PRESET = {
+const BASE_PRESET: WoodPreset = {
   boardWidthCm: 56,
   boardHeightCm: 31.5,
   tangentOffsetCm: 12.2,
@@ -39,7 +138,7 @@ const BASE_PRESET = {
   finishHighlight: 0.1,
 };
 
-const SPECIES_PRESETS = {
+const SPECIES_PRESETS: Record<string, SpeciesPreset> = {
   beech: {
     name: "Beech",
     description:
@@ -175,17 +274,17 @@ const SPECIES_PRESETS = {
 };
 
 const DEFAULT_SPECIES = "beech";
-const textureCache = new Map();
+const textureCache = new Map<string, string>();
 
-const LIGHT_DIR = normalize3([-0.35, 0.92, 0.18]);
-const VIEW_DIR = normalize3([0.08, 0.97, 0.24]);
-const HALF_DIR = normalize3([
+const LIGHT_DIR: Vec3 = normalize3([-0.35, 0.92, 0.18]);
+const VIEW_DIR: Vec3 = normalize3([0.08, 0.97, 0.24]);
+const HALF_DIR: Vec3 = normalize3([
   LIGHT_DIR[0] + VIEW_DIR[0],
   LIGHT_DIR[1] + VIEW_DIR[1],
   LIGHT_DIR[2] + VIEW_DIR[2],
 ]);
 
-export function getWoodSpeciesOptions() {
+export function getWoodSpeciesOptions(): WoodSpeciesOption[] {
   return Object.entries(SPECIES_PRESETS).map(([id, preset]) => ({
     id,
     label: preset.name,
@@ -193,7 +292,10 @@ export function getWoodSpeciesOptions() {
   }));
 }
 
-export function applyWoodTexture(root = null, species = DEFAULT_SPECIES) {
+export function applyWoodTexture(
+  root: HTMLElement | null = null,
+  species: string = DEFAULT_SPECIES,
+): void {
   if (typeof document === "undefined") {
     return;
   }
@@ -214,18 +316,23 @@ export function applyWoodTexture(root = null, species = DEFAULT_SPECIES) {
   target.dataset.woodSpecies = resolvedSpecies;
 }
 
-function resolvePreset(species) {
-  return { ...BASE_PRESET, ...SPECIES_PRESETS[species] };
+function resolvePreset(species: string): WoodPreset {
+  // Bound to a local rather than returned as a literal: the species preset
+  // carries `name` and `description` on top of the knobs, and an object
+  // literal returned directly would be rejected for those extra properties.
+  const merged = { ...BASE_PRESET, ...SPECIES_PRESETS[species] };
+
+  return merged;
 }
 
-function createWoodTexture(preset) {
+function createWoodTexture(preset: WoodPreset): string {
   const canvas = document.createElement("canvas");
   canvas.width = TEXTURE_WIDTH;
   canvas.height = TEXTURE_HEIGHT;
 
   const context = canvas.getContext("2d", { alpha: false });
   if (!context) {
-    return "assets/wood-panel.svg";
+    return woodPanelFallback;
   }
 
   const image = context.createImageData(TEXTURE_WIDTH, TEXTURE_HEIGHT);
@@ -248,7 +355,7 @@ function createWoodTexture(preset) {
   return canvas.toDataURL("image/png");
 }
 
-function sampleBoard(preset, u, v) {
+function sampleBoard(preset: WoodPreset, u: number, v: number): Vec3 {
   const point = boardToTree(preset, u, v);
   const distorted = distortPoint(preset, point);
   const ring = sampleGrowthRing(preset, distorted);
@@ -268,7 +375,7 @@ function sampleBoard(preset, u, v) {
   const beerColor = beerShade(preset.beerBase, alpha);
   const figure = sampleFigureHighlight(fiber, ray.weight, ring.earlywood);
 
-  let color = [
+  let color: Vec3 = [
     beerColor[0] * (0.98 + 0.07 * ring.detail),
     beerColor[1] * (0.98 + 0.06 * ring.detail),
     beerColor[2] * (0.98 + 0.05 * ring.detail),
@@ -290,7 +397,7 @@ function sampleBoard(preset, u, v) {
   ];
 }
 
-function boardToTree(preset, u, v) {
+function boardToTree(preset: WoodPreset, u: number, v: number): Point3 {
   return {
     x: (u - 0.5) * preset.boardWidthCm,
     y: preset.tangentOffsetCm,
@@ -298,7 +405,7 @@ function boardToTree(preset, u, v) {
   };
 }
 
-function distortPoint(preset, point) {
+function distortPoint(preset: WoodPreset, point: Point3): Point3 {
   const polar = toPolar(point.x, point.y);
   const distortion = distortionField(preset, polar.r, polar.theta, point.z);
   return {
@@ -308,7 +415,12 @@ function distortPoint(preset, point) {
   };
 }
 
-function distortionField(preset, r, theta, z) {
+function distortionField(
+  preset: WoodPreset,
+  r: number,
+  theta: number,
+  z: number,
+): Distortion {
   const circum = r * theta;
   const phase1 = z * preset.rippleFreqZ + circum * preset.rippleFreqCirc;
   const phase2 = z * preset.ripple2FreqZ - circum * preset.ripple2FreqCirc;
@@ -342,7 +454,7 @@ function distortionField(preset, r, theta, z) {
   return { mr, mt, dmrDz, dmtDz };
 }
 
-function sampleGrowthRing(preset, point) {
+function sampleGrowthRing(preset: WoodPreset, point: Point3): Ring {
   const season = sampleSeason(preset, point.x, point.y);
   const detail = anisotropicNoise(point.x * 0.7, point.z * 1.9, SEED + 167, 3);
 
@@ -354,7 +466,7 @@ function sampleGrowthRing(preset, point) {
   };
 }
 
-function samplePores(preset, point) {
+function samplePores(preset: WoodPreset, point: Point3): Weighted {
   const cell = preset.poreCellCm;
   const cellX = Math.floor(point.x / cell);
   const cellY = Math.floor(point.y / cell);
@@ -390,7 +502,7 @@ function samplePores(preset, point) {
   return { weight: Math.min(1, weight) };
 }
 
-function sampleRays(preset, point) {
+function sampleRays(preset: WoodPreset, point: Point3): Weighted {
   const polar = toPolar(point.x, point.y);
   const thetaCell = preset.rayThetaCell;
   const zCell = preset.rayHeightCm;
@@ -427,7 +539,7 @@ function sampleRays(preset, point) {
   return { weight: Math.min(1, weight) };
 }
 
-function sampleFiberDirection(preset, point) {
+function sampleFiberDirection(preset: WoodPreset, point: Point3): Vec3 {
   const polar = toPolar(point.x, point.y);
   const distortion = distortionField(preset, polar.r, polar.theta, point.z);
   const fx = -(distortion.dmrDz * polar.rx + distortion.dmtDz * polar.tx);
@@ -435,7 +547,11 @@ function sampleFiberDirection(preset, point) {
   return normalize3([fx, fy, 1]);
 }
 
-function sampleFigureHighlight(fiber, rayWeight, earlywood) {
+function sampleFigureHighlight(
+  fiber: Vec3,
+  rayWeight: number,
+  earlywood: number,
+): number {
   const tangentFiber = normalize3([fiber[0], 0, fiber[2]]);
   const tangentHalf = normalize3([HALF_DIR[0], 0, HALF_DIR[2]]);
   const alignment = Math.max(0, dot3(tangentFiber, tangentHalf));
@@ -446,7 +562,7 @@ function sampleFigureHighlight(fiber, rayWeight, earlywood) {
   );
 }
 
-function beerShade(base, alpha) {
+function beerShade(base: Vec3, alpha: number): Vec3 {
   return [
     Math.pow(base[0], alpha),
     Math.pow(base[1], alpha),
@@ -454,12 +570,12 @@ function beerShade(base, alpha) {
   ];
 }
 
-function darken(color, amount) {
+function darken(color: Vec3, amount: number): Vec3 {
   const factor = Math.max(0, 1 - amount);
   return [color[0] * factor, color[1] * factor, color[2] * factor];
 }
 
-function lighten(color, amount) {
+function lighten(color: Vec3, amount: number): Vec3 {
   if (amount <= 0) {
     return darken(color, -amount);
   }
@@ -470,21 +586,26 @@ function lighten(color, amount) {
   ];
 }
 
-function wyvill(q) {
+function wyvill(q: number): number {
   const q2 = q * q;
   const t = Math.max(0, 1 - q2);
   return t * t * t;
 }
 
-function anisotropicNoise(x, y, seed, octaves) {
+function anisotropicNoise(
+  x: number,
+  y: number,
+  seed: number,
+  octaves: number,
+): number {
   return fbm(x, y * 0.55, seed, octaves);
 }
 
-function lowFreqNoise(x, y, seed) {
+function lowFreqNoise(x: number, y: number, seed: number): number {
   return fbm(x, y, seed, 2);
 }
 
-function sampleSeason(preset, x, y) {
+function sampleSeason(preset: WoodPreset, x: number, y: number): Season {
   const polar = toPolar(x, y);
   const widthNoise =
     1 + preset.ringWidthJitter * ringNoise(polar.r * 0.33, SEED + 151);
@@ -504,7 +625,7 @@ function sampleSeason(preset, x, y) {
   };
 }
 
-function ringNoise(x, seed) {
+function ringNoise(x: number, seed: number): number {
   const x0 = Math.floor(x);
   const x1 = x0 + 1;
   const t = smoothstep01(x - x0);
@@ -513,7 +634,7 @@ function ringNoise(x, seed) {
   return lerp(a, b, t);
 }
 
-function fbm(x, y, seed, octaves) {
+function fbm(x: number, y: number, seed: number, octaves: number): number {
   let amplitude = 0.5;
   let frequency = 1;
   let sum = 0;
@@ -530,7 +651,7 @@ function fbm(x, y, seed, octaves) {
   return sum / (norm || 1);
 }
 
-function valueNoise(x, y, seed) {
+function valueNoise(x: number, y: number, seed: number): number {
   const x0 = Math.floor(x);
   const y0 = Math.floor(y);
   const xf = x - x0;
@@ -548,7 +669,7 @@ function valueNoise(x, y, seed) {
   return lerp(top, bottom, v) * 2 - 1;
 }
 
-function toPolar(x, y) {
+function toPolar(x: number, y: number): Polar {
   const r = Math.max(1e-4, Math.hypot(x, y));
   const theta = Math.atan2(y, x);
   return {
@@ -561,16 +682,16 @@ function toPolar(x, y) {
   };
 }
 
-function normalize3(vector) {
+function normalize3(vector: Vec3): Vec3 {
   const length = Math.hypot(vector[0], vector[1], vector[2]) || 1;
   return [vector[0] / length, vector[1] / length, vector[2] / length];
 }
 
-function dot3(a, b) {
+function dot3(a: Vec3, b: Vec3): number {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
-function hash1(x, seed) {
+function hash1(x: number, seed: number): number {
   let h = Math.imul(x | 0, 374761393);
   h ^= Math.imul(seed | 0, 1442695041);
   h ^= h >>> 13;
@@ -579,7 +700,7 @@ function hash1(x, seed) {
   return (h >>> 0) / 4294967296;
 }
 
-function hash2(x, y, seed) {
+function hash2(x: number, y: number, seed: number): number {
   let h = Math.imul(x | 0, 374761393);
   h = Math.imul(h ^ Math.imul(y | 0, 668265263), 1274126177);
   h ^= Math.imul(seed | 0, 1442695041);
@@ -589,23 +710,23 @@ function hash2(x, y, seed) {
   return (h >>> 0) / 4294967296;
 }
 
-function fract(value) {
+function fract(value: number): number {
   return value - Math.floor(value);
 }
 
-function smoothstep(edge0, edge1, value) {
+function smoothstep(edge0: number, edge1: number, value: number): number {
   const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0 || 1)));
   return t * t * (3 - 2 * t);
 }
 
-function smoothstep01(value) {
+function smoothstep01(value: number): number {
   return value * value * (3 - 2 * value);
 }
 
-function lerp(a, b, t) {
+function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
-function clamp255(value) {
+function clamp255(value: number): number {
   return Math.max(0, Math.min(255, Math.round(value)));
 }
