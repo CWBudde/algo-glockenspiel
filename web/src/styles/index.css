@@ -757,7 +757,12 @@ h1 {
     overflow-x: auto;
     overflow-y: hidden;
     overscroll-behavior-x: contain;
-    touch-action: pan-x;
+    /*
+     * Both axes stay available: the viewport is the only horizontal scroller,
+     * so the browser routes horizontal drags here and vertical drags to the
+     * page, which would otherwise be unscrollable over the instrument.
+     */
+    touch-action: pan-x pan-y;
     scrollbar-gutter: stable;
   }
 
@@ -814,7 +819,7 @@ h1 {
     width: var(--playfield-white-unit);
     aspect-ratio: auto;
     background-size: var(--bar-width) 100%;
-    touch-action: pan-x;
+    touch-action: pan-x pan-y;
   }
 
   .bar-note {
@@ -848,7 +853,7 @@ h1 {
   }
 
   .playfield-viewport .piano-key {
-    touch-action: pan-x;
+    touch-action: pan-x pan-y;
   }
 
   /* Keep the quiet narrow accidental while making its touch target 44px. */
@@ -961,8 +966,9 @@ h1 {
 }
 
 /*
- * Striking is a pointerdown, and a drag across the rack would otherwise select
- * the note labels or pan the page on a touch screen.
+ * A mouse or pen strike is a pointerdown, and a drag across the rack would
+ * otherwise select the note labels. Panning stays available for touch, which
+ * only strikes once the gesture ends as a tap.
  */
 .bar,
 .piano-key {

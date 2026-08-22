@@ -297,12 +297,14 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
   const keyboard = page.getByRole("region", { name: "Piano alignment" });
   const bars = rack.getByRole("button");
 
+  // Both axes stay pannable: the viewport is the only horizontal scroller, so
+  // horizontal drags reach it while vertical drags still scroll the page.
   await expect(viewport).toHaveCSS("overflow-x", "auto");
-  await expect(viewport).toHaveCSS("touch-action", "pan-x");
-  await expect(bars.first()).toHaveCSS("touch-action", "pan-x");
+  await expect(viewport).toHaveCSS("touch-action", "pan-x pan-y");
+  await expect(bars.first()).toHaveCSS("touch-action", "pan-x pan-y");
   await expect(keyboard.getByRole("button").first()).toHaveCSS(
     "touch-action",
-    "pan-x",
+    "pan-x pan-y",
   );
 
   const horizontalScrollerCount = await page

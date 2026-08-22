@@ -5,6 +5,7 @@ import {
   computeKeyboardLayout,
   type KeyEntry,
 } from "../lib/layout";
+import { useStrikePointer } from "../lib/strike-pointer";
 import { isActivationKey } from "./Rack";
 
 const LAYOUT = computeKeyboardLayout();
@@ -62,8 +63,12 @@ interface PianoKeyProps {
  * Only the C keys print their name, so every other key would otherwise be a
  * button with no accessible name at all -- 46 of the 61. The aria-label carries
  * the note name whether or not it is drawn.
+ *
+ * Strikes share the rack's pointer handling, so a touch that turns into a pan
+ * of the playfield never sounds a note.
  */
 function PianoKey({ entry, kind, active, onStrike }: PianoKeyProps) {
+  const strikeHandlers = useStrikePointer(entry.note, onStrike);
   const style: CSSProperties =
     kind === "black"
       ? {
@@ -83,12 +88,7 @@ function PianoKey({ entry, kind, active, onStrike }: PianoKeyProps) {
       data-note={entry.note}
       aria-label={entry.name}
       style={style}
-      onPointerDown={(event) => {
-        if (event.pointerType !== "touch") {
-          event.preventDefault();
-        }
-        onStrike(entry.note);
-      }}
+      {...strikeHandlers}
       onKeyDown={(event) => {
         if (isActivationKey(event)) {
           event.preventDefault();

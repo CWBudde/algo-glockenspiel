@@ -17,7 +17,11 @@ const TEXTURES: Record<string, string> = {
   maple: mapleTexture,
 };
 
-const speciesEntries = Object.entries(presets.species);
+// Only species with a baked PNG are offered: a preset added to the JSON but
+// never baked would otherwise be selectable and silently render the default.
+const speciesEntries = Object.entries(presets.species).filter(
+  ([id]) => id in TEXTURES,
+);
 
 export function getWoodSpeciesOptions(): WoodSpeciesOption[] {
   return speciesEntries.map(([id, preset]) => ({

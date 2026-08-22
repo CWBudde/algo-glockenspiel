@@ -10,6 +10,7 @@ import {
   type BarKind,
   type BarSupportGeometry,
 } from "../lib/layout";
+import { useStrikePointer } from "../lib/strike-pointer";
 
 const LAYOUT = computeNoteLayout();
 const SUPPORTS = {
@@ -94,15 +95,15 @@ interface BarProps {
 /**
  * One bar.
  *
- * It listens for `pointerdown` so that a strike lands when the mallet does
- * rather than on mouse-up, and for Enter and Space so the keyboard reaches it
- * too. Mouse and pen pointer defaults are prevented to stop text selection;
- * touch pointers keep their default so the shared playfield can pan. The key
- * events are prevented to stop the browser synthesising a second `click`,
- * which would strike twice.
+ * Pointer strikes go through `useStrikePointer`, so a mouse or pen strikes as
+ * the mallet lands while a touch waits to prove it is a tap and not a pan of
+ * the playfield. Enter and Space reach it from the keyboard; their default is
+ * prevented to stop the browser synthesising a second `click`, which would
+ * strike twice.
  */
 function Bar({ entry, kind, active, onStrike }: BarProps) {
   const geometry = computeBarGeometry(entry, kind);
+  const strikeHandlers = useStrikePointer(entry.note, onStrike);
 
   return (
     <button
@@ -121,14 +122,7 @@ function Bar({ entry, kind, active, onStrike }: BarProps) {
           "--mount-lower": `${geometry.mountCenterYs[1] - geometry.top}px`,
         } as CSSProperties
       }
-      onPointerDown={(event) => {
-        // Let touch pointers start the playfield's horizontal pan. Mouse and
-        // pen still suppress text selection and synthetic clicks.
-        if (event.pointerType !== "touch") {
-          event.preventDefault();
-        }
-        onStrike(entry.note);
-      }}
+      {...strikeHandlers}
       onKeyDown={(event) => {
         if (isActivationKey(event)) {
           event.preventDefault();
