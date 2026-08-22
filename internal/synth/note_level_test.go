@@ -214,24 +214,61 @@ func TestTheLevelLawIsMeasuredNotAssumed(t *testing.T) {
 // Only the realtime engine sums many notes onto a shared bus behind a limiter,
 // so it is the only place where the spread turns into distortion. Two paths at
 // different levels is a decision; this is where it is written down.
+//
+// It used to assert this by measuring the tilt between note 36 and note 69 and
+// requiring at least 10 dB of it -- a proxy, and one that depended on the
+// shipped preset having a big enough spread rather than on the property being
+// tested. The re-fit landed at 9.70 dB and it failed, having found nothing
+// wrong. The assertion is now the property itself: every offline peak is the
+// untrimmed one, checked against the trim table that would have to have been
+// applied, with a separate guard that the table is not all ones.
+//
+// Verified by mutation. Levelling the measured peak by the trim, which is what
+// moving the trim into RenderNote would do, fails it with "note 36 renders
+// 9.692 dB off its untrimmed level offline" and 60 more like it.
 func TestOfflineRenderIsDeliberatelyNotLevelled(t *testing.T) {
 	engine := newTestEngine(t)
-	s := engine.synth
+	synthesizer := engine.synth
 
-	low := peakOf(s.RenderNote(KeyboardFirstNote, 100, 2.0))
-	own := peakOf(s.RenderNote(s.preset.Note, 100, 2.0))
+	// The trim table has to be doing something, or everything below is true of
+	// a no-op and proves nothing. This is the only preset-dependent number
+	// here, and it is a floor rather than a target: 0.5 dB against a shipped
+	// spread of 27 dB.
+	widestTrimDB := 0.0
 
-	if low <= 0 || own <= 0 {
-		t.Fatal("expected both notes to render")
+	for note := KeyboardFirstNote; note <= KeyboardLastNote; note++ {
+		if deviation := math.Abs(20 * math.Log10(float64(engine.trimForNote(note)))); deviation > widestTrimDB {
+			widestTrimDB = deviation
+		}
 	}
 
-	// The untrimmed tilt is about 16 dB between these two notes. Asserting it
-	// is still there is asserting that nothing quietly started levelling the
-	// offline path.
-	if tilt := 20 * math.Log10(low/own); tilt < 10 {
-		t.Errorf("the offline path is only %.2f dB louder at note %d than at note %d; "+
-			"if levelling was intentionally moved into RenderNote, the optimizer objective "+
-			"and default_level_test.go have to be reconsidered with it",
-			tilt, KeyboardFirstNote, s.preset.Note)
+	if widestTrimDB < 0.5 {
+		t.Fatalf("the widest trim is %.3f dB, so the table levels nothing and this test "+
+			"cannot tell a levelled offline path from an unlevelled one", widestTrimDB)
+	}
+
+	// The claim itself: every offline peak is the untrimmed one. If the trim
+	// were ever applied inside RenderNote, the peaks would already sit at the
+	// reference and dividing by the trim would move them off it.
+	reference := synthesizer.peakForNote(synthesizer.preset.Note, 127)
+	if reference <= 0 {
+		t.Fatal("the preset is silent at its own note")
+	}
+
+	const toleranceDB = 0.01
+
+	for note := KeyboardFirstNote; note <= KeyboardLastNote; note++ {
+		peak := synthesizer.peakForNote(note, 127)
+		if peak <= 0 {
+			continue
+		}
+
+		untrimmed := reference / float64(engine.trimForNote(note))
+		if deviation := math.Abs(20 * math.Log10(peak/untrimmed)); deviation > toleranceDB {
+			t.Errorf("note %d renders %.3f dB off its untrimmed level offline (%.6f against %.6f); "+
+				"if levelling was intentionally moved into RenderNote, the optimizer objective "+
+				"and default_level_test.go have to be reconsidered with it",
+				note, deviation, peak, untrimmed)
+		}
 	}
 }
