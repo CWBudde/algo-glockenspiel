@@ -9,6 +9,7 @@ import {
   LOG_ENCODED_BOUNDS_KEYS,
   MAYFLY_VARIANTS,
   METRIC_NAMES,
+  MODEL_BOUNDS_LIMITS,
   OPTIMIZER_NAMES,
   type BoundsDocument,
   type BoundsKey,
@@ -217,6 +218,17 @@ function parseBoundsRow(
   if (LOG_ENCODED_BOUNDS_KEYS.includes(key) && low <= 0) {
     return {
       error: "This dimension is log-encoded, so both ends must be above zero.",
+    };
+  }
+
+  // A box outside the model's own domain is one every candidate fails
+  // validation in, so the fit would spend its whole budget scoring +Inf.
+  // DecodeParamBounds refuses it; refusing it here saves the upload first.
+  const limit = MODEL_BOUNDS_LIMITS[key];
+
+  if (limit !== undefined && (low < limit[0] || high > limit[1])) {
+    return {
+      error: `The model accepts only [${limit[0]}, ${limit[1]}] for this dimension.`,
     };
   }
 
