@@ -2,8 +2,10 @@
 
 The browser front end: a React 19 + TypeScript app built with Vite, driving the
 Go synthesis core through WebAssembly. The instrument view mirrors the
-plugin-editor mockup under `plugin/vst3/ui/` and uses the same note geometry,
-piano alignment and control layout. [../docs/web-app.md](../docs/web-app.md)
+plugin-editor mockup in
+[algo-glockenspiel-vst3](https://github.com/CWBudde/algo-glockenspiel-vst3)
+(`vst3/ui/`) and uses the same note geometry, piano alignment and control
+layout. [../docs/web-app.md](../docs/web-app.md)
 describes the architecture and the reasoning behind it; this file is about
 building, running and using it.
 

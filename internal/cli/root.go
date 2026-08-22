@@ -5,8 +5,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/cwbudde/glockenspiel/assets"
-	"github.com/cwbudde/glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/assets"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/spf13/cobra"
 )
 

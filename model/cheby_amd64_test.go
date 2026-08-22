@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/cpufeat"
+	"github.com/cwbudde/algo-glockenspiel/internal/cpufeat"
 )
 
 // TestChebyshevBodyTailAndFallbackAgree pins the contract that the three

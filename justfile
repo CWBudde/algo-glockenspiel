@@ -24,8 +24,7 @@ lint-fix:
 
 # Ensure go.mod is tidy
 check-tidy:
-    go mod tidy
-    git diff --exit-code go.mod go.sum
+    go mod tidy -diff
 
 # Run all tests
 test:

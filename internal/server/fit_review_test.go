@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cwbudde/glockenspiel/internal/wavio"
+	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
 )
 
 // wavAtDeclaredRate rewrites the sample rate a canonical WAV header states,

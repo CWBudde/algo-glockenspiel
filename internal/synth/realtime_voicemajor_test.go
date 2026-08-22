@@ -4,8 +4,8 @@ import (
 	"math"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/oscbank"
-	"github.com/cwbudde/glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/internal/oscbank"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 )
 
 // The engine renders every sounding voice through one voice-major oscillator

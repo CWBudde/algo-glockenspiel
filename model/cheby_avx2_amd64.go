@@ -5,7 +5,7 @@ package model
 import (
 	"unsafe"
 
-	"github.com/cwbudde/glockenspiel/internal/cpufeat"
+	"github.com/cwbudde/algo-glockenspiel/internal/cpufeat"
 )
 
 // chebyAVX2Block is the kernel's vector width in float32 samples.

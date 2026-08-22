@@ -9,7 +9,7 @@ import (
 	"math"
 	"os"
 
-	"github.com/cwbudde/glockenspiel/model"
+	"github.com/cwbudde/algo-glockenspiel/model"
 )
 
 // The bounds file lives here rather than in internal/cli because the CLI is no

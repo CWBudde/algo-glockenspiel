@@ -44,4 +44,4 @@ jobs:
         # developer cannot reformat without breaking their own check.
         # Upgrading is deliberate: bump this and the local toolchain together,
         # then run `just fmt` in the same commit.
-        run: npx --yes prettier@3.8.0 --check "web/**/*.{js,ts,tsx,css,html}" "plugin/**/ui/*.{js,html}"
+        run: npx --yes prettier@3.8.0 --check "web/**/*.{js,ts,tsx,css,html}"

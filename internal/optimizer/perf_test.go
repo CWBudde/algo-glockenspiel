@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cwbudde/glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 )
 
 func BenchmarkObjectiveEvaluateLegacyRMS(b *testing.B) {

@@ -5,8 +5,8 @@ import (
 	"math"
 	"sync"
 
-	"github.com/cwbudde/glockenspiel/internal/preset"
-	"github.com/cwbudde/glockenspiel/internal/synth"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/internal/synth"
 )
 
 const (

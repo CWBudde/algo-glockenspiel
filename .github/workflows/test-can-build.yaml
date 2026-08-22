@@ -19,6 +19,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Check module tidiness
+        # `-diff` reports what tidying would change and exits non-zero without
+        # rewriting the tree. It could not run while `go.mod` carried a
+        # `replace` directive pointing at a sibling checkout no runner has.
+        run: go mod tidy -diff
+
       - name: Build all packages
         run: go build ./...
 
