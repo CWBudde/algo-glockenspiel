@@ -146,13 +146,14 @@ function parseDuration(raw: string): { seconds: number } | { error: string } {
     return { error: "The time budget is required." };
   }
 
+  // strconv.ParseFloat's decimal grammar, exponent included, so "1e3" is read
+  // as 1000 seconds here exactly as the server reads it. Number() alone is more
+  // permissive than ParseFloat -- it also takes "0x10" and "Infinity" -- so the
+  // pattern, not Number(), decides what counts as a bare number.
+  const bareSeconds = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
   const bare = Number(trimmed);
 
-  if (
-    trimmed !== "" &&
-    Number.isFinite(bare) &&
-    /^[+-]?[\d.]+$/.test(trimmed)
-  ) {
+  if (bareSeconds.test(trimmed) && Number.isFinite(bare)) {
     return { seconds: bare };
   }
 
