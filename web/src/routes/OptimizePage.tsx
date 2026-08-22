@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { getFitStatus } from "../api/fit";
+import { FitApiError, getFitStatus } from "../api/fit";
 import type { FitSnapshot } from "../api/types";
 import { FitForm } from "../features/optimize/FitForm";
 import { FitProgress } from "../features/optimize/FitProgress";
@@ -52,10 +52,17 @@ export function OptimizePage() {
           setSnapshot(current);
         }
       })
-      .catch(() => {
+      .catch((cause: unknown) => {
         // A 404 -- "no fit has been started" -- is the ordinary answer on a
-        // fresh server, and there is nothing else worth saying here: the form
-        // reports the failures that belong to an action the user took.
+        // fresh server and is not worth a word. Anything else is a real
+        // failure: a 500, or a server that stopped answering between the
+        // version probe and this request. Swallowing those too would leave the
+        // page looking healthy while the status it shows is simply absent.
+        if (cause instanceof FitApiError && cause.isNotFound) {
+          return;
+        }
+
+        console.error("Reading the current fit failed", cause);
       });
 
     return () => {

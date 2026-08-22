@@ -9,6 +9,7 @@ import {
   LOG_ENCODED_BOUNDS_KEYS,
   MAYFLY_VARIANTS,
   METRIC_NAMES,
+  MODEL_BOUNDS_LIMITS,
   OPTIMIZER_NAMES,
   type BoundsDocument,
   type BoundsKey,
@@ -232,6 +233,17 @@ function parseBoundsRow(
   if (LOG_ENCODED_BOUNDS_KEYS.includes(key) && low <= 0) {
     return {
       error: "This dimension is log-encoded, so both ends must be above zero.",
+    };
+  }
+
+  // A box outside the model's own domain is one every candidate fails
+  // validation in, so the fit would spend its whole budget scoring +Inf.
+  // DecodeParamBounds refuses it; refusing it here saves the upload first.
+  const limit = MODEL_BOUNDS_LIMITS[key];
+
+  if (limit !== undefined && (low < limit[0] || high > limit[1])) {
+    return {
+      error: `The model accepts only [${limit[0]}, ${limit[1]}] for this dimension.`,
     };
   }
 
@@ -813,7 +825,12 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
                 onChange={(event) => {
                   setScalar("mayflySeed", event.target.value);
                 }}
-                type="number"
+                // A text field, not a number one: the seed is an exact int64
+                // decimal string, and a number input is free to hand back a
+                // normalised value -- "1e+19" for a seed near the top of the
+                // range -- which BigInt() then refuses. inputMode still brings
+                // up the numeric keypad.
+                type="text"
                 value={scalars.mayflySeed}
               />
               {fieldError("mayflySeed")}
@@ -862,6 +879,9 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
                   <input
                     aria-describedby={describedBy(`bounds-${key}`)}
                     aria-invalid={errors[`bounds-${key}`] !== undefined}
+                    // The visible label reads "Minimum" seven times over; the
+                    // accessible name names the dimension it belongs to.
+                    aria-label={`${BOUNDS_LABELS[key]} minimum`}
                     id={fieldId(`bounds-${key}-min`)}
                     onChange={(event) => {
                       setBound(key, "min", event.target.value);
@@ -877,6 +897,7 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
                   <input
                     aria-describedby={describedBy(`bounds-${key}`)}
                     aria-invalid={errors[`bounds-${key}`] !== undefined}
+                    aria-label={`${BOUNDS_LABELS[key]} maximum`}
                     id={fieldId(`bounds-${key}-max`)}
                     onChange={(event) => {
                       setBound(key, "max", event.target.value);

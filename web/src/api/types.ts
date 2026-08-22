@@ -257,6 +257,28 @@ export const LOG_ENCODED_BOUNDS_KEYS: readonly BoundsKey[] = [
   "decay_ms",
 ] as const;
 
+/**
+ * The range `model.ValidateBarParams` holds each dimension to, transcribed from
+ * the constants in model/params.go. `DecodeParamBounds` in
+ * internal/optimizer/boundsfile.go rejects a supplied range that leaves this
+ * box, and for a good reason: every candidate drawn from it would fail
+ * validation and score +Inf, so the fit would burn its whole budget to produce
+ * nothing. Mirroring the check here reports it before the reference is
+ * uploaded rather than after.
+ *
+ * `frequency_mult` is deliberately absent, exactly as it is there: it is a
+ * multiplier, and what the model bounds is the mode frequency it produces
+ * together with `base_frequency`, not the multiplier itself.
+ */
+export const MODEL_BOUNDS_LIMITS: Partial<Record<BoundsKey, BoundsRange>> = {
+  input_mix: [0, 2],
+  filter_freq: [20, 20000],
+  base_frequency: [0.01, 50000],
+  amplitude: [-2, 2],
+  decay_ms: [0.1, 5000],
+  harmonic_gain: [0, 2],
+};
+
 /** `optimizer.DefaultParamBounds`, shown as the placeholder for each field. */
 export const DEFAULT_PARAM_BOUNDS: Required<BoundsDocument> = {
   input_mix: [0, 2],
