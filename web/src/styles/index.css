@@ -446,17 +446,14 @@ h1 {
   left: 5.2%;
   right: 5.2%;
   height: var(--lane-height);
-  z-index: 4;
 }
 
 .note-lane-sharps {
   top: 44px;
-  z-index: 5;
 }
 
 .note-lane-naturals {
   top: 146px;
-  z-index: 4;
 }
 
 .bar {

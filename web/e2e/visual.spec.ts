@@ -503,19 +503,22 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
 
   const mobileLayers = await rack.evaluate((element) => ({
     accidentals: Number(
-      getComputedStyle(
-        element.querySelector(".note-lane-sharps") as HTMLElement,
-      ).zIndex,
+      getComputedStyle(element.querySelector(".bar.accidental") as HTMLElement)
+        .zIndex,
     ),
     mallet: Number(
       getComputedStyle(element.querySelector(".mallet") as HTMLElement).zIndex,
     ),
     naturals: Number(
-      getComputedStyle(
-        element.querySelector(".note-lane-naturals") as HTMLElement,
-      ).zIndex,
+      getComputedStyle(element.querySelector(".bar.natural") as HTMLElement)
+        .zIndex,
+    ),
+    supports: Number(
+      getComputedStyle(element.querySelector(".row-support") as SVGElement)
+        .zIndex,
     ),
   }));
+  expect(mobileLayers.naturals).toBeGreaterThan(mobileLayers.supports);
   expect(mobileLayers.accidentals).toBeGreaterThan(mobileLayers.naturals);
   expect(mobileLayers.mallet).toBeGreaterThan(mobileLayers.accidentals);
 
@@ -780,12 +783,14 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
   const layerOrder = await rack.evaluate((element) => {
     const naturalLane = element.querySelector(".note-lane-naturals");
     const accidentalLane = element.querySelector(".note-lane-sharps");
+    const support = element.querySelector(".row-support");
     const natural = element.querySelector(".bar.natural");
     const accidental = element.querySelector(".bar.accidental");
     const mallet = element.querySelector(".mallet");
     if (
       !(naturalLane instanceof HTMLElement) ||
       !(accidentalLane instanceof HTMLElement) ||
+      !(support instanceof SVGElement) ||
       !(natural instanceof HTMLElement) ||
       !(accidental instanceof HTMLElement) ||
       !(mallet instanceof HTMLElement)
@@ -794,15 +799,18 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
     }
     return {
       accidental: Number(getComputedStyle(accidental).zIndex),
-      accidentalLane: Number(getComputedStyle(accidentalLane).zIndex),
+      accidentalLane: getComputedStyle(accidentalLane).zIndex,
       mallet: Number(getComputedStyle(mallet).zIndex),
       natural: Number(getComputedStyle(natural).zIndex),
-      naturalLane: Number(getComputedStyle(naturalLane).zIndex),
+      naturalLane: getComputedStyle(naturalLane).zIndex,
+      support: Number(getComputedStyle(support).zIndex),
     };
   });
-  expect(layerOrder.accidentalLane).toBeGreaterThan(layerOrder.naturalLane);
+  expect(layerOrder.accidentalLane).toBe("auto");
+  expect(layerOrder.naturalLane).toBe("auto");
+  expect(layerOrder.natural).toBeGreaterThan(layerOrder.support);
   expect(layerOrder.accidental).toBeGreaterThan(layerOrder.natural);
-  expect(layerOrder.mallet).toBeGreaterThan(layerOrder.accidentalLane);
+  expect(layerOrder.mallet).toBeGreaterThan(layerOrder.accidental);
 
   const mallet = rack.locator(".mallet");
   const [malletBox, barBoxes] = await Promise.all([
