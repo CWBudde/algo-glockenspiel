@@ -2,15 +2,13 @@ package optimizer
 
 import (
 	"context"
-	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/cwbudde/glockenspiel/internal/preset"
+	"github.com/cwbudde/glockenspiel/internal/wavio"
 	"github.com/cwbudde/glockenspiel/model"
-	"github.com/go-audio/wav"
 )
 
 func TestOptimizationImprovesFitAgainstLegacyReference(t *testing.T) {
@@ -121,49 +119,12 @@ func loadDefaultPreset(t *testing.T) *preset.Preset {
 func loadLegacyReferenceWAV(t *testing.T) ([]float32, int) {
 	t.Helper()
 
-	path := filepath.FromSlash("../../testdata/reference/legacy_synth_a4.wav")
-
-	file, err := os.Open(path)
+	samples, sampleRate, err := loadLegacyReferenceForBenchmark()
 	if err != nil {
-		t.Fatalf("open legacy reference: %v", err)
+		t.Fatalf("load legacy reference: %v", err)
 	}
 
-	defer func() {
-		_ = file.Close()
-	}()
-
-	decoder := wav.NewDecoder(file)
-	if !decoder.IsValidFile() {
-		t.Fatalf("invalid legacy wav file: %s", path)
-	}
-
-	intBuffer, err := decoder.FullPCMBuffer()
-	if err != nil {
-		t.Fatalf("decode legacy wav: %v", err)
-	}
-
-	if intBuffer == nil || intBuffer.Format == nil {
-		t.Fatalf("invalid decoded legacy buffer: %s", path)
-	}
-
-	bitDepth := intBuffer.SourceBitDepth
-	if bitDepth <= 0 {
-		bitDepth = 16
-	}
-
-	scale := math.Pow(2, float64(bitDepth-1))
-
-	channels := intBuffer.Format.NumChannels
-	if channels <= 0 {
-		channels = 1
-	}
-
-	samples := make([]float32, len(intBuffer.Data)/channels)
-	for i := range samples {
-		samples[i] = float32(float64(intBuffer.Data[i*channels]) / scale)
-	}
-
-	return samples, intBuffer.Format.SampleRate
+	return samples, sampleRate
 }
 
 func legacyValidationBounds(target *model.BarParams) ParamBounds {
@@ -229,48 +190,13 @@ func BenchmarkLegacyObjectiveEvaluate(b *testing.B) {
 	}
 }
 
+// loadLegacyReferenceForBenchmark reads the pinned legacy render.
+//
+// It goes through internal/wavio rather than driving go-audio directly, so the
+// regression suite decodes its reference with exactly the scaling `fit` applies
+// to a user's reference. This file used to carry its own copy of that decode;
+// a private copy can drift in bit-depth scaling or channel stride and quietly
+// move the cost surface these tests assert on, with nothing failing to say so.
 func loadLegacyReferenceForBenchmark() ([]float32, int, error) {
-	path := filepath.FromSlash("../../testdata/reference/legacy_synth_a4.wav")
-
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	defer func() {
-		_ = file.Close()
-	}()
-
-	decoder := wav.NewDecoder(file)
-	if !decoder.IsValidFile() {
-		return nil, 0, fmt.Errorf("invalid wav file: %s", path)
-	}
-
-	intBuffer, err := decoder.FullPCMBuffer()
-	if err != nil {
-		return nil, 0, err
-	}
-
-	if intBuffer == nil || intBuffer.Format == nil {
-		return nil, 0, fmt.Errorf("invalid decoded buffer: %s", path)
-	}
-
-	bitDepth := intBuffer.SourceBitDepth
-	if bitDepth <= 0 {
-		bitDepth = 16
-	}
-
-	scale := math.Pow(2, float64(bitDepth-1))
-
-	channels := intBuffer.Format.NumChannels
-	if channels <= 0 {
-		channels = 1
-	}
-
-	samples := make([]float32, len(intBuffer.Data)/channels)
-	for i := range samples {
-		samples[i] = float32(float64(intBuffer.Data[i*channels]) / scale)
-	}
-
-	return samples, intBuffer.Format.SampleRate, nil
+	return wavio.LoadMono(filepath.FromSlash("../../testdata/reference/legacy_synth_a4.wav"))
 }

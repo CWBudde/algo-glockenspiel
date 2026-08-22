@@ -12,6 +12,7 @@ import (
 	"github.com/cwbudde/glockenspiel/internal/optimizer"
 	"github.com/cwbudde/glockenspiel/internal/preset"
 	"github.com/cwbudde/glockenspiel/internal/synth"
+	"github.com/cwbudde/glockenspiel/internal/wavio"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +33,7 @@ func TestRunFitWritesArtifacts(t *testing.T) {
 	}
 
 	reference := engine.RenderNote(69, 100, 0.05)
-	if err := writeWAV(referencePath, 44100, reference); err != nil {
+	if err := wavio.WriteMono(referencePath, 44100, reference); err != nil {
 		t.Fatalf("write reference wav: %v", err)
 	}
 
@@ -93,7 +94,7 @@ func TestRunFitCanDisableCheckpoints(t *testing.T) {
 	}
 
 	reference := engine.RenderNote(69, 100, 0.05)
-	if err := writeWAV(referencePath, 44100, reference); err != nil {
+	if err := wavio.WriteMono(referencePath, 44100, reference); err != nil {
 		t.Fatalf("write reference wav: %v", err)
 	}
 
@@ -147,7 +148,7 @@ func TestRunFitWritesCPUProfile(t *testing.T) {
 	}
 
 	reference := engine.RenderNote(69, 100, 0.05)
-	if err := writeWAV(referencePath, 44100, reference); err != nil {
+	if err := wavio.WriteMono(referencePath, 44100, reference); err != nil {
 		t.Fatalf("write reference wav: %v", err)
 	}
 
@@ -201,7 +202,7 @@ func TestRunFitResumesFromCheckpoint(t *testing.T) {
 	}
 
 	reference := engine.RenderNote(69, 100, 0.05)
-	if err := writeWAV(referencePath, 44100, reference); err != nil {
+	if err := wavio.WriteMono(referencePath, 44100, reference); err != nil {
 		t.Fatalf("write reference wav: %v", err)
 	}
 
@@ -277,7 +278,7 @@ func TestRunFitResumeRestoresMayflySettingsFromCheckpoint(t *testing.T) {
 	}
 
 	reference := engine.RenderNote(69, 100, 0.05)
-	if err := writeWAV(referencePath, 44100, reference); err != nil {
+	if err := wavio.WriteMono(referencePath, 44100, reference); err != nil {
 		t.Fatalf("write reference wav: %v", err)
 	}
 
@@ -503,7 +504,7 @@ func writeFitReference(t *testing.T, dir string) (string, *preset.Preset, []floa
 	reference := engine.RenderNote(69, 100, 0.05)
 
 	referencePath := filepath.Join(dir, "reference.wav")
-	if err := writeWAV(referencePath, 44100, reference); err != nil {
+	if err := wavio.WriteMono(referencePath, 44100, reference); err != nil {
 		t.Fatalf("write reference wav: %v", err)
 	}
 
@@ -795,7 +796,7 @@ func TestRunFitResumeRestoresMetricBeforeBuildingObjective(t *testing.T) {
 	reference := engine.RenderNote(69, 100, 0.01)
 
 	referencePath := filepath.Join(dir, "reference.wav")
-	if err := writeWAV(referencePath, 44100, reference); err != nil {
+	if err := wavio.WriteMono(referencePath, 44100, reference); err != nil {
 		t.Fatalf("write reference wav: %v", err)
 	}
 
