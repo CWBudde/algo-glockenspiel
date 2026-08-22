@@ -5,6 +5,20 @@ import (
 	"testing"
 )
 
+// shapedBlockLength is long enough that the AVX2 kernel takes a body of several
+// vectors and leaves a tail behind for chebyshevScalar, so a block test covers
+// both paths on amd64 and stays a single scalar run everywhere else.
+//
+// It is a literal rather than a multiple of the kernel's block constant, which
+// lives in cheby_avx2_amd64.go behind //go:build amd64: naming that constant
+// from an untagged test file breaks the package build on every architecture
+// that is not amd64, which is how this arrived -- green locally, red on the
+// arm64 runner. 27 is three vectors of eight plus three, the arithmetic it
+// replaces. The vector width is pinned by a compile-time assertion next to the
+// kernel, so writing the answer down here does not put a second definition of
+// it into circulation.
+const shapedBlockLength = 27
+
 // chebyshevOracleFloat64 is the float64 recurrence the shaper used to run in
 // the audio path, kept as a test-only oracle: it says what the shaper computes
 // mathematically, independent of the float32 rounding every live path now
@@ -158,7 +172,7 @@ func TestTheShaperMapsSilenceToSilence(t *testing.T) {
 	}
 
 	for _, gains := range gainSets {
-		const length = chebyAVX2Block*3 + 3
+		const length = shapedBlockLength
 
 		input := make([]float32, length)
 		output := make([]float32, length)
@@ -181,7 +195,7 @@ func TestTheShaperMapsSilenceToSilence(t *testing.T) {
 func TestTheShaperOnlyRemovesAConstant(t *testing.T) {
 	gains := float32Gains([]float64{1.0, 0.5, 0.3, 0.2})
 
-	const length = chebyAVX2Block*4 + 5
+	const length = shapedBlockLength
 
 	input := chebyshevTestInput(length)
 	output := make([]float32, length)
