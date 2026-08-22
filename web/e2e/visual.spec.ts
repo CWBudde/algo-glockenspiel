@@ -452,35 +452,48 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
     rack.locator(".note-lane-sharps"),
   ]) {
     const supportAlignment = await lane.evaluate((element) => {
-      const svg = element.querySelector(".row-support");
-      const polyline = svg?.querySelector("polyline");
+      const supports = [
+        ...element.querySelectorAll<SVGSVGElement>(".row-support"),
+      ];
       const bars = [...element.querySelectorAll<HTMLElement>(".bar")];
-      if (
-        !(svg instanceof SVGSVGElement) ||
-        !(polyline instanceof SVGPolylineElement)
-      ) {
+      if (supports.length !== 2) {
         throw new Error("mobile row support geometry is missing");
       }
 
-      const svgBox = svg.getBoundingClientRect();
-      const laneBox = element.getBoundingClientRect();
-      const viewBox = svg.viewBox.baseVal;
-      const points = Array.from(polyline.points);
-      return bars.map((bar, index) => {
-        const barBox = bar.getBoundingClientRect();
-        const point = points[index];
-        return {
-          dx: Math.abs(
-            barBox.left +
-              barBox.width / 2 -
-              (svgBox.left + (point.x / viewBox.width) * svgBox.width),
-          ),
-          dy: Math.abs(
-            laneBox.top +
-              Number(bar.dataset.mountY) -
-              (svgBox.top + (point.y / viewBox.height) * svgBox.height),
-          ),
-        };
+      return supports.flatMap((svg) => {
+        const polyline = svg.querySelector("polyline");
+        const position = svg.dataset.mountPosition;
+        if (
+          !(polyline instanceof SVGPolylineElement) ||
+          (position !== "upper" && position !== "lower")
+        ) {
+          throw new Error("mobile row support line is missing");
+        }
+        const svgBox = svg.getBoundingClientRect();
+        const viewBox = svg.viewBox.baseVal;
+        const points = Array.from(polyline.points);
+        return bars.map((bar, index) => {
+          const mount = bar.querySelector<HTMLElement>(
+            `.bar-mount[data-mount-position="${position}"]`,
+          );
+          if (mount === null) {
+            throw new Error("mobile bar mount is missing");
+          }
+          const mountBox = mount.getBoundingClientRect();
+          const point = points[index];
+          return {
+            dx: Math.abs(
+              mountBox.left +
+                mountBox.width / 2 -
+                (svgBox.left + (point.x / viewBox.width) * svgBox.width),
+            ),
+            dy: Math.abs(
+              mountBox.top +
+                mountBox.height / 2 -
+                (svgBox.top + (point.y / viewBox.height) * svgBox.height),
+            ),
+          };
+        });
       });
     });
     expect(supportAlignment.every(({ dx, dy }) => dx <= 1 && dy <= 1)).toBe(
@@ -648,6 +661,7 @@ test("rack exposes every bar with material and accessible-name hooks", async ({
   await expect(bars).toHaveCount(25);
   await expect(naturals).toHaveCount(15);
   await expect(accidentals).toHaveCount(10);
+  await expect(rack.locator(".bar-mount")).toHaveCount(50);
   await expect(naturals.first()).toHaveCSS(
     "background-image",
     /^url\("data:image\/svg\+xml/,
@@ -664,7 +678,7 @@ test("rack exposes every bar with material and accessible-name hooks", async ({
   expect(new Set(names).size).toBe(25);
 });
 
-test("rack depth aligns constant bars, supports, and foreground mallet", async ({
+test("rack geometry aligns constant bars, supports, and foreground mallet", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1024, height: 768 });
@@ -682,57 +696,74 @@ test("rack depth aligns constant bars, supports, and foreground mallet", async (
     const metrics = await bars.evaluateAll((elements) =>
       elements.map((element) => {
         const box = element.getBoundingClientRect();
-        return { baseline: box.bottom, width: box.width };
+        return { bottom: box.bottom, top: box.top, width: box.width };
       }),
     );
     const widths = metrics.map(({ width }) => width);
     expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(0.25);
     for (let index = 1; index < metrics.length; index += 1) {
-      expect(metrics[index].baseline).toBeGreaterThan(
-        metrics[index - 1].baseline,
+      expect(metrics[index].top).toBeGreaterThan(metrics[index - 1].top);
+      expect(metrics[index].bottom).toBeLessThan(
+        metrics[index - 1].bottom,
       );
     }
-    const perspective = metrics.at(-1)!.baseline - metrics[0].baseline;
-    expect(perspective).toBeGreaterThanOrEqual(7.5);
-    expect(perspective).toBeLessThanOrEqual(8.5);
+    const first = metrics[0];
+    const last = metrics.at(-1)!;
+    expect(last.top - first.top).toBeCloseTo(first.bottom - last.bottom, 0);
+    const centers = metrics.map(({ top, bottom }) => (top + bottom) / 2);
+    expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(
+      0.25,
+    );
   }
 
-  await expect(rack.locator(".row-support")).toHaveCount(2);
+  await expect(rack.locator(".row-support")).toHaveCount(4);
   await expect(rack.locator(".rail")).toHaveCount(0);
 
   for (const lane of [naturalLane, accidentalLane]) {
-    await expect(lane.locator(".row-support")).toHaveCount(1);
+    await expect(lane.locator(".row-support")).toHaveCount(2);
     const alignment = await lane.evaluate((element) => {
-      const svg = element.querySelector(".row-support");
-      const polyline = svg?.querySelector("polyline");
+      const supports = [
+        ...element.querySelectorAll<SVGSVGElement>(".row-support"),
+      ];
       const bars = [...element.querySelectorAll<HTMLElement>(".bar")];
-      if (
-        !(svg instanceof SVGSVGElement) ||
-        !(polyline instanceof SVGPolylineElement)
-      ) {
+      if (supports.length !== 2) {
         throw new Error("row support geometry is missing");
       }
 
-      const svgBox = svg.getBoundingClientRect();
-      const laneBox = element.getBoundingClientRect();
-      const viewBox = svg.viewBox.baseVal;
-      const points = Array.from(polyline.points);
-
-      return bars.map((bar, index) => {
-        const barBox = bar.getBoundingClientRect();
-        const point = points[index];
-        return {
-          dx: Math.abs(
-            barBox.left +
-              barBox.width / 2 -
-              (svgBox.left + (point.x / viewBox.width) * svgBox.width),
-          ),
-          dy: Math.abs(
-            laneBox.top +
-              Number(bar.dataset.mountY) -
-              (svgBox.top + (point.y / viewBox.height) * svgBox.height),
-          ),
-        };
+      return supports.flatMap((svg) => {
+        const polyline = svg.querySelector("polyline");
+        const position = svg.dataset.mountPosition;
+        if (
+          !(polyline instanceof SVGPolylineElement) ||
+          (position !== "upper" && position !== "lower")
+        ) {
+          throw new Error("row support line is missing");
+        }
+        const svgBox = svg.getBoundingClientRect();
+        const viewBox = svg.viewBox.baseVal;
+        const points = Array.from(polyline.points);
+        return bars.map((bar, index) => {
+          const mount = bar.querySelector<HTMLElement>(
+            `.bar-mount[data-mount-position="${position}"]`,
+          );
+          if (mount === null) {
+            throw new Error("bar mount is missing");
+          }
+          const mountBox = mount.getBoundingClientRect();
+          const point = points[index];
+          return {
+            dx: Math.abs(
+              mountBox.left +
+                mountBox.width / 2 -
+                (svgBox.left + (point.x / viewBox.width) * svgBox.width),
+            ),
+            dy: Math.abs(
+              mountBox.top +
+                mountBox.height / 2 -
+                (svgBox.top + (point.y / viewBox.height) * svgBox.height),
+            ),
+          };
+        });
       });
     });
     expect(alignment.every(({ dx, dy }) => dx <= 1 && dy <= 1)).toBe(true);

@@ -45,7 +45,7 @@ export function Rack({ onStrike, activeNotes }: RackProps) {
               } as CSSProperties
             }
           >
-            <RowSupport kind="accidental" geometry={SUPPORTS.accidental} />
+            <RowSupports kind="accidental" geometry={SUPPORTS.accidental} />
             {LAYOUT.accidentals.map((entry) => (
               <Bar
                 key={entry.note}
@@ -65,7 +65,7 @@ export function Rack({ onStrike, activeNotes }: RackProps) {
               } as CSSProperties
             }
           >
-            <RowSupport kind="natural" geometry={SUPPORTS.natural} />
+            <RowSupports kind="natural" geometry={SUPPORTS.natural} />
             {LAYOUT.naturals.map((entry) => (
               <Bar
                 key={entry.note}
@@ -110,7 +110,6 @@ function Bar({ entry, kind, active, onStrike }: BarProps) {
       className={`bar ${kind}${active ? " is-active" : ""}`}
       data-note={entry.note}
       data-baseline={geometry.baseline}
-      data-mount-y={geometry.mountCenterY}
       aria-label={entry.name}
       style={
         {
@@ -118,6 +117,8 @@ function Bar({ entry, kind, active, onStrike }: BarProps) {
           "--length": `${entry.length}px`,
           "--bar-top": `${geometry.top}px`,
           "--bar-width": `${geometry.width}px`,
+          "--mount-upper": `${geometry.mountCenterYs[0] - geometry.top}px`,
+          "--mount-lower": `${geometry.mountCenterYs[1] - geometry.top}px`,
         } as CSSProperties
       }
       onPointerDown={(event) => {
@@ -135,6 +136,16 @@ function Bar({ entry, kind, active, onStrike }: BarProps) {
         }
       }}
     >
+      <span
+        className="bar-mount"
+        data-mount-position="upper"
+        aria-hidden="true"
+      />
+      <span
+        className="bar-mount"
+        data-mount-position="lower"
+        aria-hidden="true"
+      />
       <span className="bar-note">{entry.name}</span>
       <span className="bar-key">{entry.keyHint}</span>
     </button>
@@ -146,21 +157,27 @@ interface RowSupportProps {
   geometry: BarSupportGeometry;
 }
 
-/** One support follows the mounting-hole trajectory behind a complete row. */
-function RowSupport({ kind, geometry }: RowSupportProps) {
-  const points = geometry.points.map(({ x, y }) => `${x},${y}`).join(" ");
-
+/** Two supports follow the node-point mounting holes behind a complete row. */
+function RowSupports({ kind, geometry }: RowSupportProps) {
   return (
-    <svg
-      className={`row-support ${kind}`}
-      data-support={kind}
-      viewBox={`0 0 100 ${geometry.laneHeight}`}
-      preserveAspectRatio="none"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <polyline points={points} />
-    </svg>
+    <>
+      {geometry.supports.map((support) => (
+        <svg
+          key={support.position}
+          className={`row-support ${kind}`}
+          data-support={kind}
+          data-mount-position={support.position}
+          viewBox={`0 0 100 ${geometry.laneHeight}`}
+          preserveAspectRatio="none"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <polyline
+            points={support.points.map(({ x, y }) => `${x},${y}`).join(" ")}
+          />
+        </svg>
+      ))}
+    </>
   );
 }
 

@@ -9,7 +9,8 @@ export const KEYBOARD_FIRST_NOTE = 36; // C2
 export const KEYBOARD_LAST_NOTE = 96; // C7
 export const MOBILE_WHITE_UNIT_PX = 44;
 export const MOBILE_VIEWPORT_WHITE_UNITS = 7;
-export const BAR_PERSPECTIVE_PX = 8;
+/** Fundamental-mode nodes of an ideal free-free bar, measured from each end. */
+export const BAR_NODE_RATIO = 0.224;
 
 export type BarKind = "natural" | "accidental";
 
@@ -19,21 +20,8 @@ const BAR_WIDTH_PX: Readonly<Record<BarKind, number>> = {
 };
 
 const BAR_LANE_HEIGHT_PX: Readonly<Record<BarKind, number>> = {
-  natural: 188,
-  accidental: 132,
-};
-
-/** Hole centers in the source SVG viewboxes, measured from their top edge. */
-const BAR_MOUNT_RATIO: Readonly<Record<BarKind, number>> = {
-  natural: 62 / 420,
-  accidental: 56 / 360,
-};
-
-const BAR_ROW_RANGE: Readonly<
-  Record<BarKind, { firstNote: number; lastNote: number }>
-> = {
-  natural: { firstNote: FIRST_NOTE, lastNote: LAST_NOTE },
-  accidental: { firstNote: FIRST_NOTE + 1, lastNote: LAST_NOTE - 2 },
+  natural: 190,
+  accidental: 142,
 };
 
 export const WHITE_OFFSETS: ReadonlySet<number> = new Set([
@@ -119,10 +107,10 @@ export interface BarGeometry {
   width: number;
   /** Top edge within the row lane. */
   top: number;
-  /** Bottom edge within the row lane, including the perspective drop. */
+  /** Bottom edge within the row lane. */
   baseline: number;
-  /** Center of the visible upper mounting hole within the row lane. */
-  mountCenterY: number;
+  /** Centers of the two node-point mounting holes within the row lane. */
+  mountCenterYs: readonly [number, number];
 }
 
 export interface BarSupportPoint {
@@ -135,6 +123,11 @@ export interface BarSupportPoint {
 
 export interface BarSupportGeometry {
   laneHeight: number;
+  supports: readonly BarSupportLine[];
+}
+
+export interface BarSupportLine {
+  position: "upper" | "lower";
   points: readonly BarSupportPoint[];
 }
 
@@ -172,40 +165,48 @@ export function computeNoteLayout(): NoteLayout {
  * Draw geometry shared by the bar and the support behind its mount.
  *
  * Length still follows pitch, but width is a material property rather than an
- * accidental consequence of the SVG aspect ratio. The small baseline drop
- * gives both rows the same rightward depth cue.
+ * accidental consequence of the SVG aspect ratio. Every bar is centered on
+ * the same horizontal axis, so the top and bottom edges converge by equal
+ * amounts and the complete row describes a symmetric trapezoid.
  */
 export function computeBarGeometry(
   entry: BarEntry,
   kind: BarKind,
 ): BarGeometry {
-  const range = BAR_ROW_RANGE[kind];
-  const span = range.lastNote - range.firstNote;
-  const ratio = span === 0 ? 0 : (entry.note - range.firstNote) / span;
-  const baseline = BAR_LANE_HEIGHT_PX[kind] + ratio * BAR_PERSPECTIVE_PX;
-  const top = baseline - entry.length;
+  const centerY = BAR_LANE_HEIGHT_PX[kind] / 2;
+  const top = centerY - entry.length / 2;
+  const baseline = centerY + entry.length / 2;
 
   return {
     width: BAR_WIDTH_PX[kind],
     top,
     baseline,
-    mountCenterY: top + entry.length * BAR_MOUNT_RATIO[kind],
+    mountCenterYs: [
+      top + entry.length * BAR_NODE_RATIO,
+      top + entry.length * (1 - BAR_NODE_RATIO),
+    ],
   };
 }
 
-/** One coherent support passing behind every visible mount hole in a row. */
+/** Two coherent supports passing behind both node-point holes in a row. */
 export function computeBarSupportGeometry(
   entries: readonly BarEntry[],
   kind: BarKind,
   totalWhiteUnits: number,
 ): BarSupportGeometry {
-  return {
-    laneHeight: BAR_LANE_HEIGHT_PX[kind],
-    points: entries.map((entry) => ({
+  const pointsForMount = (mountIndex: 0 | 1): readonly BarSupportPoint[] =>
+    entries.map((entry) => ({
       note: entry.note,
       x: (entry.center / totalWhiteUnits) * 100,
-      y: computeBarGeometry(entry, kind).mountCenterY,
-    })),
+      y: computeBarGeometry(entry, kind).mountCenterYs[mountIndex],
+    }));
+
+  return {
+    laneHeight: BAR_LANE_HEIGHT_PX[kind],
+    supports: [
+      { position: "upper", points: pointsForMount(0) },
+      { position: "lower", points: pointsForMount(1) },
+    ],
   };
 }
 

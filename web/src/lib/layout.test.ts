@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  BAR_PERSPECTIVE_PX,
+  BAR_NODE_RATIO,
   computeBarGeometry,
   computeBarSupportGeometry,
   computeKeyMap,
@@ -68,42 +68,65 @@ describe("rack depth geometry", () => {
   });
 
   it.each<BarKind>(["natural", "accidental"])(
-    "drops the %s baseline monotonically by the perspective depth",
+    "centers the %s row so its top and bottom form a symmetric trapezoid",
     (kind) => {
       const geometries = row(kind).map((entry) =>
         computeBarGeometry(entry, kind),
       );
 
       for (let index = 1; index < geometries.length; index += 1) {
-        expect(geometries[index].baseline).toBeGreaterThan(
+        expect(geometries[index].top).toBeGreaterThan(
+          geometries[index - 1].top,
+        );
+        expect(geometries[index].baseline).toBeLessThan(
           geometries[index - 1].baseline,
         );
       }
-      expect(geometries.at(-1)!.baseline - geometries[0].baseline).toBeCloseTo(
-        BAR_PERSPECTIVE_PX,
+
+      const first = geometries[0];
+      const last = geometries.at(-1)!;
+      expect(last.top - first.top).toBeCloseTo(
+        first.baseline - last.baseline,
       );
+      expect(
+        new Set(geometries.map(({ top, baseline }) => top + baseline)).size,
+      ).toBe(1);
     },
   );
 
   it.each<BarKind>(["natural", "accidental"])(
-    "passes the %s support through every mount center",
+    "passes both %s supports through the two fundamental node points",
     (kind) => {
       const entries = row(kind);
-      const support = computeBarSupportGeometry(
+      const supportGeometry = computeBarSupportGeometry(
         entries,
         kind,
         layout.totalWhiteUnits,
       );
 
-      expect(support.points).toHaveLength(entries.length);
-      support.points.forEach((point, index) => {
-        const geometry = computeBarGeometry(entries[index], kind);
+      expect(supportGeometry.supports.map(({ position }) => position)).toEqual([
+        "upper",
+        "lower",
+      ]);
+      supportGeometry.supports.forEach((support, mountIndex) => {
+        expect(support.points).toHaveLength(entries.length);
+        support.points.forEach((point, index) => {
+          const entry = entries[index];
+          const geometry = computeBarGeometry(entry, kind);
 
-        expect(point.note).toBe(entries[index].note);
-        expect(point.y).toBeCloseTo(geometry.mountCenterY);
-        expect(point.x).toBeCloseTo(
-          (entries[index].center / layout.totalWhiteUnits) * 100,
-        );
+          expect(point.note).toBe(entry.note);
+          expect(point.y).toBeCloseTo(geometry.mountCenterYs[mountIndex]);
+          expect(point.x).toBeCloseTo(
+            (entry.center / layout.totalWhiteUnits) * 100,
+          );
+          const distanceFromNearestEnd =
+            mountIndex === 0
+              ? point.y - geometry.top
+              : geometry.baseline - point.y;
+          expect(distanceFromNearestEnd / entry.length).toBeCloseTo(
+            BAR_NODE_RATIO,
+          );
+        });
       });
     },
   );
