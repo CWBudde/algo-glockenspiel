@@ -122,6 +122,8 @@ glockenspiel fit \
 - `--metric`: `rms`, `log`, or `spectral`
 - `--max-iter`: iteration cap passed to the optimizer
 - `--time-budget`: wall-clock budget as a Go duration, for example `30s` or `10m`; a bare number is still read as seconds
+- `--align`: time-align each candidate to the reference before scoring, on by default. Leave it on for recorded references: a few samples of offset invert the phase of a high partial, so the correct parameters would score worse than incorrect ones
+- `--normalize-gain`: divide out the scalar gain that best matches the reference level, off by default. Use it when the reference level is unknown; it makes the model's amplitude parameters unidentifiable, so leave it off when the level is meaningful
 - `--report-every`: progress print interval
 - `--checkpoint-interval`: checkpoint write interval in progress reports; `0` disables checkpointing entirely, including the final checkpoint
 - `--work-dir`: stores checkpoints and `fitted_output.wav`, resolved relative to the current directory (default `out/fit`)
@@ -209,12 +211,10 @@ Recorded A4 comparison on 2026-03-02 with `simple` from `assets/presets/default.
 - `spectral` converged to a different fit with worse time-domain error on that problem
 - the `spectral` result also landed on a slightly lower first-mode frequency than the `rms`/`log` fit
 
-Artifacts from that comparison:
-
-- reference: `testdata/reference/glockenspiel_a4.wav`
-- `rms`: `out/phase3-metric-compare/rms/fitted_output.wav`
-- `log`: `out/phase3-metric-compare/log/fitted_output.wav`
-- `spectral`: `out/phase3-metric-compare/spectral/fitted_output.wav`
+The reference for that comparison is `testdata/reference/glockenspiel_a4.wav`, which is in the
+repository. The three rendered results are not: they were written under `out/`, which is
+gitignored local scratch. Reproduce them by running the same fit three times with
+`--metric rms`, `--metric log` and `--metric spectral` into separate `--work-dir`s.
 
 Practical conclusion:
 
@@ -223,13 +223,30 @@ Practical conclusion:
 
 ## Parameter Guide
 
-Presets contain a top-level `parameters` object with these main fields:
+### The Two Schema Versions
 
-- `input_mix`: amount of dry filtered excitation added to the resonant output
-- `filter_frequency`: lowpass cutoff for the excitation path
+A preset declares its schema in a top-level `version` field, and the loader holds it to that version's rules rather than accepting the union of both.
+
+**v1 (`"1.0"`)** is the original schema: exactly four modes, no per-mode harmonics, and a Chebyshev shaper that always sits on the excitation. A v1 document carrying a v2-only field is rejected with a message naming the field, rather than rendering differently than its version claims.
+
+**v2 (`"2.0"`)** is what new presets are written in. It adds three things:
+
+- a mode array of one to 512 modes, because the oscillator bank sizes itself at runtime. The bounds are real and enforced on load: an empty array is rejected by the v2 rules, and more than `model.MaxModes` (512) by `ValidateBarParams`
+- `modes[i].harmonics`, a per-mode gain list that expands that mode into one rotor per integer-multiple partial
+- `chebyshev.stage`, either `"excitation"` or `"output"`, making explicit the placement v1 left implicit
+
+Saving preserves the version a preset was loaded with, so fitting from the shipped v1 `default.json` writes a v1 result. Converting is explicit and, today, library-only: `preset.Upgrade` makes the v1 defaults explicit and restamps the document as v2. No CLI flag reaches it yet — writing a v2 preset means hand-editing the `version` field and the fields it unlocks.
+
+### Fields
+
+The top-level `parameters` object holds:
+
+- `input_mix`: amount of dry filtered excitation mixed into the resonant output
+- `filter_frequency`: lowpass cutoff for the excitation path, in Hz
 - `base_frequency`: reference tuning for the preset note
-- `modes`: four resonant partials with amplitude, frequency, and decay
-- `chebyshev.enabled`: enables harmonic excitation shaping
+- `modes`: the resonant partials, exactly four in v1 and one to 512 in v2
+- `chebyshev.enabled`: enables harmonic shaping
+- `chebyshev.stage`: v2 only, `excitation` (the v1 behaviour, and the default) or `output`
 - `chebyshev.harmonic_gains`: gain per generated harmonic
 
 ### Reading Mode Parameters
@@ -239,12 +256,16 @@ Each mode has:
 - `amplitude`: linear mode gain
 - `frequency`: modal frequency in Hz
 - `decay_ms`: decay time in milliseconds
+- `harmonics`: v2 only, optional, at most 64 entries (`model.MaxHarmonics`). Gains for the integer multiples of this mode's frequency; harmonic `k` runs at `(k+1) * frequency`, shares the mode's decay, and carries `amplitude * harmonics[k]`. Omitting the list leaves the mode as a single unity-gain fundamental, and different modes may carry different counts
 
 In practice:
 
 - the first mode usually dominates the perceived pitch
 - higher modes shape brightness and attack character
 - very short decay values mostly affect the transient
+- harmonics are additional rotors, not waveshaping, so they cost render time in proportion to their count
+
+One limit worth knowing before a long fit: the optimizer does not search per-mode harmonic gains. It sizes its parameter vector from the template preset's mode count and carries `harmonics` through unchanged.
 
 ## Troubleshooting
 
