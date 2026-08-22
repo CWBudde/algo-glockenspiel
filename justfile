@@ -74,6 +74,12 @@ refit-default *ARGS:
         --sample-rate 44100 --note 69 --velocity 100 \
         --work-dir out/refit {{ ARGS }}
 
+# Run the web app's checks: typecheck, lint, unit tests
+test-web:
+    npm --prefix web run typecheck
+    npm --prefix web run lint
+    npm --prefix web run test
+
 # Build the glockenspiel CLI binary
 build:
     go build -o bin/glockenspiel ./cmd/glockenspiel

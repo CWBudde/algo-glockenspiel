@@ -11,13 +11,13 @@ building, running and using it.
 
 ```
 web/
-  index.html          Vite's entry document; loads wasm_exec.js, then the app
+  index.html          Vite's entry document
   placeholder.html    embedded in the binary, shown when dist is not built
   src/
     App.tsx           tab bar, hash router and the audio engine
     routes/           PlayPage, OptimizePage
     components/       Topbar, PresetStrip, ControlRail, Dial, Rack, Keyboard
-    audio/            the WASM load sequence and the AudioContext graph
+    audio/            the engine worker, the worklet, and the AudioContext graph
     api/              the typed fit-API client and the wire types
     features/optimize/  the fit form, the event stream, the chart, the audition
     lib/              note geometry and the procedural wood texture
@@ -89,6 +89,7 @@ Checks, all of which CI runs:
 ```bash
 npm --prefix web run typecheck
 npm --prefix web run lint
+npm --prefix web run test
 npm --prefix web run build
 ```
 
@@ -150,16 +151,22 @@ See [../docs/serve.md](../docs/serve.md) for the API itself and
 
 `cmd/glockenspiel-wasm` publishes exactly one global, `glockenspielWasm`,
 carrying `init`, `noteOn`, `setMasterGain` and `processBlock`. It announces
-itself by calling `window.__glockenspielWasmReady` — installed by
-`src/audio/useWasmEngine.ts` before the Go runtime starts — so the page waits
+itself by calling `__glockenspielWasmReady` — installed by
+`src/audio/engine.worker.ts` before the Go runtime starts — so the page waits
 for an actual signal rather than guessing how long start-up takes.
 
+The module runs in a Web Worker, not on the page: an `AudioWorkletNode` drains
+the blocks the worker renders, over a channel the two hold directly. Pass
+`?audio=scriptprocessor` to force the `ScriptProcessorNode` fallback that
+browsers without `AudioWorklet` get. See
+[../docs/audio-transport.md](../docs/audio-transport.md).
+
 `processBlock` returns a pointer into Go's linear memory, and
-`src/audio/useAudioEngine.ts` reads the samples through a cached
-`Float32Array`. That cache is revalidated on every callback: growing Go's heap
-detaches the underlying `ArrayBuffer`, and a stale view over a detached buffer
-returns `undefined` instead of throwing, which lands in the output buffer as
-NaN. See the comment on `interleavedFrames`.
+`src/audio/engine.worker.ts` reads the samples through a cached `Float32Array`
+before copying them into the buffer it sends on. That cache is revalidated on
+every block: growing Go's heap detaches the underlying `ArrayBuffer`, and a
+stale view over a detached buffer returns `undefined` instead of throwing, which
+lands in the output buffer as NaN. See the comment on `interleavedFrames`.
 
 ## Usage
 
@@ -171,4 +178,6 @@ NaN. See the comment on `interleavedFrames`.
   not. See the comment in `src/lib/layout.ts`
 - Adjust `Velocity` for attack strength
 - Adjust `Volume` for overall output gain, including while a note rings
+- The status line reports the sample rate, and the number of dropouts once
+  there has been one
 - Switch to **Optimize** to fit a preset against a recording; see above

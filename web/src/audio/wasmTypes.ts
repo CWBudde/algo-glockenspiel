@@ -25,18 +25,18 @@ export interface GlockenspielWasm {
   processBlock(frames: number): number;
 }
 
-/** The Go runtime shim, loaded as a classic script from index.html. */
+/** The Go runtime shim, imported for its side effect by the engine worker. */
 export interface GoRuntime {
   importObject: WebAssembly.Imports;
   run(instance: WebAssembly.Instance): Promise<void>;
 }
 
 declare global {
+  // Published by wasm_exec.js on whichever global scope imports it. Since the
+  // module moved into a worker that is the worker's scope, not the page's.
   var Go: { new (): GoRuntime };
 
   interface Window {
-    [WASM_READY_CALLBACK]?: (api?: GlockenspielWasm) => void;
-    [WASM_NAMESPACE]?: GlockenspielWasm;
     webkitAudioContext?: typeof AudioContext;
   }
 }

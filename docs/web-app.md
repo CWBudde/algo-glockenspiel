@@ -14,13 +14,13 @@ developing it, [../web/README.md](../web/README.md).
 
 ```
 web/
-  index.html          Vite's entry document; loads wasm_exec.js, then the app
+  index.html          Vite's entry document
   placeholder.html    embedded in the binary, shown when dist is not built
   src/
     App.tsx           the tab bar, the hash router, and the audio engine
     routes/           PlayPage, OptimizePage
     components/       Topbar, PresetStrip, ControlRail, Dial, Rack, Keyboard
-    audio/            the WASM load sequence and the AudioContext graph
+    audio/            the engine worker, the worklet, and the AudioContext graph
     features/optimize/  the fit form, the event stream, the chart, the audition
     api/              the typed fit-API client and the wire types
     lib/              note geometry, the procedural wood texture
@@ -32,7 +32,7 @@ Two decisions account for most of the structure.
 
 **The audio engine lives in `App.tsx`, not in `PlayPage`.** Switching to
 Optimize unmounts the play surface, and neither the Go runtime nor a ringing
-note should die because the user looked at another tab. `useWasmEngine` and
+note should die because the user looked at another tab. `useEngineWorker` and
 `useAudioEngine` are therefore mounted above the router and passed down.
 
 **The Optimize tab is a stack of small pieces around one job.** `OptimizePage`
@@ -60,8 +60,9 @@ visible at a glance.
 
 ### The ready handshake
 
-The module announces itself by calling `window.__glockenspielWasmReady`, which
-`src/audio/useWasmEngine.ts` installs **before** the Go runtime starts. It has to
+The module announces itself by calling `__glockenspielWasmReady` on whatever
+global scope it is running in, which `src/audio/engine.worker.ts` installs
+**before** the Go runtime starts. It has to
 be installed first, because Go calls it from inside `go.run(...)`: the module's
 main runs synchronously up to the point where it blocks, so there is no later
 moment at which registering the hook would still be in time.
@@ -83,10 +84,11 @@ not fatal — the module is then fetched unfingerprinted and revalidated normall
 ### The detached-`ArrayBuffer` hazard
 
 `processBlock` returns a pointer into Go's linear memory, and
-`src/audio/useAudioEngine.ts` reads the samples through a cached `Float32Array`.
-The cache exists because a fresh view per callback is one allocation every
-~11.6 ms at 512 frames and 44.1 kHz, on the one thread that must not pause for a
-GC. But a hoisted view is exactly where this goes wrong, so `interleavedFrames`
+`src/audio/engine.worker.ts` reads the samples through a cached `Float32Array`
+before copying them into the buffer it sends on. The cache exists because a
+fresh view per block is one allocation every ~2.9 ms at 128 frames and 44.1 kHz,
+on the thread whose whole job is to stay ahead of the audio callback. But a
+hoisted view is exactly where this goes wrong, so `interleavedFrames`
 revalidates it three ways on every block.
 
 A `WebAssembly.Memory` grows when Go's heap grows, and growing **detaches** the
@@ -102,12 +104,26 @@ The three checks are buffer identity (a grow hands back a new `ArrayBuffer`
 object), `byteLength === 0` (how a detached buffer reports itself), and the
 pointer plus length (Go is free to move or resize the allocation between calls,
 so a stable buffer does not imply a stable region). When no view can be built the
-block is skipped and the output is left silent — one buffer of silence rather
-than an exception thrown out of `onaudioprocess`.
+block is sent as silence rather than skipped, so the consumer's queue keeps its
+pace and the buffer comes back.
 
-The graph itself is still a `ScriptProcessorNode`, created lazily on the first
-strike because a browser will not start an `AudioContext` without a user gesture.
-Moving it to an `AudioWorklet` is Phase 5.2 and is not done.
+The samples are then **copied** into a pooled buffer. They have to be: they live
+in Go's linear memory, which the worker cannot give away, and 256 floats per
+block is the whole price of the arrangement.
+
+## Where the audio runs
+
+The graph is an `AudioWorkletNode` fed by the engine worker over a `MessagePort`
+the two hold directly, created lazily on the first strike because a browser will
+not start an `AudioContext` without a user gesture. Synthesis therefore shares no
+thread with React, and a blocked main thread no longer interrupts a ringing note:
+measured at 0 dropouts against 280 for the `ScriptProcessorNode` this replaced,
+under the same three seconds of blocking work.
+
+[audio-transport.md](audio-transport.md) is that decision in full — the pool that
+doubles as flow control, why not `SharedArrayBuffer`, why not the module inside
+the worklet, the fallback, and the two ordering mistakes that make the dropout
+counter lie.
 
 ## The two-step build
 

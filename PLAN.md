@@ -23,7 +23,7 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | 2     | Real SIMD on three targets   | done                              |
 | 3     | Optimizer                    | done                              |
 | 4     | Serve and the optimizer UI   | done                              |
-| 5     | Web app                      | open — 5.1 and 5.3 done           |
+| 5     | Web app                      | open — 5.1, 5.2 and 5.3 done      |
 | 6     | Split out VST3               | open — 6.1 all but the last audit |
 | 7     | Documentation                | open — 7.1 and 7.2 done           |
 
@@ -59,8 +59,8 @@ What does not match the goal:
 - The optimizer tab has no code. `serve` does: it hosts the app and the fit API
   (Phase 4.1 and 4.2), but nothing in `web/` calls the API yet, so fitting from the browser
   still means fitting with `curl`.
-- The web app runs on `ScriptProcessorNode`, master gain never reaches a ringing note, and the
-  bottom two octaves of the keyboard are over-unity with an inverted right channel.
+- The optimizer tab is done (4.3) and so is the audio transport (5.2); what is left in Phase 5
+  is the baked wood textures and the printed key hints (5.4).
 - `go build -tags=vst3go ./plugin/...` fails with four errors, and `go.mod` still carries a
   `replace` directive that is unresolvable without a sibling checkout, which is also why
   `just check-tidy` cannot run in CI.
@@ -499,7 +499,7 @@ Goal: make the user-facing product good.
 
 Acceptance criteria:
 
-- [ ] Audio runs off the main thread with no dropouts under load.
+- [x] Audio runs off the main thread with no dropouts under load.
 - [ ] Volume affects a ringing note; low keys are in phase and unclipped.
 - [ ] First paint under one second on a mid-range device.
 - [ ] Full keyboard traversal with visible focus; Lighthouse accessibility at least 90.
@@ -566,10 +566,36 @@ Goal: fix the three level bugs. All of them live in Go and are unit-testable wit
 
 Goal: get synthesis off the main thread.
 
-- [ ] Replace `ScriptProcessorNode` (`web/main.js:37`) with `AudioWorklet`.
-- [ ] Decide explicitly between a same-thread worklet instance and a Worker plus ring buffer,
-      and write the decision down: `SharedArrayBuffer` needs COOP/COEP headers, which GitHub
-      Pages cannot set.
+- [x] Replace `ScriptProcessorNode` with `AudioWorklet`. The graph is an
+      `AudioWorkletNode` (`web/src/audio/renderProcessor.ts`) fed by the worker that owns the
+      Go module, over a `MessagePort` the two hold directly, so no audio crosses the main
+      thread. Measured in headless Chrome at 48 kHz with a note ringing and the main thread
+      blocked solid for 3 s: 0 dropouts, against 280 for the `ScriptProcessorNode` under the
+      same load. The old node survives as a fallback for a browser without `AudioWorklet`,
+      drains the same `BlockQueue`, and is reachable with `?audio=scriptprocessor` so it stays
+      tested.
+
+- [x] Decide explicitly between a same-thread worklet instance and a Worker plus ring buffer.
+      **A Worker hosts the module**; the decision and the two rejected alternatives are in
+      `docs/audio-transport.md`. `SharedArrayBuffer` needs COOP/COEP, which `internal/server`
+      could send and GitHub Pages cannot. Running the module in the `AudioWorkletGlobalScope`
+      was the real alternative and was rejected on two counts: `wasm_exec.js` throws by name
+      without `crypto`, `performance`, `TextEncoder` and `TextDecoder`, the Go scheduler wants
+      `setTimeout`, and that scope has none of them; and it would put Go's collector on the
+      render thread with no queue in front of it.
+
+      Flow control is the buffer pool itself. `POOL_SIZE` buffers exist, `postMessage`
+      transfers one away and detaches it in the sender, so the worker renders only into a free
+      buffer and a buffer coming back is the request for the next block — no timer, no
+      unbounded queue, nothing allocated per block. Four 128-frame buffers is ~11.6 ms, which
+      is both the jitter tolerated and the worst case for note-on latency.
+
+      Two things that made the dropout counter lie and are fixed here: the node is connected
+      only after the producer is running, because `NewRealtimeEngine` measures the preset once
+      per playable note and the graph would otherwise pull against an empty queue for that
+      whole time; and Chrome calls `process()` on a source worklet node whether or not it is
+      connected, so `BlockQueue` counts no underrun before its first block (~120 of them
+      otherwise, none audible).
 
 ### Phase 5.3: WASM bridge and build
 
@@ -667,20 +693,34 @@ Goal: a public model package shaped around the runtime-configurable bank, not ar
 
 Goal: `-tags=vst3go` builds, and stays building.
 
-- [ ] Fix `plugin/vst3/processor_vst3go_linux.go` against the current `vst3go` MIDI API. Four
-      errors today, all from the same change: `event.SampleOffset` undefined (`:122`),
-      `midi.Event` is a struct and no longer an interface (`:138`), `midi.NoteOnEvent` undefined
-      (`:139`), `midi.ControlChangeEvent` undefined (`:144`).
-- [ ] Update `plugin/vst3/params.go` for the slice-based `BarParams` that Phase 1 introduced.
-- [ ] Add a CI job that builds with `-tags=vst3go`. No job does today, which is why this rotted
-      unnoticed; after 6.3 the job lives in the split-out repo.
+**Moved to the split-out repository.** Every bullet here is work on the plugin, and the plugin
+now lives in [algo-glockenspiel-vst3](https://github.com/CWBudde/algo-glockenspiel-vst3); the
+copy still sitting in `plugin/vst3/` is deleted by 6.3 below. Repairing it in both places means
+repairing it twice and then reconciling the two, so it is repaired there. See that repository's
+`PLAN.md`, Phase 1 (the MIDI port and the parameter layer) and Phase 2 (the CI that keeps them
+building).
+
+One thing this phase did produce, and it is worth knowing on this side: `plugin/vst3/params.go`
+here is _ahead_ of the split-out copy — `numModes`/`numChebyshevGains`, the `DecayMsSearchMax`
+knob ranges, the `model.TransposeToNote` delegation and the preset-drift test all landed against
+this copy after the split. The other repository's Phase 1.1 pulls them across, so do not delete
+`plugin/vst3/` in 6.3 before that has happened.
 
 ### Phase 6.3: Split and clean up
 
 Goal: the `replace` directive and the plugin leave together.
 
 - [ ] Move `plugin/vst3/`, `cmd/glockenspiel-vst3/` and `docs/vst3*.md` to their own repository,
-      depending on this module normally.
+      depending on this module normally. Half done: all three are copied into
+      [algo-glockenspiel-vst3](https://github.com/CWBudde/algo-glockenspiel-vst3), and what is
+      left here is the deletion. Sequence it after that repository's Phase 1.1, which pulls the
+      6.2 fixes out of this copy before it goes.
+- [ ] Reconcile the module path and tag a version. The module is `github.com/cwbudde/glockenspiel`
+      while the repository is `CWBudde/algo-glockenspiel`, so `go get` cannot resolve it without
+      a rename or a `go-import` meta tag, and there are no tags at all. Until both are fixed the
+      split-out repository cannot drop its `replace github.com/cwbudde/glockenspiel =>
+  ../algo-glockenspiel` or its `v0.0.0` placeholder require, which is this phase's fourth
+      acceptance criterion measured from the other side.
 - [ ] Remove `replace github.com/cwbudde/vst3go => ../vst3go` (`go.mod:25`), which is
       unresolvable without a sibling checkout and breaks every documented `-tags=vst3go` command
       as well as `go mod tidy`.
@@ -751,10 +791,12 @@ Goal: document what is undocumented, retire what is finished.
       routing is hash-based, the Optimize loop, and why Pages cannot fit. `web/README.md`
       gained an Optimize section, and `docs/serve.md`'s "nothing under `web/` calls any of
       this yet" is no longer true and no longer says so.
-- [ ] Retire `docs/vst3-evaluation.md` and `docs/vst3go-spike.md` with the 6.3 split, or mark
-      them historical. They are the two documents Phase 7.2 deliberately left alone:
-      `docs/vst3go-spike.md:62` still lists `internal/model` in a package list, which is the
-      last stale path in `docs/` and is fixed by the move rather than by an edit.
+- [ ] Retire `docs/vst3-evaluation.md` and `docs/vst3go-spike.md` with the 6.3 split. They are
+      the two documents Phase 7.2 deliberately left alone: `docs/vst3go-spike.md:62` still lists
+      `internal/model` in a package list, which is the last stale path in `docs/` and is fixed
+      by the move rather than by an edit. Here that is a deletion — both files are already
+      copied into the split-out repository, whose Phase 5 marks them historical rather than
+      repairing them.
 - [ ] Clear `out/`. It is untracked and gitignored (`.gitignore:17`), so this is local scratch —
       profiles, checkpoints and rendered WAVs — not repo content to migrate. Anything in there
       worth keeping is a benchmark number that belongs in `docs/`.
@@ -833,6 +875,12 @@ per-parameter recovery assertions in `TestOptimizationImprovesFitAgainstLegacyRe
 to go, because a time-domain objective over a preset whose modes actually carry the signal is
 sharp enough in mode frequency that a local search cannot walk a perturbation back.
 
-Independent of all of that, and pickable in any order: **4.3** (the Optimize tab), **5.2**
-(getting synthesis off the main thread) and **7.3** (a docs page for the web app, which has
-none).
+Independent of all of that, and pickable in any order: **5.4** (baked wood textures and the
+printed key hints) and **7.3** (a docs page for the web app, which now exists as
+`docs/web-app.md`, so what is left there is the leftovers).
+
+Phase 5.2 is closed: the Go module runs in a Web Worker, an `AudioWorkletNode` drains what it
+renders, and `docs/audio-transport.md` records why that split and not one of the other three.
+The one thing it costs is note-on latency — a message hop plus the queue, on the order of
+15 ms — and the one thing it exposed is worth remembering: dropout counters measure the
+harness as much as the transport unless the graph is connected after the producer starts.
