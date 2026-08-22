@@ -173,7 +173,7 @@ h1 {
 
 .control-deck {
   display: grid;
-  grid-template-columns: auto auto minmax(280px, 1.2fr) minmax(240px, 1fr);
+  grid-template-columns: auto auto minmax(240px, 1fr);
   align-items: center;
   gap: var(--space-4xl);
   padding: var(--space-lg) var(--space-4xl);
@@ -182,46 +182,12 @@ h1 {
   box-shadow: 0 4px 12px rgba(49, 37, 28, 0.06);
 }
 
-.control-deck-appearance,
 .control-deck-status {
   min-width: 0;
   padding: var(--space-lg) var(--space-xl);
   border: 1px solid rgba(72, 55, 39, 0.13);
   border-radius: var(--radius-group);
   background: rgba(255, 250, 241, 0.48);
-}
-
-.control-deck-appearance {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-lg) var(--space-xl);
-}
-
-.wood-field {
-  display: grid;
-  gap: var(--space-xs);
-  color: var(--charcoal);
-  font-size: var(--type-body);
-  font-weight: 700;
-}
-
-.wood-field select {
-  min-height: 36px;
-  padding: 0 var(--space-lg);
-  border: 1px solid var(--surface-border);
-  border-radius: var(--radius-control);
-  background: linear-gradient(180deg, #76502a, #55331a);
-  color: var(--text-on-wood);
-  font: inherit;
-  font-weight: 400;
-}
-
-.wood-description {
-  margin: 0;
-  color: var(--charcoal-muted);
-  font-size: var(--type-caption);
-  line-height: 1.35;
 }
 
 .control-deck-status {
@@ -711,7 +677,6 @@ h1 {
     font-size: 0.78rem;
   }
 
-  .control-deck-appearance,
   .control-deck-status {
     grid-column: auto;
     align-self: stretch;
@@ -719,30 +684,13 @@ h1 {
     border-radius: var(--radius-control);
   }
 
-  .control-deck-appearance {
-    grid-template-columns: minmax(0, 1fr);
-    align-content: start;
-    gap: var(--space-2xs);
-  }
-
-  .wood-field {
-    gap: 2px;
-    font-size: 0.76rem;
-  }
-
-  .wood-field select {
-    width: 100%;
-    padding: 0 var(--space-sm);
-    font-size: 0.78rem;
-  }
-
-  .wood-description,
   .status-panel {
     font-size: 0.75rem;
     line-height: 1.25;
   }
 
   .control-deck-status {
+    grid-column: 1 / -1;
     align-content: start;
     gap: 2px;
     min-height: 0;
@@ -947,7 +895,6 @@ h1 {
 .tab:focus-visible,
 .bar:focus-visible,
 .piano-key:focus-visible,
-.wood-field select:focus-visible,
 .dial-input:focus-visible + .dial-face,
 .optimize-panel a:focus-visible,
 .fit-field input:focus-visible,
@@ -1556,7 +1503,6 @@ h1 {
     font-size: 0.76rem;
   }
 
-  .wood-field select,
   .fit-field input,
   .fit-field select,
   .fit-advanced summary,

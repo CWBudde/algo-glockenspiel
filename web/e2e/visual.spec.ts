@@ -439,22 +439,19 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
 
   const compactTargets = await page
     .getByRole("region", { name: "Performance controls" })
-    .locator(".dial-assembly, select")
+    .locator(".dial-assembly")
     .evaluateAll((elements) =>
       elements.map((element) => {
         const box = element.getBoundingClientRect();
         return { height: box.height, width: box.width };
       }),
     );
-  expect(compactTargets).toHaveLength(3);
+  expect(compactTargets).toHaveLength(2);
   expect(
     compactTargets.every(({ height, width }) => height >= 44 && width >= 44),
   ).toBe(true);
 
-  for (const panelSelector of [
-    ".control-deck-appearance",
-    ".control-deck-status",
-  ]) {
+  for (const panelSelector of [".control-deck-status"]) {
     const contained = await page.locator(panelSelector).evaluate((panel) => {
       const panelBox = panel.getBoundingClientRect();
       return [...panel.querySelectorAll("span, p, select")].every((element) => {
@@ -599,10 +596,6 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
   await viewport.evaluate((element) => {
     element.scrollLeft = 0;
   });
-  await page
-    .getByRole("region", { name: "Performance controls" })
-    .getByRole("combobox", { name: "Wood" })
-    .selectOption("maple");
   await expect
     .poll(() => viewport.evaluate((element) => element.scrollLeft))
     .toBe(0);
@@ -952,7 +945,6 @@ test("performance deck keeps native controls and live engine status", async ({
   const deck = page.getByRole("region", { name: "Performance controls" });
   const volume = deck.getByRole("slider", { name: "Volume" });
   const velocity = deck.getByRole("slider", { name: "Velocity" });
-  const wood = deck.getByRole("combobox", { name: "Wood" });
   const status = deck.locator(".status-panel");
 
   await expect(deck).toBeVisible();
@@ -985,11 +977,7 @@ test("performance deck keeps native controls and live engine status", async ({
   await expect(velocity).toHaveValue("110");
   await expect(deck.locator('output[for="velocity"]')).toHaveText("110");
 
-  await wood.selectOption("walnut");
-  await expect(wood).toHaveValue("walnut");
-  await expect(page.locator("#wood-description")).toHaveText(
-    "Dark semi-ring-porous walnut with restrained rays and soft curl.",
-  );
+  await expect(deck.getByRole("combobox", { name: "Wood" })).toHaveCount(0);
   await expect(page.locator("html")).toHaveAttribute(
     "data-wood-species",
     "walnut",

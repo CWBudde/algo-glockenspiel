@@ -1,6 +1,6 @@
 {
   "texture": { "width": 1024, "height": 576, "seed": 918273 },
-  "defaultSpecies": "beech",
+  "defaultSpecies": "walnut",
   "base": {
     "boardWidthCm": 56, "boardHeightCm": 31.5, "tangentOffsetCm": 12.2,
     "ringSpacingCm": 1.18, "ringWidthJitter": 0.16, "latewoodThreshold": 0.72, "latewoodTransition": 0.13,
