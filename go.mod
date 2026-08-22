@@ -6,7 +6,6 @@ require (
 	github.com/cwbudde/algo-dsp v0.7.0
 	github.com/cwbudde/algo-fft v0.8.0
 	github.com/cwbudde/mayfly v0.4.0
-	github.com/cwbudde/vst3go v0.0.0
 	github.com/go-audio/audio v1.0.0
 	github.com/go-audio/wav v1.1.0
 	github.com/spf13/cobra v1.10.2
@@ -21,5 +20,3 @@ require (
 	github.com/spf13/pflag v1.0.9 // indirect
 	golang.org/x/tools v0.30.0 // indirect
 )
-
-replace github.com/cwbudde/vst3go => ../vst3go

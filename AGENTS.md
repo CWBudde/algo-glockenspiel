@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository is a Go project for a glockenspiel synthesizer built on a runtime-configurable oscillator bank. It is not a physical model. There are three entry points: `cmd/glockenspiel` (the CLI), `cmd/glockenspiel-wasm` (the WebAssembly build behind the web app) and `cmd/glockenspiel-vst3` (behind `linux && cgo && vst3go`).
+This repository is a Go project for a glockenspiel synthesizer built on a runtime-configurable oscillator bank. It is not a physical model. There are two entry points: `cmd/glockenspiel` (the CLI) and `cmd/glockenspiel-wasm` (the WebAssembly build behind the web app). The VST3 plugin is a separate module, [algo-glockenspiel-vst3](https://github.com/CWBudde/algo-glockenspiel-vst3), and consumes `model` as a dependency.
 
 One package is public, because a separate module has to import it:
 
@@ -17,7 +17,7 @@ The rest is under `internal/`:
 - `internal/cli`: Cobra commands.
 - `internal/optimizer`: objectives, optimizer backends, checkpoints.
 
-The web front end lives in `web/` and the VST3 layer in `plugin/vst3`. Static assets live in `assets/presets` and are embedded into the binary. Regression fixtures and sample inputs live in `testdata/`. Helper scripts are in `scripts/`. Design notes are in `docs/`, and [PLAN.md](PLAN.md) tracks phase state.
+The web front end lives in `web/`. Static assets live in `assets/presets` and are embedded into the binary. Regression fixtures and sample inputs live in `testdata/`. Helper scripts are in `scripts/`. Design notes are in `docs/`, and [PLAN.md](PLAN.md) tracks phase state.
 
 Assembly under `internal/oscbank` and `model` is Go Plan 9 syntax and is held to a written numeric contract; read [docs/oscillator-bank.md](docs/oscillator-bank.md) before touching a `.s` file or the portable kernel it is measured against.
 
@@ -37,7 +37,7 @@ Assembly under `internal/oscbank` and `model` is Go Plan 9 syntax and is held to
 
 Direct equivalents are available, for example `go test ./...` and `go build ./cmd/glockenspiel`.
 
-`just ci` ends in `check-tidy`, which fails until Phase 6.3 removes the `replace` directive for `github.com/cwbudde/vst3go` from `go.mod`: it is unresolvable without a sibling checkout. CI runs the other three checks and does not run `check-tidy` for that reason.
+`just ci` ends in `check-tidy`, which runs `go mod tidy -diff`: it reports what tidying would change and exits non-zero without rewriting the tree. CI runs the same command in `test-can-build`.
 
 ## Coding Style & Naming Conventions
 

@@ -61,9 +61,9 @@ What does not match the goal:
   still means fitting with `curl`.
 - The optimizer tab is done (4.3) and so is the audio transport (5.2); what is left in Phase 5
   is the baked wood textures and the printed key hints (5.4).
-- `go build -tags=vst3go ./plugin/...` fails with four errors, and `go.mod` still carries a
-  `replace` directive that is unresolvable without a sibling checkout, which is also why
-  `just check-tidy` cannot run in CI.
+- The module path still does not resolve: the module is `github.com/cwbudde/glockenspiel`, the
+  repository is `CWBudde/algo-glockenspiel`, and there are no tags. Until that is reconciled,
+  the plugin repository cannot depend on this one the ordinary way (Phase 6.3).
 - The web app has no page in `docs/` (Phase 7.3).
 
 ---
@@ -86,7 +86,7 @@ Worth remembering: `golangci-lint` had never passed before this phase; `varnamel
 configured for DSP names rather than disabled. algo-fft v0.8.0 made the real plans generic.
 `go mod tidy` promoted `golang.org/x/sys` to a direct dependency. The `check-tidy` recipe was
 left out of CI because the `vst3go` `replace` directive makes it unrunnable on a runner —
-Phase 6.3 earns it back.
+Phase 6.3 earned it back.
 
 ## Phase 1: Configurable Oscillator Bank — DONE (2026-08-21)
 
@@ -710,23 +710,39 @@ this copy after the split. The other repository's Phase 1.1 pulls them across, s
 
 Goal: the `replace` directive and the plugin leave together.
 
-- [ ] Move `plugin/vst3/`, `cmd/glockenspiel-vst3/` and `docs/vst3*.md` to their own repository,
-      depending on this module normally. Half done: all three are copied into
-      [algo-glockenspiel-vst3](https://github.com/CWBudde/algo-glockenspiel-vst3), and what is
-      left here is the deletion. Sequence it after that repository's Phase 1.1, which pulls the
-      6.2 fixes out of this copy before it goes.
+- [x] Move `plugin/vst3/`, `cmd/glockenspiel-vst3/` and `docs/vst3*.md` to their own repository,
+      depending on this module normally. Done: all three are in
+      [algo-glockenspiel-vst3](https://github.com/CWBudde/algo-glockenspiel-vst3) and are deleted
+      here. The sequencing held — that repository's Phase 1.1 pulled the 6.2 fixes out of this
+      copy first, so `numModes`/`numChebyshevGains`, the `DecayMsSearchMax` knob ranges, the
+      `model.TransposeToNote` delegation and the preset-drift test all crossed before the
+      deletion. `plugin/` is gone with its only package; `web/README.md` now points at the
+      mockup in the other repository.
 - [ ] Reconcile the module path and tag a version. The module is `github.com/cwbudde/glockenspiel`
-      while the repository is `CWBudde/algo-glockenspiel`, so `go get` cannot resolve it without
-      a rename or a `go-import` meta tag, and there are no tags at all. Until both are fixed the
-      split-out repository cannot drop its `replace github.com/cwbudde/glockenspiel =>
-  ../algo-glockenspiel` or its `v0.0.0` placeholder require, which is this phase's fourth
-      acceptance criterion measured from the other side.
-- [ ] Remove `replace github.com/cwbudde/vst3go => ../vst3go` (`go.mod:25`), which is
+      while the repository is `CWBudde/algo-glockenspiel`, so `go get` cannot resolve it, and
+      there are no tags at all. Until both are fixed the split-out repository cannot drop its
+      `replace github.com/cwbudde/glockenspiel => ../algo-glockenspiel` or its `v0.0.0`
+      placeholder require, which is this phase's fourth acceptance criterion measured from the
+      other side. Two corrections to the options above: a `go-import` meta tag is **not** one.
+      Go resolves `github.com/...` paths through its built-in GitHub rule and never fetches a
+      meta tag for them, so the choice is between renaming the repository to `glockenspiel` —
+      no code changes, GitHub keeps a redirect, and the module path already matches — and
+      renaming the module to `github.com/cwbudde/algo-glockenspiel`, which rewrites the import
+      in 53 files here plus every import in the plugin repository. Decided: rename the
+      repository. That is a settings change and a tag, neither of which a pull request can
+      carry; both are on the owning account. Everything that a pull request _can_ carry is
+      done, so this bullet is now one click and one `git tag` from closing.
+- [x] Remove `replace github.com/cwbudde/vst3go => ../vst3go` (`go.mod:25`), which is
       unresolvable without a sibling checkout and breaks every documented `-tags=vst3go` command
-      as well as `go mod tidy`.
-- [ ] Restore the tidiness check in CI. `just check-tidy` exists but no workflow runs it; it was
+      as well as `go mod tidy`. The `require` went with it — a bare `replace` is not what made
+      the module unresolvable, the requirement on `v0.0.0` was — and nothing outside the deleted
+      plugin imported it. `go.sum` needed no change: Phase 0 had already pruned it.
+- [x] Restore the tidiness check in CI. `just check-tidy` exists but no workflow runs it; it was
       dropped in Phase 0 precisely because the `replace` directive makes it unrunnable on a
-      runner, and removing the directive is what earns it back.
+      runner, and removing the directive is what earns it back. `go mod tidy -diff` now runs as
+      the first step of `test-can-build`, and the `justfile` recipe was reduced to the same
+      command — it was `go mod tidy && git diff --exit-code`, which rewrites the tree to find
+      out whether it needed to, and which could therefore drift from what CI checks.
 - [x] Clean the stale `justyntemme/vst3go` entries out of `go.sum`. Already done by the Phase 0
       `go mod tidy`.
 
@@ -791,12 +807,12 @@ Goal: document what is undocumented, retire what is finished.
       routing is hash-based, the Optimize loop, and why Pages cannot fit. `web/README.md`
       gained an Optimize section, and `docs/serve.md`'s "nothing under `web/` calls any of
       this yet" is no longer true and no longer says so.
-- [ ] Retire `docs/vst3-evaluation.md` and `docs/vst3go-spike.md` with the 6.3 split. They are
+- [x] Retire `docs/vst3-evaluation.md` and `docs/vst3go-spike.md` with the 6.3 split. They are
       the two documents Phase 7.2 deliberately left alone: `docs/vst3go-spike.md:62` still lists
       `internal/model` in a package list, which is the last stale path in `docs/` and is fixed
       by the move rather than by an edit. Here that is a deletion — both files are already
       copied into the split-out repository, whose Phase 5 marks them historical rather than
-      repairing them.
+      repairing them. Deleted with 6.3. `docs/` now has no stale paths left.
 - [ ] Clear `out/`. It is untracked and gitignored (`.gitignore:17`), so this is local scratch —
       profiles, checkpoints and rendered WAVs — not repo content to migrate. Anything in there
       worth keeping is a benchmark number that belongs in `docs/`.

@@ -142,7 +142,6 @@ The shipped preset is [assets/presets/default.json](assets/presets/default.json)
 .
 ├── cmd/glockenspiel        # CLI entry point
 ├── cmd/glockenspiel-wasm   # WebAssembly entry point for the web app
-├── cmd/glockenspiel-vst3   # VST3 entry point (linux + cgo + tag vst3go)
 ├── web/                    # The web app: HTML, CSS, JS mixer, wasm_exec.js
 ├── model/                  # Public bar model: parameters, Chebyshev shaper, Bar
 ├── internal/oscbank        # The oscillator bank and its SIMD kernels
@@ -151,7 +150,6 @@ The shipped preset is [assets/presets/default.json](assets/presets/default.json)
 ├── internal/preset         # Preset JSON schema v1/v2, load, save, validate
 ├── internal/optimizer      # Objectives, optimizers, checkpoints
 ├── internal/cli            # Cobra commands
-├── plugin/vst3             # VST3 plugin layer (see docs/vst3-evaluation.md)
 ├── assets/presets          # Built-in presets, embedded into the binary
 ├── docs/                   # Design notes and the user guide
 ├── scripts/                # WASM build and test helpers
@@ -176,9 +174,9 @@ just bench    # go test -run=^$ -bench=. -benchmem ./...
 just ci       # check-formatted, test, lint, check-tidy
 ```
 
-`just check-tidy` currently fails on its own: `go.mod` carries a `replace` directive for `github.com/cwbudde/vst3go` that is unresolvable without a sibling checkout. Retiring it is Phase 6.3. CI therefore runs the other three checks, plus a WASM build and unit tests on amd64 at `GOAMD64=v1` and `v3` and on arm64.
+`just check-tidy` runs `go mod tidy -diff`, and CI runs it too, alongside a WASM build and unit tests on amd64 at `GOAMD64=v1` and `v3` and on arm64.
 
-The `-tags=vst3go` plugin build does not compile today. Without the sibling checkout the `replace` directive points at, it fails to resolve the dependency at all; with it, `plugin/vst3/processor_vst3go_linux.go` is out of date against the current `vst3go` MIDI API. Repairing it and giving it a CI job is Phase 6.2.
+The VST3 plugin is no longer built here. It lives in [algo-glockenspiel-vst3](https://github.com/CWBudde/algo-glockenspiel-vst3) and consumes this module's `model` package as an ordinary dependency.
 
 ## Architecture
 
