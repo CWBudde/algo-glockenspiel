@@ -703,9 +703,11 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       clean 390px wrapping. The logo, product name, hash links and focus ring remain intact, and the
       inaccurate kicker now reads “Algorithmic Instrument.” All four shell-affected references
       were intentionally updated and pass pixel-exact comparison.
-- [ ] **5.5.4 — Simplify the Play surfaces.** Remove redundant cream frames and repeated texture
-      layers around the instrument. Restrict the baked wood texture from 5.4 to the rack frame and
-      deliberate trim, with flat neutral surfaces elsewhere.
+- [x] **5.5.4 — Simplify the Play surfaces.** The preset strip, performance surround, rack bed and
+      keyboard deck are now matte neutral surfaces with lighter borders and elevation. The rack's
+      single structural frame and its support rails retain the selected procedural wood; the extra
+      cream inset, blurred rack shadow and repeated texture layers are gone. The three Play
+      references were intentionally updated, while Optimize remains pixel-exact and unchanged.
 - [ ] **5.5.5 — Rebuild the performance control deck.** Place Volume, Velocity, wood selection and
       engine status in one compact responsive deck. Preserve the current range-input semantics,
       wheel and keyboard operation, live status announcement and error state.

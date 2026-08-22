@@ -169,17 +169,11 @@ h1 {
   flex-wrap: wrap;
   margin: -2px 0 0;
   padding: var(--space-lg) var(--space-xl) var(--space-2xl);
-  border: 1px solid rgba(101, 58, 28, 0.26);
+  border: 1px solid rgba(72, 55, 39, 0.18);
   border-top: 0;
   border-radius: 0 0 var(--radius-panel) var(--radius-panel);
-  background:
-    linear-gradient(
-      180deg,
-      rgba(255, 238, 214, 0.72),
-      rgba(239, 221, 197, 0.92)
-    ),
-    var(--wood-panel-texture) center/cover no-repeat;
-  box-shadow: 0 12px 28px var(--shadow-soft-color);
+  background: #eee7dc;
+  box-shadow: 0 4px 12px rgba(49, 37, 28, 0.08);
 }
 
 .preset-field {
@@ -213,10 +207,10 @@ h1 {
 .instrument-card {
   overflow: hidden;
   margin-top: var(--space-xl);
-  border: 2px solid #89572e;
+  border: 1px solid rgba(72, 55, 39, 0.24);
   border-radius: var(--radius-panel);
-  background: var(--parchment-material);
-  box-shadow: var(--shadow-panel);
+  background: #f3eee6;
+  box-shadow: 0 12px 30px rgba(49, 37, 28, 0.14);
 }
 
 .instrument-main {
@@ -337,53 +331,35 @@ h1 {
   position: absolute;
   inset: 28px 28px 18px 24px;
   border-radius: var(--space-6xl);
-  background: radial-gradient(
-    circle at 50% 55%,
-    rgba(131, 97, 61, 0.18),
-    rgba(131, 97, 61, 0) 68%
-  );
-  filter: blur(14px);
+  background: none;
+  filter: none;
 }
 
 .rack {
   position: relative;
   min-height: 382px;
-  border-radius: 26px;
+  border-radius: 22px;
   background:
-    linear-gradient(
-      180deg,
-      rgba(255, 253, 246, 0.86),
-      rgba(255, 253, 246, 0) 14%
-    ),
-    linear-gradient(180deg, #f2e5cf, #e5d1b1 72%, #d6bc97);
+    linear-gradient(180deg, rgba(255, 245, 228, 0.1), rgba(42, 29, 20, 0.18)),
+    var(--wood-panel-texture) center/cover no-repeat;
   box-shadow:
-    inset 0 0 0 1px rgba(155, 122, 80, 0.26),
-    inset 0 1px 0 rgba(255, 250, 242, 0.84),
-    inset 0 -8px 14px rgba(132, 101, 63, 0.14);
+    inset 0 0 0 1px rgba(67, 43, 26, 0.26),
+    inset 0 1px 0 rgba(255, 242, 219, 0.22),
+    0 4px 12px rgba(57, 42, 29, 0.12);
 }
 
-.rack::before,
-.rack::after {
+.rack::before {
   content: "";
   position: absolute;
   inset: 28px 24px 24px 24px;
-  border-radius: 18px;
-  background:
-    linear-gradient(180deg, rgba(255, 248, 236, 0.44), rgba(255, 248, 236, 0)),
-    var(--wood-panel-texture) center/cover no-repeat;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 250, 242, 0.5),
-    inset 0 -6px 10px rgba(138, 102, 67, 0.08);
+  border: 1px solid rgba(77, 59, 43, 0.14);
+  border-radius: 16px;
+  background: #e8e2d8;
+  box-shadow: none;
 }
 
 .rack::after {
-  inset: 38px 34px 34px 34px;
-  border-radius: 14px;
-  background: linear-gradient(
-    180deg,
-    rgba(188, 160, 126, 0.16),
-    rgba(188, 160, 126, 0.04)
-  );
+  content: none;
 }
 
 .rail {
@@ -527,14 +503,8 @@ h1 {
 
 .keyboard-panel {
   position: relative;
-  border-top: 2px solid rgba(168, 132, 88, 0.66);
-  background:
-    linear-gradient(
-      180deg,
-      rgba(241, 228, 205, 0.92),
-      rgba(219, 196, 162, 0.96)
-    ),
-    var(--wood-panel-texture) center/cover no-repeat;
+  border-top: 1px solid rgba(72, 55, 39, 0.18);
+  background: #e7dfd3;
   padding: var(--space-md) var(--space-3xl) var(--space-2xl);
 }
 
