@@ -124,10 +124,17 @@ export function PlayPage({ engine, audio, gain, onGainChange }: PlayPageProps) {
 
   // The audio engine has the more recent news once it has anything to say:
   // "Ready at 44100 Hz" supersedes "WASM loaded. Strike a bar to start audio."
-  const status = audio.status
-    ? withDropouts(audio.status, audio.underruns)
-    : engine.status;
-  const statusIsError = audio.status ? audio.error : engine.error;
+  // An engine failure outranks everything: the Go runtime can stop, or the
+  // worker can die, long after the graph reported "Ready at 48000 Hz", and the
+  // consumer then drains a queue nothing refills. Reporting the ready line
+  // through that would leave a rising dropout counter as the only sign of a
+  // dead engine.
+  const status = engine.error
+    ? engine.status
+    : audio.status
+      ? withDropouts(audio.status, audio.underruns)
+      : engine.status;
+  const statusIsError = engine.error || audio.error;
 
   return (
     <>

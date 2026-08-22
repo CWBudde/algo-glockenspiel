@@ -66,6 +66,26 @@ export function useEngineWorker(): EngineWorker {
       reject: (error: Error) => void;
     } | null = null;
 
+    /**
+     * failStart hands a failure to whoever is waiting on start(), if anyone is.
+     *
+     * Nothing else can: start() resolves on a message from the worker, so a
+     * worker that dies without sending one leaves the promise pending forever
+     * -- and useAudioEngine keeps that promise in startPromiseRef and hands it
+     * to every later strike, so a single failed start would cost the page its
+     * audio until a reload.
+     */
+    const failStart = (failure: Error): boolean => {
+      if (!pendingStart) {
+        return false;
+      }
+
+      pendingStart.reject(failure);
+      pendingStart = null;
+
+      return true;
+    };
+
     const send = (command: EngineCommand, transfer: Transferable[] = []) => {
       worker.postMessage(command, transfer);
     };
@@ -108,10 +128,7 @@ export function useEngineWorker(): EngineWorker {
           // reports it through the audio status; anything else is the module
           // itself and has nowhere else to be seen.
           const failure = new Error(message.message);
-          if (pendingStart) {
-            pendingStart.reject(failure);
-            pendingStart = null;
-
+          if (failStart(failure)) {
             return;
           }
 
@@ -124,8 +141,16 @@ export function useEngineWorker(): EngineWorker {
     };
 
     worker.onerror = (event) => {
+      // Everything that escapes the worker lands here: a module that fails to
+      // load, and anything the message handler throws -- a Go panic out of
+      // init, say -- which is a start that will never report either way.
       console.error("Engine worker failed", event);
-      setStatus(event.message || "the audio engine worker failed to start");
+
+      const message =
+        event.message || "the audio engine worker failed to start";
+
+      failStart(new Error(message));
+      setStatus(message);
       setError(true);
     };
 
