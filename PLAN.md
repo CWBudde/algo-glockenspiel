@@ -427,18 +427,25 @@ Goal: get synthesis off the main thread.
 
 Goal: a smaller, cache-busted payload behind a bridge that says what it means.
 
-- [ ] Namespace the globals. `wasmInit`, `wasmNoteOn`, `wasmSetMasterGain`, `wasmProcessBlock`
+- [x] Namespace the globals. `wasmInit`, `wasmNoteOn`, `wasmSetMasterGain`, `wasmProcessBlock`
       and `wasmGetMemoryBuffer` all sit on `js.Global()` (`cmd/glockenspiel-wasm/main.go:18-22`).
-- [ ] Delete `wasmGetMemoryBuffer` (`cmd/glockenspiel-wasm/main.go:74-81`): it reads
+      Now one global, `glockenspielWasm`, carrying `init`, `noteOn`, `setMasterGain` and
+      `processBlock`.
+- [x] Delete `wasmGetMemoryBuffer` (`cmd/glockenspiel-wasm/main.go:74-81`): it reads
       `__algoGlockenspielWasmMemory`, which nothing sets, and no JS calls it.
-- [ ] Cache the `Float32Array` view instead of allocating one per audio callback
-      (`web/main.js:55-59`).
-- [ ] Replace the 50 ms `setTimeout` WASM-ready race (`web/main.js:200`) with a real ready
-      signal from Go.
-- [ ] `scripts/build-wasm.sh`: add `-trimpath`, `-ldflags="-s -w"`, a `wasm-opt` pass and
+- [x] Cache the `Float32Array` view instead of allocating one per audio callback
+      (`web/main.js:55-59`). The cache is revalidated per callback against buffer identity,
+      detachment and the pointer, because growing Go's heap detaches the `ArrayBuffer`.
+- [x] Replace the 50 ms `setTimeout` WASM-ready race (`web/main.js:200`) with a real ready
+      signal from Go. Go now invokes `window.__glockenspielWasmReady` once its exports are in
+      place.
+- [x] `scripts/build-wasm.sh`: add `-trimpath`, `-ldflags="-s -w"`, a `wasm-opt` pass and
       content-hash cache busting, and stop it overwriting the tracked `web/wasm_exec.js`.
-- [ ] Document the TinyGo decision either way. Nothing in `docs/`, `README.md` or `web/README.md`
-      mentions it today.
+      3,476,521 -> 3,212,389 bytes with `wasm-opt` installed; the pass is optional, the hash
+      travels in the query string so the artifact keeps the name `internal/server` expects,
+      and `--refresh-wasm-exec` updates `web/wasm_exec.js` deliberately.
+- [x] Document the TinyGo decision either way. Nothing in `docs/`, `README.md` or `web/README.md`
+      mentions it today. Decided against for now; see `docs/tinygo-evaluation.md`.
 
 ### Phase 5.4: UI quality
 
