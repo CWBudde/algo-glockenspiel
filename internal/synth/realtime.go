@@ -57,6 +57,17 @@ type realtimeVoice struct {
 	left   float32
 	right  float32
 	buffer []float32
+
+	// lane is the index this voice occupies in the engine's voice-major
+	// oscillator banks, or -1 while the slot is not sounding. It is the one
+	// thing about a slot that is *not* fixed to the slot: the rotor state for a
+	// voice is a stride through a bank's arrays and cannot be moved cheaply, so
+	// the lane has to travel with the note rather than with the slot, and the
+	// slots are permuted by voice stealing and by retirement. A voice keeps the
+	// lane it was given from note-on until it retires; a retiring voice hands
+	// its lane back, and the next note-on takes the lowest free one so the
+	// sounding voices stay packed into as few banks as possible.
+	lane int
 }
 
 // start records what a slot is now playing, after its stream has already been
@@ -79,6 +90,28 @@ type RealtimeEngine struct {
 	noteDuration  float64
 	renderOptions RenderOptions
 	maxVoices     int
+
+	// banks are the voice-major oscillator banks the whole engine renders
+	// through, one per oscbank.LaneWidth lanes. Lane l lives in
+	// banks[l/LaneWidth] at index l%LaneWidth.
+	banks []*oscbank.VoiceBank
+
+	// laneUsed marks the lanes a sounding voice holds. acquireLane takes the
+	// lowest free one, which is what keeps the sounding voices packed low and
+	// the number of banks a block has to walk proportional to the banks they
+	// occupy rather than to the slot count.
+	laneUsed []bool
+
+	// laneVoice maps a lane to the index of the voice holding it, or -1. It is
+	// rebuilt once per block, because the voice list is permuted between blocks
+	// and the render has to walk lanes in bank order rather than list order.
+	laneVoice []int32
+
+	// interleavedIn and interleavedOut are one bank's [samples][LaneWidth]
+	// excitation and output. One pair serves every bank because the banks are
+	// processed one after another. Grow-only, like mixBuffer.
+	interleavedIn  []float32
+	interleavedOut []float32
 
 	// noteTrims is the per-note level trim, indexed by note-trimsFirst, and
 	// read once per note-on. Built by calibrateNoteTrims at construction, never
@@ -120,6 +153,7 @@ func newVoiceSlots(s *Synthesizer, maxVoices, frames int) []realtimeVoice {
 	for i := range slots {
 		start := i * frames
 		slots[i].buffer = pool[start : start+frames : start+frames]
+		slots[i].lane = noLane
 
 		voice, err := s.newIdleVoice()
 		if err != nil {
@@ -150,7 +184,7 @@ func newVoiceSlots(s *Synthesizer, maxVoices, frames int) []realtimeVoice {
 // the noise of the calibration it sits next to (38.7..41.3 ms before,
 // 39.1..42.8 ms after, three runs each). Both are paid once at startup.
 func NewRealtimeEngine(s *Synthesizer) *RealtimeEngine {
-	return &RealtimeEngine{
+	engine := &RealtimeEngine{
 		synth:        s,
 		voices:       newVoiceSlots(s, defaultRealtimeMaxVoices, defaultRealtimeBlockFrames),
 		mixBuffer:    make([]float32, defaultRealtimeBlockFrames*2),
@@ -160,10 +194,57 @@ func NewRealtimeEngine(s *Synthesizer) *RealtimeEngine {
 			AutoStop:  true,
 			DecayDBFS: defaultVoiceDecayDBFS,
 		},
-		maxVoices:  defaultRealtimeMaxVoices,
-		noteTrims:  calibrateNoteTrims(s),
-		trimsFirst: KeyboardFirstNote,
+		maxVoices:      defaultRealtimeMaxVoices,
+		laneUsed:       make([]bool, defaultRealtimeMaxVoices),
+		laneVoice:      make([]int32, defaultRealtimeMaxVoices),
+		interleavedIn:  make([]float32, defaultRealtimeBlockFrames*oscbank.LaneWidth),
+		interleavedOut: make([]float32, defaultRealtimeBlockFrames*oscbank.LaneWidth),
+		noteTrims:      calibrateNoteTrims(s),
+		trimsFirst:     KeyboardFirstNote,
 	}
+
+	engine.banks = newVoiceBanks(s, len(engine.laneUsed))
+
+	return engine
+}
+
+// noLane is the lane index of a slot that is not sounding.
+const noLane = -1
+
+// newVoiceBanks builds one voice-major bank per LaneWidth lanes and pins every
+// lane of every bank to the preset's own shape.
+//
+// The pinning is not cosmetic. oscbank.VoiceBank infers its shape from the
+// widest lane it holds, and a shape change discards every lane's rotor state --
+// which on the audio path would be every sounding note going silent at once.
+// Configuring all lanes here, with the preset's own oscillators, fixes the
+// shape before the first note-on, and transposition never changes it: it scales
+// frequencies and decays and leaves the mode and harmonic counts alone. Every
+// later SetVoice therefore takes the unchanged-shape path and touches only the
+// lane it names. TestNoteOnLeavesRingingVoicesUndisturbed is what pins that.
+func newVoiceBanks(s *Synthesizer, lanes int) []*oscbank.VoiceBank {
+	banks := make([]*oscbank.VoiceBank, (lanes+oscbank.LaneWidth-1)/oscbank.LaneWidth)
+
+	for i := range banks {
+		banks[i] = newVoiceBank(s)
+	}
+
+	return banks
+}
+
+func newVoiceBank(s *Synthesizer) *oscbank.VoiceBank {
+	bank := oscbank.NewVoiceBank(float64(s.sampleRate))
+
+	for lane := 0; lane < oscbank.LaneWidth; lane++ {
+		// The error cannot fire: these are the oscillators a validated preset
+		// built a bar from. Ignoring it keeps the constructor total, and a lane
+		// that somehow failed to configure is silent rather than wrong.
+		_ = bank.SetVoice(lane, s.bar.BankOscillators())
+	}
+
+	bank.Reset()
+
+	return bank
 }
 
 // calibrateNoteTrims measures the preset at every playable note and returns the
@@ -367,7 +448,101 @@ func (e *RealtimeEngine) restrikeSlot(slot, note, velocity int) bool {
 		return false
 	}
 
+	// A retrigger or a steal reuses the lane the slot is already sounding on;
+	// only a slot that is not sounding needs a new one. Taking the lowest free
+	// lane is what packs the sounding voices into the low banks: a block pays
+	// for one pass per bank that holds a sounding voice, not one per slot that
+	// has ever been used.
+	//
+	// "One pass per occupied bank" is the honest form of that claim, and it is
+	// weaker than ceil(polyphony/LaneWidth): a lane is released where its note
+	// retired, so survivors can straddle more banks than their count needs, and
+	// nothing moves a survivor down. Rotor state lives in its bank's arrays, so
+	// compacting one means migrating that state, which VoiceBank has no API
+	// for. Measured at 128 frames with eight sounding voices: 4423 ns in one
+	// bank, 4748 across two, 5952 across four, 6604 across eight. The common
+	// case is cheap and it self-heals, because a hole is the lowest free lane
+	// and so the next note-on fills it; reaching four banks with eight voices
+	// takes a prior 25-note chord, and eight takes 57. See "Known limits" in
+	// docs/oscillator-bank.md.
+	if v.lane == noLane {
+		v.lane = e.acquireLane()
+	}
+
+	// Retuning the lane and clearing its rotors is the voice-major half of what
+	// Bar.Reset does on the rotor-major path: the bar's own bank is no longer
+	// what renders this note, so retuning the bar alone would leave the note
+	// sounding at the previous note's pitch with the previous note's tail.
+	bank, lane := e.bankFor(v.lane)
+
+	// Unreachable for the same reason the constructor's SetVoice is: these are
+	// the oscillators UpdateParams has just validated. Handled anyway, because
+	// a silently misconfigured lane on the audio thread is worse than a counted
+	// refusal.
+	if err := bank.SetVoice(lane, v.stream.bar.BankOscillators()); err != nil {
+		e.releaseLane(v)
+		e.dropNoteOn(note)
+
+		return false
+	}
+
+	bank.ResetVoice(lane)
+
 	return true
+}
+
+// bankFor resolves a lane index to the bank that holds it and its index within
+// that bank.
+func (e *RealtimeEngine) bankFor(lane int) (*oscbank.VoiceBank, int) {
+	return e.banks[lane/oscbank.LaneWidth], lane % oscbank.LaneWidth
+}
+
+// acquireLane takes the lowest free lane. There is one lane per slot, and a
+// slot holds at most one lane, so it cannot fail for a slot the engine built;
+// the fallback grows the bookkeeping the same way claimSlot grows the slot
+// list, which only a caller that raised maxVoices past the engine's capacity
+// can reach.
+func (e *RealtimeEngine) acquireLane() int {
+	for lane := range e.laneUsed {
+		if !e.laneUsed[lane] {
+			e.laneUsed[lane] = true
+
+			return lane
+		}
+	}
+
+	return e.growLanes()
+}
+
+// growLanes appends one lane, and a bank for it when the last one is full.
+// Reachable only past the engine's built capacity, and it allocates, which is
+// why every path that can run on the audio thread stays inside the capacity.
+func (e *RealtimeEngine) growLanes() int {
+	lane := len(e.laneUsed)
+
+	e.laneUsed = append(e.laneUsed, true)
+	e.laneVoice = append(e.laneVoice, noLane)
+
+	if len(e.banks)*oscbank.LaneWidth <= lane {
+		e.banks = append(e.banks, newVoiceBank(e.synth))
+	}
+
+	return lane
+}
+
+// releaseLane hands a retiring voice's lane back and clears its rotor state, so
+// the next note that takes the lane starts from silence and a retired note
+// stops costing rotor work.
+func (e *RealtimeEngine) releaseLane(v *realtimeVoice) {
+	if v.lane == noLane {
+		return
+	}
+
+	bank, lane := e.bankFor(v.lane)
+	bank.ResetVoice(lane)
+
+	e.laneUsed[v.lane] = false
+	v.lane = noLane
 }
 
 // dropNoteOn records a note-on the engine could not turn into sound.
@@ -395,7 +570,7 @@ func (e *RealtimeEngine) claimSlot() int {
 	if slot < cap(e.voices) {
 		e.voices = e.voices[:slot+1]
 	} else {
-		e.voices = append(e.voices, realtimeVoice{})
+		e.voices = append(e.voices, realtimeVoice{lane: noLane})
 	}
 
 	if cap(e.voices[slot].buffer) < defaultRealtimeBlockFrames {
@@ -418,6 +593,21 @@ func (e *RealtimeEngine) claimSlot() int {
 }
 
 // ProcessBlock renders stereo interleaved output for the next block.
+//
+// The whole engine renders through the voice-major banks: every sounding
+// voice's excitation is gathered into one interleaved buffer, one
+// VoiceBank.ProcessBlock advances every lane of a bank at once, and the result
+// is deinterleaved straight into the per-voice gain and mix. What that buys is
+// a cost curve that steps rather than climbs -- a bank costs the same whether
+// one lane of it is sounding or all eight -- and what it costs is the idle
+// lanes: below LaneWidth sounding voices this is slower than rendering each
+// voice through its own rotor-major bank. See "The realtime render path" in
+// docs/oscillator-bank.md.
+//
+// Only the rotor bank is shared. The excitation lowpass, the Chebyshev shaper
+// at either stage and the dry mix all stay per voice inside model.Bar, which is
+// why the loop below is three passes: start every lane's chain up to the bank,
+// run the bank, then finish every lane's chain after it.
 func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 	if frames <= 0 {
 		return nil
@@ -437,7 +627,30 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 	buf := e.mixBuffer[:required]
 	clear(buf)
 
-	writeIndex := 0
+	e.renderBanks(frames, buf)
+	e.retireVoices()
+
+	for i := range buf {
+		buf[i] = hardClip(buf[i])
+	}
+
+	return buf
+}
+
+// renderBanks runs one pass of every bank that holds a sounding voice and mixes
+// the result into buf.
+func (e *RealtimeEngine) renderBanks(frames int, buf []float32) {
+	// A voice never renders more than its own block size in one call, which is
+	// what the serial path did too, so the bank pass is that long and a wider
+	// callback block leaves its tail silent exactly as before.
+	segment := min(frames, e.synth.blockSize)
+
+	highest := e.mapLanes(frames)
+	if highest == noLane {
+		return
+	}
+
+	e.ensureInterleaved(segment)
 
 	// Read the master gain once per block. Folding it into the per-voice pan
 	// coefficients here rather than at note-on is what makes a gain change
@@ -446,9 +659,87 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 	// when the gain was baked into the slot.
 	gain := e.masterGain
 
-	// Indexing rather than ranging by value is load-bearing: over a copy, the
-	// buffer growth below is written to the copy and discarded, so a block
-	// larger than the buffer reallocates on every block instead of once.
+	width := oscbank.LaneWidth
+	excitation := e.interleavedIn[:segment*width]
+	output := e.interleavedOut[:segment*width]
+
+	for bank := 0; bank <= highest/width; bank++ {
+		base := bank * width
+
+		var lengths [oscbank.LaneWidth]int
+
+		sounding := false
+
+		clear(excitation)
+
+		for lane := range width {
+			slot := e.laneVoice[base+lane]
+			if slot < 0 {
+				continue
+			}
+
+			src := e.voices[slot].stream.startBlock(segment)
+			lengths[lane] = len(src)
+
+			for i, x := range src {
+				excitation[i*width+lane] = x
+			}
+
+			sounding = true
+		}
+
+		if !sounding {
+			continue
+		}
+
+		e.banks[bank].ProcessBlock(excitation, output)
+
+		for lane := range width {
+			n := lengths[lane]
+			if n == 0 {
+				continue
+			}
+
+			v := &e.voices[e.laneVoice[base+lane]]
+
+			// Lifted straight into the slot's own block buffer, and finished
+			// in place there: the post-bank chain is elementwise, so a
+			// separate deinterleave buffer would only buy an extra copy of
+			// every sample.
+			lifted := v.buffer[:n]
+			for i := range lifted {
+				lifted[i] = output[i*width+lane]
+			}
+
+			v.stream.finishBlock(lifted, lifted)
+
+			left := v.left * gain
+			right := v.right * gain
+
+			for i := 0; i < n; i++ {
+				sample := v.buffer[i]
+				buf[i*2] += sample * left
+				buf[i*2+1] += sample * right
+			}
+		}
+	}
+}
+
+// mapLanes rebuilds the lane-to-voice index and returns the highest lane a
+// sounding voice holds, or noLane if none does. It also grows any voice buffer
+// the block has outgrown, which is the one place a wider callback block is
+// allowed to allocate.
+//
+// Indexing rather than ranging by value is load-bearing: over a copy, the
+// buffer growth is written to the copy and discarded, so a block larger than
+// the buffer would reallocate on every block instead of once.
+func (e *RealtimeEngine) mapLanes(frames int) int {
+	for i := range e.laneVoice {
+		e.laneVoice[i] = noLane
+	}
+
+	highest := noLane
+
 	for i := range e.voices {
 		v := &e.voices[i]
 
@@ -456,24 +747,49 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 			v.buffer = make([]float32, frames)
 		}
 
-		left := v.left * gain
-		right := v.right * gain
-
-		n := v.stream.RenderInto(v.buffer[:frames])
-		for j := 0; j < n; j++ {
-			sample := v.buffer[j]
-			buf[j*2] += sample * left
-			buf[j*2+1] += sample * right
-		}
-
-		if !v.stream.Active() {
+		if v.lane == noLane {
 			continue
 		}
 
-		// Swap rather than assign: an overwrite would drop the retired voice's
-		// buffer and leave two slots pointing at one buffer. Swapping permutes
-		// the slots, so every buffer stays owned by exactly one slot and the
-		// retired ones wait past the end for claimSlot to hand them out again.
+		e.laneVoice[v.lane] = int32(i)
+
+		if v.lane > highest {
+			highest = v.lane
+		}
+	}
+
+	return highest
+}
+
+// ensureInterleaved grows the gather and scatter buffers, which are grow-only
+// for the same reason mixBuffer is: a host that raises its block size should
+// cost one allocation, not one per block.
+func (e *RealtimeEngine) ensureInterleaved(segment int) {
+	if len(e.interleavedIn) >= segment*oscbank.LaneWidth {
+		return
+	}
+
+	e.interleavedIn = make([]float32, segment*oscbank.LaneWidth)
+	e.interleavedOut = make([]float32, segment*oscbank.LaneWidth)
+}
+
+// retireVoices compacts the voice list, dropping the voices that finished in
+// this block and handing their lanes back.
+//
+// Swap rather than assign: an overwrite would drop the retired voice's buffer
+// and leave two slots pointing at one buffer. Swapping permutes the slots, so
+// every buffer stays owned by exactly one slot and the retired ones wait past
+// the end for claimSlot to hand them out again.
+func (e *RealtimeEngine) retireVoices() {
+	writeIndex := 0
+
+	for i := range e.voices {
+		if !e.voices[i].stream.Active() {
+			e.releaseLane(&e.voices[i])
+
+			continue
+		}
+
 		if writeIndex != i {
 			e.voices[writeIndex], e.voices[i] = e.voices[i], e.voices[writeIndex]
 		}
@@ -482,12 +798,6 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 	}
 
 	e.voices = e.voices[:writeIndex]
-
-	for i := range buf {
-		buf[i] = hardClip(buf[i])
-	}
-
-	return buf
 }
 
 // DroppedNoteOns reports how many note-ons the engine could not turn into a

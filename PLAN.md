@@ -20,7 +20,7 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | ----- | ---------------------------- | --------------------------------- |
 | 0     | Unblock                      | done                              |
 | 1     | Configurable oscillator bank | done                              |
-| 2     | Real SIMD on three targets   | open — 2.1-2.3 done, 2.4 partly   |
+| 2     | Real SIMD on three targets   | done                              |
 | 3     | Optimizer                    | done                              |
 | 4     | Serve and the optimizer UI   | open — 4.1 and 4.2 done, 4.3 open |
 | 5     | Web app                      | open — no code yet                |
@@ -55,8 +55,6 @@ Reviewed against the goal above. What exists and works:
 
 What does not match the goal:
 
-- Cross-voice lane packing is missing. A bank fills its lanes from one voice's oscillators and
-  `internal/synth/realtime.go` renders voices serially, so voice count still costs linearly.
 - AVX-512 is deferred rather than written, with the reason in `## Deferred`.
 - The optimizer tab has no code. `serve` does: it hosts the app and the fit API
   (Phase 4.1 and 4.2), but nothing in `web/` calls the API yet, so fitting from the browser
@@ -308,26 +306,40 @@ Goal: the render loop neither allocates nor stalls.
       `Synthesizer.ResetVoice` instead of calling `NewVoice`. A note-on now allocates nothing
       at all, down from 18, which is what let the phase's "no allocation on the audio path"
       criterion be ticked.
-- [ ] Pack `voices x oscillators` into lanes. Half done, and the half that is done is the
-      bank. `oscbank.VoiceBank` (`internal/oscbank/voicebank.go`) is voice-major: the lane
-      index is the voice index, the rotor arrays are `[rotor][voice]`, the excitation is
+- [x] Pack `voices x oscillators` into lanes. Done end to end. The bank is
+      `oscbank.VoiceBank` (`internal/oscbank/voicebank.go`): voice-major, so the lane index is
+      the voice index, the rotor arrays are `[rotor][voice]`, the excitation is
       `[samples][LaneWidth]` interleaved instead of a broadcast scalar, and there is no
-      horizontal fold at all, because summing over rotors already yields per-voice output.
-      All three packed kernels are landed — `oscVoiceRotorsAVX2`, `oscVoiceRotorsSSE2`,
-      `oscVoiceRotorsNEON` — alongside the portable oracle, and the harness covers the new
-      path: `FuzzOscBankMatchesGeneric` drives both layouts from one corpus,
-      `goldenVoiceFused`/`goldenVoicePortable` pin the cross-architecture claim, and
-      `TestVoiceBankIsBitIdenticalToSingleVoiceRenders` asserts with no tolerance that eight
-      voices rendered together equal eight rendered one at a time. Rule four of the numeric
-      contract is written down in `docs/oscillator-bank.md`.
-      **This line stays unticked because nothing renders through it.** `RealtimeEngine.ProcessBlock`
-      (`internal/synth/realtime.go:185`) still walks voices serially through the rotor-major
-      `Bank`, so voice count still costs linearly in everything that ships. The remaining work
-      is the engine adoption in `internal/synth` — a voice engine that keeps its voices in lane
-      order, drives one interleaved excitation buffer and deinterleaves the result — which is
-      the redesign this line always meant and which the bank was the prerequisite for. The
-      rotor-major path is untouched and stays: offline rendering keeps using it, because with
-      fewer sounding voices than lanes the voice-major bank leaves lanes idle.
+      horizontal fold at all, because summing over rotors already yields per-voice output. All
+      three packed kernels are landed — `oscVoiceRotorsAVX2`, `oscVoiceRotorsSSE2`,
+      `oscVoiceRotorsNEON` — alongside the portable oracle, and rule four of the numeric
+      contract fixes the accumulation order.
+      The caller is `RealtimeEngine.ProcessBlock` (`internal/synth/realtime.go`), which now
+      gathers every sounding voice's excitation into one interleaved buffer, runs one
+      `VoiceBank.ProcessBlock` per bank of `LaneWidth` lanes, and deinterleaves straight into
+      the per-voice gain and mix. A voice takes a lane at note-on and holds it until it
+      retires; the lane cannot be tied to the slot, because voice stealing rotates slots and
+      retirement swaps them. A retiring voice hands its lane back and the next note-on takes
+      the lowest free one, so a block walks `ceil(polyphony / LaneWidth)` banks rather than one
+      per slot ever used.
+      Only the rotors are shared. The excitation lowpass, the Chebyshev shaper at either stage
+      and the dry mix stay per voice inside `model.Bar`, split into `StartBankInput` and
+      `FinishBankOutput`; `ProcessExcitation` is still their single-voice composition and the
+      rotor-major path is untouched, so offline rendering does not move a bit.
+      `TestPolyphonicRenderIsBitIdenticalPerVoice` requires every voice of a ten-note chord
+      across two banks to equal, with no tolerance, what the same note renders alone in lane 0.
+      `TestPolyphonicRenderMatchesTheSerialPath` bounds the whole render against the previous
+      serial implementation at one part in 100000 of the block peak — a bound rather than an
+      equality because the two layouts associate a voice's rotor sum differently.
+      **What it measured is smaller than what the counting predicts, and the reason is worth
+      writing down.** The rotor share of a block at eight voices fell from 25% to 6%, which is
+      the fourfold saving the lane arithmetic promises. Two thirds of it goes straight back out
+      on the scalar interleave, and the rest is dwarfed by the per-voice excitation lowpass,
+      which is 31% of a block and does not pack. Net on the shipped preset: -12% at eight
+      sounding voices on both amd64 and a native Apple M5, +24% at one voice, and about +1% on
+      the end-to-end `BenchmarkRealtimeEnginePolyphonicPattern`. Polyphony no longer costs
+      linearly in rotors; it still costs linearly in everything else a voice does. Numbers and
+      profiles in [docs/oscillator-bank.md](docs/oscillator-bank.md#the-realtime-render-path).
 - [ ] Optional: step two samples at a time through the squared rotation matrix. The recursion
       costs eight cycles per sample per block pair; this halves it at the cost of a second
       coefficient set and a sample-count tail.
@@ -642,8 +654,11 @@ in a document that is about to move is work thrown away twice.
       described `modes` as a fixed four with no mention of v2's per-mode harmonics or explicit
       Chebyshev stage.
 - [x] Update "Known limits" in `docs/oscillator-bank.md` as Phase 2 closes its items. The
-      packed-backend and denormal limits are current; cross-voice lane packing, the two-sample
-      step and the optimizer's blindness to per-mode harmonic gains are all still real.
+      packed-backend and denormal limits are current. Cross-voice lane packing closed with the
+      engine adoption and its limit was rewritten rather than deleted: what is left is the
+      scalar interleave and the per-voice excitation chain, which is where a realtime block
+      now spends most of its time. The two-sample step and the optimizer's blindness to
+      per-mode harmonic gains are still real.
 
 ### Phase 7.3: The web app and the leftovers
 
@@ -679,30 +694,26 @@ Goal: document what is undocumented, retire what is finished.
 
 ## Resume Point
 
-Phases 0, 1 and 3 are closed. Phases 2, 4, 5, 6 and 7 are open.
+Phases 0, 1, 2 and 3 are closed. Phases 4, 5, 6 and 7 are open.
 
-**Phase 2 has one open item, in 2.4.** 2.1, 2.2 and 2.3 are done as subphases: the dead
-assembly is gone, every layout an `.s` file assumes is pinned at compile time,
-the numeric contract is written down with a harness that enforces it, and three packed kernels
-— AVX2, SSE2, NEON — are registered in `availableBackends()`
-(`internal/oscbank/contract_test.go`) and green on both CI runners. 2.4 has its denormal
-scope, its per-note-on block buffers and its pooled voices. What is left of 2.4:
+**Phase 2 is closed.** 2.1, 2.2, 2.3 and 2.4 are all done. The dead assembly is gone, every
+layout an `.s` file assumes is pinned at compile time, the numeric contract is written down
+with a harness that enforces it, three packed kernels — AVX2, SSE2, NEON — are registered in
+`availableBackends()` (`internal/oscbank/contract_test.go`) and green on both CI runners, and
+2.4 has its denormal scope, its per-note-on block buffers, its pooled voices and now its
+cross-voice lane packing: `RealtimeEngine.ProcessBlock` renders every sounding voice through
+`oscbank.VoiceBank`, one bank per `LaneWidth` lanes, with the lane held by the note rather
+than by the slot. The one bullet still unticked under 2.4 is the optional two-sample step, and
+it stays deferred rather than open: it would have to land on all four kernels at once or rule
+one's bit-identity breaks.
 
-- **Cross-voice lane packing — the bank is done, the engine is not.** `oscbank.VoiceBank` is
-  landed: lane index is voice index, excitation is per-lane and interleaved, output is
-  per-voice with no horizontal fold, and AVX2, SSE2 and NEON kernels all exist for it and are
-  bit-identical where the contract says they must be. Nothing renders through it yet.
-  `RealtimeEngine.ProcessBlock` still walks voices serially through the rotor-major `Bank`, so
-  voice count still costs linearly. What is left is the engine adoption in `internal/synth`:
-  voices held in lane order, one interleaved excitation buffer, a deinterleave on the way out.
-- ~~**The note-on allocation.**~~ Closed. The engine pools one `Voice` per slot, built and
-  warmed at construction, and `NoteOn` restrikes it in place through `Synthesizer.ResetVoice`
-  rather than building a bar per note: 0 allocations, down from 18. With the mutex half
-  already closed by `internal/cpufeat` warming detection from its own `init()`, "no allocation
-  and no mutex acquisition on the audio path" is ticked.
+The model work both closed items wanted — a bar that can be pointed at new parameters instead
+of being rebuilt — is in place and exercised on the audio path: `Bar.UpdateParams`,
+`BarParams.CopyInto`.
 
-The model work both items wanted — a bar that can be pointed at new parameters instead of
-rebuilt — is in place and exercised on the audio path: `Bar.UpdateParams`, `BarParams.CopyInto`.
+What lane packing did not fix, and Phase 2 does not cover: the per-voice excitation lowpass is
+now the largest single term in a realtime block at 31%, the scalar 8-lane interleave is another
+16%, and neither packs across voices. Both are follow-on work, not Phase 2 work.
 
 The NEON row of the benchmark table in `docs/oscillator-bank.md` is closed too.
 It is measured on a native Apple M5 rather than under qemu-user, with

@@ -547,10 +547,10 @@ four-harmonic presets this project ships, `R` is 16 and `ceil(R / LaneWidth)` is
 2, so the two are level at eight voices and the rotor-major path is ahead below
 that. Presets whose rotor count is not a multiple of the lane width tilt it the
 other way, because the padding a single voice carries is pure waste there and
-disappears here. **These are instruction counts, not measurements.** No
-voice-major row has been benchmarked yet, and none should be quoted until it
-has; `BenchmarkVoiceBank8Voices2x3` exists to be that measurement and its
-numbers are not in this document.
+disappears here. **These are instruction counts, not measurements**, and the
+measurements the realtime engine now produces are in "The realtime render path"
+below; they agree with the counting and show what else a voice costs besides its
+rotors.
 
 There is no cross-voice arithmetic anywhere on the path, which is what makes the
 layout testable in the strongest possible way:
@@ -559,6 +559,184 @@ rendered together produce the same float32 words as eight voices rendered one at
 a time, on every backend, with no tolerance. A tolerance there would pass while
 lanes leaked into each other, which is the one bug this layout can have and the
 rotor-major one cannot.
+
+## The realtime render path
+
+`RealtimeEngine.ProcessBlock` (`internal/synth/realtime.go`) is the caller the
+voice-major bank was built for, and it is the only one. Offline rendering,
+preset validation and the fitting objectives all still go through `model.Bar`
+and its own rotor-major `Bank`, unchanged and bit for bit.
+
+### What is per voice and what is voice-major
+
+Only the rotors are shared. A struck note's chain is
+
+```
+impulse -> lowpass -> [shaper] -> rotor bank -> [shaper] -> + dry mix
+```
+
+and every stage but the middle one stays inside the note's own `model.Bar`. The
+excitation lowpass is a biquad with a `float64` delay line, the Chebyshev shaper
+is a per-sample polynomial that may sit either in front of the bank or behind
+it, and the dry mix reads the filtered excitation the same block produced.
+Nothing in any of those is a rotor recursion, so nothing in them gains from
+being packed across notes, and the shaper's two possible positions fall out
+naturally: shaping the excitation is part of what a voice contributes to the
+interleaved input, shaping the output is part of what it does with its own lane
+afterwards. `model.Bar.StartBankInput` and `model.Bar.FinishBankOutput` are the
+two halves; `ProcessExcitation` is still their single-voice composition, and it
+computes exactly what it computed before.
+
+So a block is three passes rather than one loop: start every sounding lane's
+chain up to the bank and scatter the result into `[samples][LaneWidth]`, run one
+`VoiceBank.ProcessBlock` per bank, then lift each lane back out and finish that
+voice's chain, gain and mix in place. The deinterleave is the caller's, as
+`VoiceBank` intends, and it lands straight in the slot's own block buffer, so
+the post-bank chain finishes in place and no sample is copied twice.
+
+### Lanes, slots and stealing
+
+The engine holds `maxVoices` pooled slots and one bank per `LaneWidth` lanes.
+The lane is **not** a property of the slot. A voice's rotor state is a stride
+through a bank's arrays and cannot be moved cheaply, while the slot list is
+permuted by both voice stealing — which rotates the stolen slot to the back —
+and retirement, which swaps a dead slot past the end. Tying the lane to the list
+position would therefore mix one note's rotors into another's, silently. The
+lane travels with the note instead: a slot takes a lane at note-on and holds it
+until the voice retires, a retrigger and a steal both keep the lane the slot is
+already sounding on, and `restrikeSlot` clears exactly that lane
+(`VoiceBank.ResetVoice`) and rewrites exactly that lane's coefficients
+(`VoiceBank.SetVoice`) so the notes around it keep ringing.
+
+A retiring voice hands its lane back and a note-on takes the lowest free one,
+which is what keeps the sounding voices packed into the low banks: a block walks
+banks up to the highest lane a voice holds, so lanes that drifted upwards would
+multiply the rotor work without changing a sample.
+`TestSoundingVoicesStayPackedIntoTheLowestLanes` is that invariant, and
+`TestLanesStayDistinctAcrossStealingAndRetirement` is the one that no two
+sounding voices ever share a lane.
+
+The bank's shape is pinned at engine construction, where every lane of every
+bank is configured with the preset's own oscillators. `VoiceBank.SetVoice`
+discards all rotor state when the shape moves, which on the audio path would be
+every sounding note going silent at once; transposition scales frequencies and
+decays and never touches the mode or harmonic counts, so once the shape is
+pinned no note-on can move it.
+
+### What the engine's correctness tests pin
+
+Two claims, and they are deliberately of different kinds.
+
+**Per voice, exactly.** The voice-major kernel has no cross-lane arithmetic at
+all, so a note must render the same float32 words whether it is alone in a bank
+or sharing one with seven others, and whichever lane it lands in.
+`TestPolyphonicRenderIsBitIdenticalPerVoice` strikes ten notes with staggered
+onsets across two banks and requires each one's mono output to equal, with no
+tolerance, what the same note renders alone in lane 0 of its own engine. A
+tolerance would pass while lanes leaked; equality is also what catches a lane
+mix-up after a steal, and it catches a note-on disturbing its neighbours,
+because the earlier voices would stop matching in exactly the block the next
+note arrives in.
+
+**Against the old serial path, bounded.** The two layouts sum a voice's rotors
+in different orders — `Bank` folds them across a block's eight lanes and
+finishes with the pairwise tree of rule two, `VoiceBank` sums ascending rotor
+pairs down one lane under rule four — and reassociating a `float32` sum changes
+it. Nothing else in the chain moves. So
+`TestPolyphonicRenderMatchesTheSerialPath` asserts a bound rather than equality:
+one part in 100000 of the block's own peak, which is roughly two hundred times
+`float32` epsilon and four orders of magnitude below anything audible, yet far
+too tight for an actual lane mix-up to hide under.
+
+The measured deviation for the shipped preset is **zero**. That is a property of
+the preset, not of the change: four modes with no harmonics is four rotors, the
+block fold then has nothing to fold, and both paths end at `(r0+r1)+(r2+r3)`.
+The subtest that gives every mode four harmonics is there so the bound is
+measuring something — sixteen rotors do reassociate, and the worst deviation
+there is `3.4e-7` relative, comfortably inside the bound.
+
+### What it actually bought
+
+Interleaved runs of `BenchmarkRealtimeEngineVoiceCount`, ten rounds of each
+build alternating, medians of `ns/op` for one 128-frame block at 48 kHz.
+`modes=4x1` is the shipped preset, four modes and no harmonics; `modes=4x4`
+gives every mode four harmonics, which is the sixteen-rotor case.
+
+| voices | 4x1 serial | 4x1 voice-major | 4x4 serial | 4x4 voice-major |
+| ------ | ---------- | --------------- | ---------- | --------------- |
+| 1      | 1834       | 2273 (+24%)     | 1768       | 4022 (+128%)    |
+| 2      | 2966       | 3194 (+8%)      | 2900       | 5323 (+84%)     |
+| 4      | 5842       | 5100 (-13%)     | 5226       | 6572 (+26%)     |
+| 8      | 9706       | 8585 (-12%)     | 10116      | 10434 (+3%)     |
+| 16     | 18926      | 18262 (-4%)     | 19223      | 20020 (+4%)     |
+
+_amd64, 12th Gen Intel Core i7-1255U, `go test -benchtime 300ms -count 10`._
+
+| voices | 4x1 serial | 4x1 voice-major | 4x4 serial | 4x4 voice-major |
+| ------ | ---------- | --------------- | ---------- | --------------- |
+| 1      | 1619       | 2098 (+30%)     | 1620       | 4126 (+155%)    |
+| 2      | 2952       | 3244 (+10%)     | 2978       | 5233 (+76%)     |
+| 4      | 5642       | 5472 (-3%)      | 5696       | 7407 (+30%)     |
+| 8      | 11050      | 9828 (-11%)     | 11164      | 11763 (+5%)     |
+| 16     | 22050      | 19410 (-12%)    | 21936      | 23420 (+7%)     |
+
+_arm64, Apple M5, same protocol. That machine is somebody's laptop and is never
+idle: load average 2.0 going in and 2.2 coming out, macOS offers no way to pin a
+core, and a cross-check of the larger banks there has moved by 20–25% between
+runs. Read the shape, not the digits._
+
+Three things to take from that, and the third is the important one.
+
+The crossover lands where the instruction counting above says it does. `V`
+voices of `R` rotors cost `V * ceil(R / LaneWidth)` vector steps rotor-major and
+`R` steps voice-major. For `modes=4x4` that is `2V` against `16`, level at eight
+voices, and the measured curves cross between four and eight. For `modes=4x1` it
+is also `2V` against `4` — `roundUpToEven` rounds one block up to two, so a
+four-rotor voice pays for sixteen lanes rotor-major and four voice-major — level
+at two voices, and the measured curves cross between two and four.
+
+Below the crossover this layout is slower, and at one voice it is much slower.
+That is the idle-lane cost stated at the top of this section, arriving on
+schedule. In absolute terms it is 2.3 µs of work per 2.67 ms of audio, so it is
+not a problem the engine has; it is a reason the rotor-major path stays for
+everything that renders one note at a time.
+
+And the win is small even above the crossover, for two reasons that a CPU
+profile of the shipped preset at eight voices makes plain. Before:
+
+|                                                                      | share of the block |
+| -------------------------------------------------------------------- | ------------------ |
+| excitation lowpass (`biquad`)                                        | 35%                |
+| `oscBankBlocksAVX2` + `reduceLanes`                                  | 25%                |
+| `Bar.ProcessExcitation` itself (the `float32`/`float64` conversions) | 16%                |
+| the engine's mix and retirement loops                                | 10%                |
+| the Chebyshev shaper                                                 | 5%                 |
+
+After:
+
+|                                                 | share of the block |
+| ----------------------------------------------- | ------------------ |
+| excitation lowpass (`biquad`)                   | 31%                |
+| `Bar.bankInput` itself (the conversions)        | 14%                |
+| the engine's gather, scatter and mix loops      | 26%                |
+| `oscVoiceRotorsAVX2`                            | 6%                 |
+| `Bar.FinishBankOutput` and the Chebyshev shaper | 11%                |
+
+The rotors did what they were supposed to do: 25% of the block down to 6%, the
+fourfold saving the lane counting predicts for a four-rotor voice. But roughly
+two thirds of that saving is spent again on the interleave. Gathering eight
+lanes into `[samples][LaneWidth]` and lifting them back out is 2048 strided
+scalar accesses per block at eight voices, and it is what takes the engine's own
+loops from 11% of a block to 26%. A packed 8x8 transpose would cut that; a
+scalar one is what is here.
+
+The other reason is the one that bounds the whole exercise: **the rotor bank is
+not what a realtime voice mostly costs.** The excitation lowpass is a third of
+the block, it is per voice by construction, and it does not pack. That is why
+the end-to-end `BenchmarkRealtimeEnginePolyphonicPattern` moves by about 1% on
+both hosts rather than by the double-digit figure the voice-count sweep
+suggests. Polyphony no longer costs linearly _in rotors_; it still costs
+linearly in everything else a voice does.
 
 ## Measured performance
 
@@ -675,13 +853,40 @@ note. It clones now, and `TestRenderingIsIndependentOfPresetState` guards it.
 
 ## Known limits
 
-- Cross-voice lane packing exists as a bank and has no caller. `VoiceBank` and
-  its three packed kernels are landed and tested — per-lane excitation and
-  per-voice output separation are done — but `RealtimeEngine.ProcessBlock` still
-  renders voices serially through `Bank`, so voice count still costs linearly in
-  everything that ships. Adopting it in `internal/synth` is the remaining half of
-  the audio-path work in Phase 2, and it needs a voice engine that keeps its
-  voices in lane order and deinterleaves the result.
+- Cross-voice lane packing is adopted. `RealtimeEngine.ProcessBlock` renders
+  every sounding voice through the voice-major banks, and the rotor cost of a
+  block is now a function of how many banks the polyphony spans rather than of
+  how many voices it holds. What that did _not_ fix is the rest of the voice:
+  the per-voice excitation lowpass is 37% of a block at eight voices and does
+  not pack, so the end-to-end polyphonic benchmark moves by about 1%. See "The
+  realtime render path" for the numbers. Making the excitation chain
+  voice-major too is the obvious next step and is not in Phase 2.
+- Lanes are never compacted. A lane is released where its note retired, so the
+  surviving voices can straddle more banks than their count needs, and nothing
+  moves a survivor down into the hole: a voice's rotor state lives in its bank's
+  arrays, so compacting one means migrating that state, and `VoiceBank` has no
+  API for it. The cost is therefore one bank pass per _occupied_ bank rather
+  than `ceil(polyphony/LaneWidth)`. Measured at 128 frames with eight sounding
+  voices: 4423 ns held in one bank, 4748 across two, 5952 across four and
+  6604 across eight. Two things keep that from mattering much in practice. An
+  empty bank costs nothing — `renderBanks` skips a bank with no sounding lane
+  rather than advancing it — and a hole is by definition the lowest free lane,
+  so the next note-on fills it and the fragmentation heals. What is left is a
+  chord decaying with no new notes behind it, and the spread it can reach is
+  bounded by the polyphony that came before: eight voices cannot occupy four
+  banks without a prior 25-note chord, or eight banks without 57. A
+  lane-migration API and compaction on release is the fix, and it is not
+  written.
+- The interleave is scalar. Gathering the lanes in and lifting them out is
+  2048 strided `float32` accesses per block at eight voices, and it costs about
+  two thirds of what packing the rotors saves. A packed 8x8 transpose is the
+  fix and is not written.
+- The voice-major bank is slower than the rotor-major one below its crossover —
+  two sounding voices for the shipped preset, eight for a sixteen-rotor one —
+  because it advances all `LaneWidth` lanes whether they carry a voice or not.
+  The engine accepts that; a monophonic block is 2.3 µs of work against 2.67 ms
+  of audio. Nothing renders one note at a time through it: offline rendering
+  keeps using `Bank`.
 - AVX2, SSE2 and NEON are packed. Everything else runs the portable kernel,
   which is about 7x slower on amd64. The arm64 measurement above put NEON at
   5.3x its portable reference rather than 7x, and the two are not the same

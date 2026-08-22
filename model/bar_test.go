@@ -207,3 +207,54 @@ func rms(buf []float32) float64 {
 func approxEqual(got, want, tol float64) bool {
 	return math.Abs(got-want) <= tol
 }
+
+// TestFinishBankOutputRejectsAShortDestination pins the contract the comment on
+// FinishBankOutput states. The slice expression it does would panic on a short
+// destination anyway; what this asks for is that it panics with a message that
+// names the cause, at the entry rather than partway through the post-bank
+// chain, the way oscbank's two buffer checks do.
+func TestFinishBankOutputRejectsAShortDestination(t *testing.T) {
+	params := validTestParams()
+
+	bar, err := NewBar(&params, 48000)
+	if err != nil {
+		t.Fatalf("failed to create bar: %v", err)
+	}
+
+	const frames = 64
+
+	bankIn := bar.StartBankInput(100, frames)
+	if len(bankIn) != frames {
+		t.Fatalf("StartBankInput returned %d frames, want %d", len(bankIn), frames)
+	}
+
+	bankOut := make([]float32, frames)
+	copy(bankOut, bankIn)
+
+	// A nil destination and a merely-too-short one are the same bug, so both
+	// have to be refused rather than only the one that is easy to spot.
+	for name, dst := range map[string][]float32{
+		"nil":       nil,
+		"too short": make([]float32, frames-1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				recovered := recover()
+				if recovered == nil {
+					t.Fatal("expected a panic on a destination shorter than the bank output")
+				}
+
+				if msg, ok := recovered.(string); !ok || msg != "model: destination buffer too small" {
+					t.Fatalf("panicked with %v, want the named buffer message", recovered)
+				}
+			}()
+
+			bar.FinishBankOutput(bankOut, dst)
+		})
+	}
+
+	// An exactly-sized destination is not too small.
+	if got := bar.FinishBankOutput(bankOut, make([]float32, frames)); len(got) != frames {
+		t.Fatalf("FinishBankOutput returned %d frames for an exact destination, want %d", len(got), frames)
+	}
+}

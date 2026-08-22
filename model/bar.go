@@ -93,6 +93,20 @@ func (b *Bar) Synthesize(velocity int, numSamples int) []float32 {
 }
 
 // ProcessExcitation runs an externally provided excitation through the chain.
+//
+// The chain is three stages, and only the middle one is the oscillator bank:
+//
+//	excitation -> lowpass -> [shaper] -> bank -> [shaper] -> + dry mix
+//
+// Everything either side of the bank is per voice and stays that way. The
+// lowpass carries a float64 delay line of its own and the shaper is a
+// per-sample polynomial, so neither has anything to gain from being packed
+// across voices; the bank is the only stage whose cost is a rotor recursion
+// that vectorises across notes. StartBankInput and FinishBankOutput expose that
+// split so a polyphonic engine can drive one voice-major bank for many voices
+// while each voice keeps its own filter and shaper. This function is the
+// single-voice composition of the same three stages and is what the offline
+// render path uses.
 func (b *Bar) ProcessExcitation(excitation []float32) []float32 {
 	sampleCount := len(excitation)
 	if sampleCount == 0 {
@@ -100,6 +114,99 @@ func (b *Bar) ProcessExcitation(excitation []float32) []float32 {
 	}
 
 	b.ensureBuffers(sampleCount)
+
+	in := b.bankInput(excitation)
+	out := b.outputBuf[:sampleCount]
+
+	if b.shapingAt(ChebyshevStageOutput) {
+		b.bank.ProcessBlock(in, b.distortedBuf[:sampleCount])
+
+		return b.FinishBankOutput(b.distortedBuf[:sampleCount], out)
+	}
+
+	b.bank.ProcessBlock(in, out)
+
+	return b.FinishBankOutput(out, out)
+}
+
+// StartBankInput builds a strike's excitation and runs the pre-bank half of the
+// chain over it, returning the signal that should be fed to an oscillator bank.
+//
+// The returned slice aliases one of the bar's working buffers and stays valid
+// until the next call on this bar, which is what lets a caller gather it into
+// an interleaved buffer without copying it twice.
+func (b *Bar) StartBankInput(velocity, numSamples int) []float32 {
+	if numSamples <= 0 {
+		return nil
+	}
+
+	b.ensureBuffers(numSamples)
+	clearFloat32(b.excitationBuf[:numSamples])
+
+	if velocity > 0 {
+		b.excitationBuf[0] = float32(float64(velocity) * velocityScale)
+	}
+
+	return b.bankInput(b.excitationBuf[:numSamples])
+}
+
+// FinishBankOutput runs the post-bank half of the chain over a bank's output
+// and writes the result into dst, which may alias bankOut: every stage after
+// the bank is elementwise, so finishing a block in place is the same
+// computation as finishing it into a separate buffer. The realtime engine
+// relies on that to deinterleave a lane straight into the buffer it will mix
+// from, rather than through a scratch buffer and a copy.
+//
+// It reads the filtered excitation the matching StartBankInput or
+// ProcessExcitation left behind, so the two have to be called as a pair over
+// the same block of the same bar.
+//
+// dst has to be at least as long as bankOut. A short one is a caller bug rather
+// than a runtime condition -- the engine sizes the slot buffer it passes from
+// the same block length it sized the bank pass from -- so it panics with a
+// named message instead of failing as a slice-bounds error a few frames deep.
+func (b *Bar) FinishBankOutput(bankOut, dst []float32) []float32 {
+	sampleCount := len(bankOut)
+	if sampleCount == 0 {
+		return nil
+	}
+
+	if len(dst) < sampleCount {
+		panic("model: destination buffer too small")
+	}
+
+	out := dst[:sampleCount]
+
+	switch {
+	case b.shapingAt(ChebyshevStageOutput):
+		processChebyshevBlock(bankOut, out, b.chebyGains)
+	case &out[0] != &bankOut[0]:
+		copy(out, bankOut)
+	}
+
+	if b.params.InputMix != 0 {
+		dryMix := float32(b.params.InputMix)
+		for i := 0; i < sampleCount; i++ {
+			out[i] += dryMix * b.filteredBuf[i]
+		}
+	}
+
+	return out
+}
+
+// BankOscillators returns the rotor configuration this bar renders, aliasing
+// the bar's own storage. Callers must treat it as read-only; it exists so a
+// voice-major bank can be pointed at the same oscillators the bar was retuned
+// with, without copying them through a fresh slice on the audio thread.
+func (b *Bar) BankOscillators() []oscbank.Oscillator {
+	return b.oscillators
+}
+
+// bankInput runs the lowpass and, when the shaper sits in front of the bank,
+// the shaper. It leaves the filtered excitation in filteredBuf, which the dry
+// mix in FinishBankOutput reads afterwards.
+func (b *Bar) bankInput(excitation []float32) []float32 {
+	sampleCount := len(excitation)
 
 	for i := 0; i < sampleCount; i++ {
 		b.filterBlock[i] = float64(excitation[i])
@@ -111,28 +218,23 @@ func (b *Bar) ProcessExcitation(excitation []float32) []float32 {
 		b.filteredBuf[i] = float32(b.filterBlock[i])
 	}
 
-	out := b.outputBuf[:sampleCount]
-	shaping := b.params.Chebyshev.Enabled && len(b.params.Chebyshev.HarmonicGains) > 0
-
-	switch {
-	case shaping && b.params.Chebyshev.ResolvedStage() == ChebyshevStageExcitation:
+	if b.shapingAt(ChebyshevStageExcitation) {
 		processChebyshevBlock(b.filteredBuf[:sampleCount], b.distortedBuf[:sampleCount], b.chebyGains)
-		b.bank.ProcessBlock(b.distortedBuf[:sampleCount], out)
-	case shaping:
-		b.bank.ProcessBlock(b.filteredBuf[:sampleCount], b.distortedBuf[:sampleCount])
-		processChebyshevBlock(b.distortedBuf[:sampleCount], out, b.chebyGains)
-	default:
-		b.bank.ProcessBlock(b.filteredBuf[:sampleCount], out)
+
+		return b.distortedBuf[:sampleCount]
 	}
 
-	if b.params.InputMix != 0 {
-		dryMix := float32(b.params.InputMix)
-		for i := 0; i < sampleCount; i++ {
-			out[i] += dryMix * b.filteredBuf[i]
-		}
+	return b.filteredBuf[:sampleCount]
+}
+
+// shapingAt reports whether the Chebyshev shaper is enabled and sits at the
+// given stage of the chain.
+func (b *Bar) shapingAt(stage ChebyshevStage) bool {
+	if !b.params.Chebyshev.Enabled || len(b.params.Chebyshev.HarmonicGains) == 0 {
+		return false
 	}
 
-	return out
+	return b.params.Chebyshev.ResolvedStage() == stage
 }
 
 // UpdateParams updates all bar processing parameters.
