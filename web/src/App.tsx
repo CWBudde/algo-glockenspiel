@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { useAudioEngine } from "./audio/useAudioEngine";
-import { useWasmEngine } from "./audio/useWasmEngine";
+import { useEngineWorker } from "./audio/useEngineWorker";
 import { Topbar } from "./components/Topbar";
 import { OptimizePage } from "./routes/OptimizePage";
 import { PlayPage } from "./routes/PlayPage";
@@ -33,12 +33,8 @@ export function App() {
   // The engine lives here rather than in PlayPage: switching to Optimize
   // unmounts the play surface, and neither the Go runtime nor a ringing note
   // should die because the user looked at another tab.
-  const wasmEngine = useWasmEngine();
-  const audio = useAudioEngine(
-    wasmEngine.wasm,
-    wasmEngine.memoryRef,
-    gainFromPercent(gainPercent),
-  );
+  const engine = useEngineWorker();
+  const audio = useAudioEngine(engine.client, gainFromPercent(gainPercent));
 
   return (
     <main className="studio-shell">
@@ -46,7 +42,7 @@ export function App() {
 
       {route === "play" ? (
         <PlayPage
-          wasmEngine={wasmEngine}
+          engine={engine}
           audio={audio}
           gain={gainPercent}
           onGainChange={setGainPercent}

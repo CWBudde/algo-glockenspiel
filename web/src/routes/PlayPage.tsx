@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AudioEngine } from "../audio/useAudioEngine";
-import type { WasmEngine } from "../audio/useWasmEngine";
+import type { EngineWorker } from "../audio/useEngineWorker";
 import { ControlRail } from "../components/ControlRail";
 import { Keyboard } from "../components/Keyboard";
 import { PresetStrip } from "../components/PresetStrip";
@@ -16,20 +16,31 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+/**
+ * withDropouts appends the underrun count, and only when there is one.
+ *
+ * The number is the phase's own acceptance criterion -- "no dropouts under
+ * load" -- made observable rather than asserted: a render quantum that found
+ * the queue empty is counted in the consumer and reported here, so a transport
+ * that cannot keep up says so instead of merely sounding wrong.
+ */
+function withDropouts(status: string, underruns: number): string {
+  if (underruns === 0) {
+    return status;
+  }
+
+  return `${status} - ${underruns} dropout${underruns === 1 ? "" : "s"}`;
+}
+
 export interface PlayPageProps {
-  wasmEngine: WasmEngine;
+  engine: EngineWorker;
   audio: AudioEngine;
   /** Master output as a percentage; the engine takes 0.1..1.0. */
   gain: number;
   onGainChange: (gain: number) => void;
 }
 
-export function PlayPage({
-  wasmEngine,
-  audio,
-  gain,
-  onGainChange,
-}: PlayPageProps) {
+export function PlayPage({ engine, audio, gain, onGainChange }: PlayPageProps) {
   const [velocity, setVelocity] = useState(96);
   const [species, setSpecies] = useState("beech");
   const { activeNotes, activate } = useNoteActivation();
@@ -38,18 +49,18 @@ export function PlayPage({
     applyWoodTexture(document.documentElement, species);
   }, [species]);
 
-  const { wasm } = wasmEngine;
+  const { client } = engine;
   const { start, isReady } = audio;
 
   const strike = useCallback(
     (note: number) => {
-      if (!wasm) {
+      if (!client) {
         return;
       }
 
       const play = () => {
         activate(note);
-        wasm.noteOn(note, clamp(velocity, 1, 127));
+        client.noteOn(note, clamp(velocity, 1, 127));
       };
 
       // The graph only exists after a user gesture, and the first strike is
@@ -65,7 +76,7 @@ export function PlayPage({
 
       play();
     },
-    [wasm, activate, start, isReady, velocity],
+    [client, activate, start, isReady, velocity],
   );
 
   // The document-level key listener is installed once; it reaches the current
@@ -113,8 +124,10 @@ export function PlayPage({
 
   // The audio engine has the more recent news once it has anything to say:
   // "Ready at 44100 Hz" supersedes "WASM loaded. Strike a bar to start audio."
-  const status = audio.status || wasmEngine.status;
-  const statusIsError = audio.status ? audio.error : wasmEngine.error;
+  const status = audio.status
+    ? withDropouts(audio.status, audio.underruns)
+    : engine.status;
+  const statusIsError = audio.status ? audio.error : engine.error;
 
   return (
     <>

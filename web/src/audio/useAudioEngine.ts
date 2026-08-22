@@ -1,87 +1,29 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { messageOf } from "./useWasmEngine";
-import type { GlockenspielWasm } from "./wasmTypes";
+import { BlockQueue } from "./blockQueue";
+import processorURL from "./renderProcessor.ts?worker&url";
+import {
+  PROCESSOR_NAME,
+  type ConsumePort,
+  type RecycledBuffer,
+  type RenderStats,
+  type RenderedBlock,
+} from "./protocol";
+import { messageOf, type EngineClient } from "./useEngineWorker";
+
+/** How often the ScriptProcessorNode fallback samples its own queue, in ms. */
+const FALLBACK_STATS_INTERVAL_MS = 500;
 
 /**
- * The cached view over Go's heap, plus the two facts that decide whether it is
- * still valid: which buffer it was cut from and which region of it it covers.
+ * The query parameter that forces the fallback: `?audio=scriptprocessor`.
  *
- * These live in a plain object held by a ref, never in React state. The audio
- * callback runs on the audio thread's schedule and must not depend on a render
- * having happened, and a state update per block would be ~86 renders a second.
+ * Without it the fallback is unreachable on any browser released since 2018,
+ * which would make it code that is shipped and never run. With it, the same
+ * page exercises both consumers, so a regression in the shared BlockQueue shows
+ * up in whichever one is tested.
  */
-interface InterleavedCache {
-  view: Float32Array | null;
-  buffer: ArrayBufferLike | null;
-  ptr: number;
-}
-
-// interleavedFrames returns a Float32Array over `frames` stereo frames starting
-// at `ptr` in the WASM linear memory, reusing the previous view when nothing
-// relevant has changed. A view per callback is one allocation every ~11.6 ms at
-// 512 frames and 44.1 kHz, on the one thread that must not pause for a GC.
-//
-// The hazard this function exists for: a WebAssembly.Memory grows when Go's
-// heap grows, and growing DETACHES the old ArrayBuffer. A view hoisted out of
-// the callback and never rechecked then points into a buffer that no longer
-// backs anything -- and it does not throw. Measured in Chrome, after
-// `memory.grow(1)`: the old buffer reports byteLength 0, `memory.buffer` is a
-// different object, the stale view's length drops to 0, and indexing it returns
-// `undefined`, which becomes NaN the moment it is written into the output
-// buffer. So the symptom is not an exception at the point of the mistake but a
-// channel of NaN -- silence, or worse depending on what the graph does with it
-// -- starting at whatever unrelated moment the heap happened to grow: typically
-// minutes in, once, and never while a debugger is attached. Hence three checks,
-// all of them cheap:
-//
-//   - buffer identity: memory.buffer returns a *new* ArrayBuffer object after a
-//     grow, so an identity comparison catches the detachment directly;
-//   - byteLength === 0: how a detached ArrayBuffer reports itself. Re-reading
-//     memory.buffer every call should already have handed us the live buffer,
-//     but constructing a view over a detached one throws, and throwing out of
-//     onaudioprocess is not how this should fail. Skipping the block yields one
-//     buffer of silence instead;
-//   - the pointer and length: ProcessBlock hands back a pointer into a Go slice,
-//     and Go is free to move or resize that allocation between calls, so a
-//     stable buffer does not imply a stable region.
-//
-// Returns null when no view can be built, in which case the caller leaves the
-// output silent for that block.
-function interleavedFrames(
-  cache: InterleavedCache,
-  memory: WebAssembly.Memory,
-  ptr: number,
-  frames: number,
-): Float32Array | null {
-  const floats = frames * 2;
-  const buffer = memory.buffer;
-
-  if (buffer.byteLength === 0) {
-    cache.view = null;
-    cache.buffer = null;
-
-    return null;
-  }
-
-  if (
-    cache.view === null ||
-    cache.buffer !== buffer ||
-    cache.ptr !== ptr ||
-    cache.view.length !== floats
-  ) {
-    cache.view = new Float32Array(buffer, ptr, floats);
-    cache.buffer = buffer;
-    cache.ptr = ptr;
-  }
-
-  return cache.view;
+function forcedTransport(): string | null {
+  return new URLSearchParams(window.location.search).get("audio");
 }
 
 export interface AudioEngine {
@@ -90,6 +32,8 @@ export interface AudioEngine {
   /** What the status panel should say about the audio, or "" for nothing yet. */
   status: string;
   error: boolean;
+  /** Render quanta that found the queue empty since the graph started. */
+  underruns: number;
   /** Starts the graph if it is not running. Idempotent and safe to race. */
   start: () => Promise<void>;
   /** The synchronous answer to "can I strike right now", for the strike path. */
@@ -97,54 +41,65 @@ export interface AudioEngine {
 }
 
 /**
- * useAudioEngine owns the AudioContext and the ScriptProcessorNode, created
+ * useAudioEngine owns the AudioContext and the node that feeds it, created
  * lazily on the first strike because a browser will not start an AudioContext
  * without a user gesture.
  *
- * masterGain is pushed into the module whenever it changes, including while a
+ * It owns no synthesis. The worker renders ahead into a pool of buffers and
+ * the consumer here -- an AudioWorkletNode, or a ScriptProcessorNode where
+ * there is no worklet -- drains them and sends each empty buffer back. Both
+ * consumers are the same BlockQueue behind different callbacks, so the
+ * fallback is a different thread to run on rather than a different engine.
+ *
+ * masterGain is pushed into the worker whenever it changes, including while a
  * note is ringing, so the Volume dial moves the sound that is already playing.
  */
 export function useAudioEngine(
-  wasm: GlockenspielWasm | null,
-  memoryRef: RefObject<WebAssembly.Memory | null>,
+  client: EngineClient | null,
   masterGain: number,
 ): AudioEngine {
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState(false);
+  const [underruns, setUnderruns] = useState(0);
 
   const contextRef = useRef<AudioContext | null>(null);
-  const outputRef = useRef<ScriptProcessorNode | null>(null);
+  const nodeRef = useRef<AudioNode | null>(null);
+  const statsTimerRef = useRef<number | null>(null);
   const readyRef = useRef(false);
   const startPromiseRef = useRef<Promise<void> | null>(null);
-  const wasmRef = useRef<GlockenspielWasm | null>(wasm);
+  const clientRef = useRef<EngineClient | null>(client);
   const masterGainRef = useRef(masterGain);
-  const cacheRef = useRef<InterleavedCache>({
-    view: null,
-    buffer: null,
-    ptr: 0,
-  });
 
   useEffect(() => {
-    wasmRef.current = wasm;
+    clientRef.current = client;
     masterGainRef.current = masterGain;
 
     // Push the gain into a running engine, so the dial moves a note that is
     // already ringing rather than only the next one.
-    if (readyRef.current && wasm) {
-      wasm.setMasterGain(masterGain);
+    if (readyRef.current && client) {
+      client.setMasterGain(masterGain);
     }
-  }, [wasm, masterGain]);
+  }, [client, masterGain]);
 
   // teardown disconnects and closes whatever half of the graph exists. It is
   // written to be safe on a graph that was never finished, because the failure
   // path in start needs exactly that.
   const teardown = useCallback(() => {
-    outputRef.current?.disconnect();
-    outputRef.current = null;
+    if (statsTimerRef.current !== null) {
+      window.clearInterval(statsTimerRef.current);
+      statsTimerRef.current = null;
+    }
+
+    nodeRef.current?.disconnect();
+    nodeRef.current = null;
     void contextRef.current?.close();
     contextRef.current = null;
     readyRef.current = false;
+
+    // The worker still holds the other end of a channel whose buffers are gone
+    // with the node; without this it would wait for credit that cannot arrive.
+    clientRef.current?.stop();
   }, []);
 
   const start = useCallback(async () => {
@@ -157,8 +112,8 @@ export function useAudioEngine(
     }
 
     const startup = (async () => {
-      const module = wasmRef.current;
-      if (!module) {
+      const engine = clientRef.current;
+      if (!engine) {
         throw new Error("the WebAssembly module is not loaded yet");
       }
 
@@ -170,58 +125,45 @@ export function useAudioEngine(
       const context = new Context();
       contextRef.current = context;
 
-      const initError = module.init(context.sampleRate);
-      if (typeof initError === "string" && initError.length > 0) {
-        throw new Error(initError);
+      // The channel the rendered blocks travel down. One end goes to the
+      // worker, the other to whichever consumer this browser gets, so the
+      // audio never passes through the main thread in either case.
+      const channel = new MessageChannel();
+
+      const worklet = await buildWorklet(context, channel.port2);
+      if (worklet) {
+        worklet.port.onmessage = (event: MessageEvent<RenderStats>) => {
+          setUnderruns(event.data.underruns);
+        };
+        nodeRef.current = worklet;
+      } else {
+        nodeRef.current = buildFallback(context, channel.port2, (queue) => {
+          statsTimerRef.current = window.setInterval(() => {
+            setUnderruns(queue.underruns);
+          }, FALLBACK_STATS_INTERVAL_MS);
+        });
       }
 
-      const output = context.createScriptProcessor(512, 0, 2);
-      output.onaudioprocess = (event) => {
-        const buffer = event.outputBuffer;
-        const left = buffer.getChannelData(0);
-        const right = buffer.getChannelData(1);
-
-        left.fill(0);
-        right.fill(0);
-
-        const memory = memoryRef.current;
-        const engine = wasmRef.current;
-        if (!memory || !engine) {
-          return;
-        }
-
-        const interleavedPtr = engine.processBlock(left.length);
-        if (!interleavedPtr) {
-          return;
-        }
-
-        const interleaved = interleavedFrames(
-          cacheRef.current,
-          memory,
-          Number(interleavedPtr),
-          left.length,
-        );
-        if (interleaved === null) {
-          return;
-        }
-
-        for (let frame = 0; frame < left.length; frame += 1) {
-          left[frame] = interleaved[frame * 2];
-          right[frame] = interleaved[frame * 2 + 1];
-        }
-      };
-
-      output.connect(context.destination);
-      outputRef.current = output;
+      // The engine is only connected once it is rendering. Building the graph
+      // first and starting the producer afterwards would let the consumer run
+      // against an empty queue for as long as the engine takes to construct --
+      // NewRealtimeEngine measures the preset once per playable note, which is
+      // hundreds of milliseconds -- and every one of those render quanta is a
+      // counted dropout. Connecting last makes the counter mean what it says.
+      await engine.start(context.sampleRate, channel.port1);
+      nodeRef.current.connect(context.destination);
 
       await context.resume();
 
-      module.setMasterGain(masterGainRef.current);
+      engine.setMasterGain(masterGainRef.current);
 
       readyRef.current = true;
       setReady(true);
       setError(false);
-      setStatus(`Ready at ${Math.round(context.sampleRate)} Hz`);
+      setUnderruns(0);
+      setStatus(
+        `Ready at ${Math.round(context.sampleRate)} Hz${worklet ? "" : " (fallback transport)"}`,
+      );
     })();
 
     startPromiseRef.current = startup;
@@ -245,19 +187,102 @@ export function useAudioEngine(
     } finally {
       startPromiseRef.current = null;
     }
-  }, [memoryRef, teardown]);
+  }, [teardown]);
 
   const isReady = useCallback(() => readyRef.current, []);
 
   useEffect(
     () => () => {
-      // The page owns exactly one graph, but a hot reload or an unmount of the
-      // Play tab must not leave a ScriptProcessorNode pulling blocks out of a
-      // module nothing is listening to.
+      // The page owns exactly one graph, but a hot reload or an unmount must
+      // not leave a node pulling blocks out of an engine nothing is listening
+      // to.
       teardown();
     },
     [teardown],
   );
 
-  return { ready, status, error, start, isReady };
+  return { ready, status, error, underruns, start, isReady };
+}
+
+/**
+ * buildWorklet builds the AudioWorkletNode and hands it the consumer end of
+ * the render channel, or returns null where the browser has no worklet and
+ * where ?audio=scriptprocessor asks for the other path. The caller connects it
+ * to the destination once the producer is running.
+ *
+ * A rejected addModule is not fatal for the same reason the absence of
+ * audioWorklet is not: there is a working consumer either way, and a page that
+ * plays through the older node beats a page that does not play.
+ */
+async function buildWorklet(
+  context: AudioContext,
+  port: MessagePort,
+): Promise<AudioWorkletNode | null> {
+  if (
+    context.audioWorklet === undefined ||
+    forcedTransport() === "scriptprocessor"
+  ) {
+    return null;
+  }
+
+  try {
+    await context.audioWorklet.addModule(processorURL);
+  } catch (moduleError) {
+    console.warn(
+      "AudioWorklet module refused; falling back to ScriptProcessorNode",
+      moduleError,
+    );
+
+    return null;
+  }
+
+  const node = new AudioWorkletNode(context, PROCESSOR_NAME, {
+    numberOfInputs: 0,
+    numberOfOutputs: 1,
+    outputChannelCount: [2],
+  });
+
+  const handover: ConsumePort = { type: "consume", port };
+  node.port.postMessage(handover, [port]);
+
+  return node;
+}
+
+/**
+ * buildFallback drains the same queue from a ScriptProcessorNode on the main
+ * thread, for a browser with no AudioWorklet. Like buildWorklet it leaves the
+ * node unconnected; nothing renders until the caller connects it.
+ *
+ * The producer is untouched -- synthesis is still in the worker -- so what this
+ * costs is the copy running on the main thread again, and with it the jank
+ * sensitivity the worklet was there to remove. It is a fallback, not a second
+ * design.
+ */
+function buildFallback(
+  context: AudioContext,
+  port: MessagePort,
+  onQueue: (queue: BlockQueue) => void,
+): ScriptProcessorNode {
+  const queue = new BlockQueue();
+
+  port.onmessage = (event: MessageEvent<RenderedBlock>) => {
+    queue.push(event.data.buffer);
+  };
+  port.start();
+
+  const node = context.createScriptProcessor(512, 0, 2);
+  node.onaudioprocess = (event) => {
+    const buffer = event.outputBuffer;
+    const left = buffer.getChannelData(0);
+    const right = buffer.getChannelData(1);
+
+    queue.fill(left, right, left.length, (spent) => {
+      const message: RecycledBuffer = { type: "recycle", buffer: spent };
+      port.postMessage(message, [spent.buffer]);
+    });
+  };
+
+  onQueue(queue);
+
+  return node;
 }
