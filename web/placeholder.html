@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Algo Glockenspiel — not built yet</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 48px 24px;
+        background: linear-gradient(
+          180deg,
+          #f2dfbc 0%,
+          #c78a50 55%,
+          #a05a2f 100%
+        );
+        color: #3d2415;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        line-height: 1.55;
+      }
+
+      main {
+        max-width: 62ch;
+        margin: 0 auto;
+        padding: 28px 30px 32px;
+        border: 2px solid #89572e;
+        border-radius: 18px;
+        background: #efe4d1;
+        box-shadow: 0 28px 62px rgba(58, 24, 5, 0.34);
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: 1.6rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      pre {
+        overflow-x: auto;
+        margin: 16px 0;
+        padding: 12px 14px;
+        border-radius: 10px;
+        background: #40260f;
+        color: #fdf0dd;
+      }
+
+      p {
+        margin: 12px 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>The web app has not been built</h1>
+
+      <p>
+        This page is compiled into the <code>glockenspiel</code> binary. The app
+        itself is not: it is a bundle with content-hashed file names, and
+        <code>web/dist</code> is a build artifact that no checkout contains.
+      </p>
+
+      <pre><code>just build-web</code></pre>
+
+      <p>
+        That builds the browser bundle and the WebAssembly module into
+        <code>web/dist</code>. Reload afterwards; the server picks the build up
+        without a restart.
+      </p>
+    </main>
+  </body>
+</html>
