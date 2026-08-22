@@ -735,12 +735,17 @@ func (e *RealtimeEngine) renderBanks(segment int, buf []float32) {
 				lifted[i] = output[i*width+lane]
 			}
 
-			v.stream.finishBlock(lifted, lifted)
+			// A voice can retire partway through a pass, and what it returns
+			// is how much of the block is actually its own. Mixing the whole
+			// block instead would carry the tail past the point the voice
+			// stopped at, which is the difference between the two ways a note
+			// can end rather than a rounding.
+			sounded := v.stream.finishBlock(lifted, lifted)
 
 			left := v.left * gain
 			right := v.right * gain
 
-			for i := 0; i < n; i++ {
+			for i := 0; i < sounded; i++ {
 				sample := v.buffer[i]
 				buf[i*2] += sample * left
 				buf[i*2+1] += sample * right

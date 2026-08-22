@@ -11,7 +11,16 @@ import (
 const (
 	defaultBlockSize      = 128
 	defaultDecayThreshold = -90.0
-	autoStopBlockCount    = 8
+
+	// autoStopWindowCount is how many consecutive quiet windows retire a note.
+	//
+	// It counts windows of autoStopWindowSamples, not calls, which is the whole
+	// point: the rule used to count whatever the caller happened to hand in, so
+	// a host asking for 37 samples at a time needed 8 x 37 = 296 samples of
+	// quiet where one asking for 128 needed 1024, and the two measured RMS over
+	// different-length windows on top of that. Where a note ended depended on
+	// the block size of whoever was rendering it.
+	autoStopWindowCount = 8
 )
 
 // RenderOptions controls note rendering behavior.
@@ -29,15 +38,17 @@ type RenderOptions struct {
 // for the rest of its life. It holds no state between notes; it is a buffer,
 // not a field of the voice's identity.
 type Voice struct {
-	bar                    *model.Bar
-	scratch                model.BarParams
-	remainingSamples       int
-	strikeVelocity         int
-	autoStop               bool
-	threshold              float64
-	consecutiveQuietBlocks int
-	blockSize              int
-	done                   bool
+	bar                     *model.Bar
+	scratch                 model.BarParams
+	remainingSamples        int
+	strikeVelocity          int
+	autoStop                bool
+	threshold               float64
+	consecutiveQuietWindows int
+	quietWindowSum          float64
+	quietWindowFilled       int
+	blockSize               int
+	done                    bool
 }
 
 // Synthesizer orchestrates note rendering from a preset.
@@ -192,7 +203,9 @@ func (s *Synthesizer) ResetVoice(v *Voice, note, velocity int, duration float64,
 	v.strikeVelocity = velocity
 	v.autoStop = options.AutoStop
 	v.threshold = threshold
-	v.consecutiveQuietBlocks = 0
+	v.consecutiveQuietWindows = 0
+	v.quietWindowSum = 0
+	v.quietWindowFilled = 0
 	v.done = false
 	v.blockSize = s.blockSize
 
@@ -312,21 +325,68 @@ func (s *Synthesizer) peakForNote(note, velocity int) float64 {
 	return peak
 }
 
-func shouldStop(block []float32, threshold float64) bool {
-	if len(block) == 0 {
-		return true
+// autoStopWindowSamples is the length of the window the auto-stop rule measures
+// RMS over. It is the voice's own block size, which makes the rule identical to
+// the one it replaces for a caller rendering a block at a time -- the same
+// windows, over the same samples, summed in the same order -- while a caller
+// using any other chunk size now agrees with it instead of retiring the note
+// somewhere else.
+func (v *Voice) autoStopWindowSamples() int {
+	if v.blockSize > 0 {
+		return v.blockSize
 	}
 
-	sum := 0.0
+	return defaultBlockSize
+}
 
-	for _, x := range block {
-		v := float64(x)
-		sum += v * v
+// accumulateQuiet feeds a rendered block into the auto-stop window, retires the
+// voice once autoStopWindowCount consecutive windows come out below the
+// threshold, and returns how many of the block's samples the voice contributes:
+// all of them, or the prefix ending where it retired.
+//
+// The window is carried across calls rather than being the caller's block,
+// which is what makes where a note ends a property of the note rather than of
+// the host's buffer size. A partial window at the end of a block stays partial
+// until the next one fills it.
+//
+// Truncating the last block is the other half of that. Without it the stop
+// decision lands on the same sample for every caller but the block already in
+// flight is still emitted whole, so the note's length quantises to the chunk
+// size -- 1184 samples at a chunk of 37 against 1152 at 128, for the same note.
+// Retirement by duration has always truncated exactly, since blockLength caps
+// at remainingSamples, and there is no reason for the two ways a note can end
+// to differ. What is dropped is by definition inaudible: eight consecutive
+// windows below the threshold have already gone by.
+func (v *Voice) accumulateQuiet(block []float32) int {
+	window := v.autoStopWindowSamples()
+
+	for i, sample := range block {
+		value := float64(sample)
+		v.quietWindowSum += value * value
+		v.quietWindowFilled++
+
+		if v.quietWindowFilled < window {
+			continue
+		}
+
+		rms := math.Sqrt(v.quietWindowSum / float64(v.quietWindowFilled))
+
+		if rms < v.threshold {
+			v.consecutiveQuietWindows++
+			if v.consecutiveQuietWindows >= autoStopWindowCount {
+				v.done = true
+
+				return i + 1
+			}
+		} else {
+			v.consecutiveQuietWindows = 0
+		}
+
+		v.quietWindowSum = 0
+		v.quietWindowFilled = 0
 	}
 
-	rms := math.Sqrt(sum / float64(len(block)))
-
-	return rms < threshold
+	return len(block)
 }
 
 // Active reports whether the voice can still render audio.
@@ -334,7 +394,10 @@ func (v *Voice) Active() bool {
 	return v != nil && !v.done && v.remainingSamples > 0
 }
 
-// RenderInto writes the next chunk into dst and returns the sample count written.
+// RenderInto writes the next chunk into dst and returns how many samples of it
+// the caller should read. That is normally the whole chunk, and less than it on
+// the block where auto-stop retires the voice -- the same truncation a note
+// ending on its duration has always produced.
 //
 // This is the whole-chain form, where the voice's own bar runs its own
 // rotor-major bank. The realtime engine does not use it: it drives startBlock
@@ -352,9 +415,7 @@ func (v *Voice) RenderInto(dst []float32) int {
 
 	copy(dst[:n], block)
 
-	v.advance(block)
-
-	return n
+	return v.advance(block)
 }
 
 // startBlock runs the pre-bank half of the chain for a block of at most n
@@ -379,8 +440,11 @@ func (v *Voice) startBlock(n int) []float32 {
 // finishBlock runs the post-bank half of the chain over one voice's share of a
 // bank's output, writes it into dst and does the block bookkeeping. bankOut
 // must be the deinterleaved output of the block startBlock last prepared.
-func (v *Voice) finishBlock(bankOut, dst []float32) {
-	v.advance(v.bar.FinishBankOutput(bankOut, dst))
+//
+// It returns how many samples of dst are the voice's, which is the whole block
+// except where auto-stop retires the voice partway through it.
+func (v *Voice) finishBlock(bankOut, dst []float32) int {
+	return v.advance(v.bar.FinishBankOutput(bankOut, dst))
 }
 
 // blockLength returns how many samples the voice will contribute to a request
@@ -404,18 +468,23 @@ func (v *Voice) blockLength(n int) int {
 
 // advance applies the auto-stop rule and the remaining-sample count to a block
 // the voice has just rendered.
-func (v *Voice) advance(block []float32) {
-	if v.autoStop && shouldStop(block, v.threshold) {
-		v.consecutiveQuietBlocks++
-		if v.consecutiveQuietBlocks >= autoStopBlockCount {
-			v.done = true
-		}
-	} else {
-		v.consecutiveQuietBlocks = 0
+//
+// Both halves are counted in samples rather than in calls, so two callers
+// rendering the same note at different block sizes retire it at the same point.
+// That was not true before: the auto-stop rule counted quiet *blocks*, so the
+// hysteresis was 8 times whatever the caller asked for, and it measured RMS
+// over the caller's block length as well.
+func (v *Voice) advance(block []float32) int {
+	kept := len(block)
+
+	if v.autoStop {
+		kept = v.accumulateQuiet(block)
 	}
 
 	v.remainingSamples -= len(block)
 	if v.remainingSamples <= 0 {
 		v.done = true
 	}
+
+	return kept
 }
