@@ -861,6 +861,22 @@ note. It clones now, and `TestRenderingIsIndependentOfPresetState` guards it.
   not pack, so the end-to-end polyphonic benchmark moves by about 1%. See "The
   realtime render path" for the numbers. Making the excitation chain
   voice-major too is the obvious next step and is not in Phase 2.
+- Lanes are never compacted. A lane is released where its note retired, so the
+  surviving voices can straddle more banks than their count needs, and nothing
+  moves a survivor down into the hole: a voice's rotor state lives in its bank's
+  arrays, so compacting one means migrating that state, and `VoiceBank` has no
+  API for it. The cost is therefore one bank pass per _occupied_ bank rather
+  than `ceil(polyphony/LaneWidth)`. Measured at 128 frames with eight sounding
+  voices: 4423 ns held in one bank, 4748 across two, 5952 across four and
+  6604 across eight. Two things keep that from mattering much in practice. An
+  empty bank costs nothing — `renderBanks` skips a bank with no sounding lane
+  rather than advancing it — and a hole is by definition the lowest free lane,
+  so the next note-on fills it and the fragmentation heals. What is left is a
+  chord decaying with no new notes behind it, and the spread it can reach is
+  bounded by the polyphony that came before: eight voices cannot occupy four
+  banks without a prior 25-note chord, or eight banks without 57. A
+  lane-migration API and compaction on release is the fix, and it is not
+  written.
 - The interleave is scalar. Gathering the lanes in and lifting them out is
   2048 strided `float32` accesses per block at eight voices, and it costs about
   two thirds of what packing the rotors saves. A packed 8x8 transpose is the

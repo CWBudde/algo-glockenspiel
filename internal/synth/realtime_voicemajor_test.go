@@ -375,3 +375,88 @@ func TestSoundingVoicesStayPackedIntoTheLowestLanes(t *testing.T) {
 		}
 	}
 }
+
+// TestARetiredLaneIsRefilledAndItsBankSkipped pins the two properties that make
+// not compacting lanes tolerable, and they are the reasons the engine gets away
+// with releasing a lane where its note happened to retire.
+//
+// The first is that a hole heals. acquireLane takes the lowest free lane, so a
+// lane freed in a low bank is the one the next note-on gets, and fragmentation
+// does not accumulate while anything is being played.
+//
+// The second is that a bank nobody is sounding in costs nothing: renderBanks
+// skips it rather than advancing eight silent lanes. Without that, a session
+// that once reached full polyphony would pay for every bank it had ever touched
+// for as long as it ran.
+func TestARetiredLaneIsRefilledAndItsBankSkipped(t *testing.T) {
+	engine := newTestEngine(t)
+
+	// Eight short notes take bank 0, eight long ones take bank 1.
+	engine.noteDuration = 0.01
+
+	for note := 60; note < 68; note++ {
+		engine.NoteOn(note, 100)
+	}
+
+	engine.noteDuration = defaultVoiceDuration
+
+	for note := 68; note < 76; note++ {
+		engine.NoteOn(note, 100)
+	}
+
+	for i := range engine.voices {
+		if lane := engine.voices[i].lane; lane < 0 || lane >= 2*oscbank.LaneWidth {
+			t.Fatalf("sixteen notes should occupy exactly two banks, got lane %d", lane)
+		}
+	}
+
+	// Run until the short notes retire. The long ones outlive this by three
+	// orders of magnitude, so bank 1 is still sounding when bank 0 empties.
+	for block := 0; engine.ActiveVoices() > oscbank.LaneWidth && block < 400; block++ {
+		engine.ProcessBlock(defaultRealtimeBlockFrames)
+	}
+
+	if got := engine.ActiveVoices(); got != oscbank.LaneWidth {
+		t.Fatalf("expected the eight short notes to retire, %d voices sounding", got)
+	}
+
+	for lane := range oscbank.LaneWidth {
+		if engine.laneUsed[lane] {
+			t.Fatalf("lane %d is still held after its note retired", lane)
+		}
+	}
+
+	// Bank 0 is empty and bank 1 is not, which is the fragmented state. It has
+	// to render, and it has to render the same as it did the block before: a
+	// skipped bank must be skipped, not zeroed into the mix.
+	before := append([]float32(nil), engine.ProcessBlock(defaultRealtimeBlockFrames)...)
+	if !hasSignal(before) {
+		t.Fatal("the surviving bank produced silence")
+	}
+
+	// The hole heals: the next note-on takes the lowest free lane, which is in
+	// the empty bank rather than beyond the sounding one.
+	engine.NoteOn(80, 100)
+
+	lane := noLane
+
+	for i := range engine.voices {
+		if engine.voices[i].note == 80 {
+			lane = engine.voices[i].lane
+		}
+	}
+
+	if lane < 0 || lane >= oscbank.LaneWidth {
+		t.Fatalf("a note-on after a retirement took lane %d, want a lane in the emptied bank 0", lane)
+	}
+}
+
+func hasSignal(samples []float32) bool {
+	for _, s := range samples {
+		if s != 0 {
+			return true
+		}
+	}
+
+	return false
+}

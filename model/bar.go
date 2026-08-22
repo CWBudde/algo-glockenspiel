@@ -160,10 +160,19 @@ func (b *Bar) StartBankInput(velocity, numSamples int) []float32 {
 // It reads the filtered excitation the matching StartBankInput or
 // ProcessExcitation left behind, so the two have to be called as a pair over
 // the same block of the same bar.
+//
+// dst has to be at least as long as bankOut. A short one is a caller bug rather
+// than a runtime condition -- the engine sizes the slot buffer it passes from
+// the same block length it sized the bank pass from -- so it panics with a
+// named message instead of failing as a slice-bounds error a few frames deep.
 func (b *Bar) FinishBankOutput(bankOut, dst []float32) []float32 {
 	sampleCount := len(bankOut)
 	if sampleCount == 0 {
 		return nil
+	}
+
+	if len(dst) < sampleCount {
+		panic("model: destination buffer too small")
 	}
 
 	out := dst[:sampleCount]

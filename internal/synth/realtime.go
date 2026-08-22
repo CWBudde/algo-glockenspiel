@@ -98,8 +98,8 @@ type RealtimeEngine struct {
 
 	// laneUsed marks the lanes a sounding voice holds. acquireLane takes the
 	// lowest free one, which is what keeps the sounding voices packed low and
-	// the number of banks a block has to walk proportional to the polyphony
-	// rather than to the slot count.
+	// the number of banks a block has to walk proportional to the banks they
+	// occupy rather than to the slot count.
 	laneUsed []bool
 
 	// laneVoice maps a lane to the index of the voice holding it, or -1. It is
@@ -450,9 +450,21 @@ func (e *RealtimeEngine) restrikeSlot(slot, note, velocity int) bool {
 
 	// A retrigger or a steal reuses the lane the slot is already sounding on;
 	// only a slot that is not sounding needs a new one. Taking the lowest free
-	// lane is what keeps the sounding voices packed into the low banks, so a
-	// block walks ceil(polyphony/LaneWidth) banks rather than one per slot that
+	// lane is what packs the sounding voices into the low banks: a block pays
+	// for one pass per bank that holds a sounding voice, not one per slot that
 	// has ever been used.
+	//
+	// "One pass per occupied bank" is the honest form of that claim, and it is
+	// weaker than ceil(polyphony/LaneWidth): a lane is released where its note
+	// retired, so survivors can straddle more banks than their count needs, and
+	// nothing moves a survivor down. Rotor state lives in its bank's arrays, so
+	// compacting one means migrating that state, which VoiceBank has no API
+	// for. Measured at 128 frames with eight sounding voices: 4423 ns in one
+	// bank, 4748 across two, 5952 across four, 6604 across eight. The common
+	// case is cheap and it self-heals, because a hole is the lowest free lane
+	// and so the next note-on fills it; reaching four banks with eight voices
+	// takes a prior 25-note chord, and eight takes 57. See "Known limits" in
+	// docs/oscillator-bank.md.
 	if v.lane == noLane {
 		v.lane = e.acquireLane()
 	}
