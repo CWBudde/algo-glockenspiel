@@ -481,6 +481,8 @@ Goal: the browser side of the same loop.
       `reportEvery: 1` a run produces up to 100,000 samples, so neither the hook nor the chart
       walks the history per event: the points array is grown in place beside a sample counter,
       and the chart folds in only the samples it has not drawn, one redraw per animation frame.
+      The `maxIterations` the panel reads "n of m" against is stamped with the job it was sent
+      for, because only a fit this page started has a known limit.
 - [x] The Pages build detects the missing API and explains that Optimize needs the local CLI.
       `useApiAvailable.ts`, and the served root moved with it: a Vite bundle is a build
       artifact with hashed names and cannot be `go:embed`ed without making the binary's

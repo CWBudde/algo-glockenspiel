@@ -205,7 +205,12 @@ moves once per `reportEvery`; `optimizerIterations` is the backend's own count
 and the only one comparable with the request's `maxIterations`. They are separate
 fields in the wire format for a reason and are displayed separately for the same
 one. `maxIterations` itself is not in the snapshot — the server does not echo the
-request back — so the form passes what it sent alongside the start snapshot.
+request back — so the form passes what it sent alongside the start snapshot. It
+is kept stamped with the job id it was sent for, and read back only for that
+job: a run this page did not start — picked up from the mount read, from the
+stream after a reload, or after the slot was reused — has no known limit, and
+the row then shows the bare iteration count rather than "n of m" against an `m`
+belonging to a different fit.
 
 ### What the cost chart has and has not been shown to do
 

@@ -19,22 +19,38 @@ import { useApiAvailable } from "../features/optimize/useApiAvailable";
 /** The command that makes the fit API reachable. */
 const SERVE_COMMAND = "glockenspiel serve";
 
+/**
+ * A started fit's iteration limit, stamped with the job it was sent for.
+ *
+ * Written on one line rather than inline in the useState type argument because
+ * prettier 3.8 and 3.9 break a multi-line type differently and each rewrites
+ * the other's output; see the same note on `BuiltBody` in FitForm.
+ */
+type StartLimit = { jobId: string; maxIterations: number };
+
 export function OptimizePage() {
   const { availability, version } = useApiAvailable();
   const [snapshot, setSnapshot] = useState<FitSnapshot | null>(null);
 
-  // What the running fit was started with. The server does not echo the
-  // request back, so only the form knows it, and only for a fit this page
-  // started: a run picked up from the status read on mount has no known limit.
-  const [maxIterations, setMaxIterations] = useState<number | null>(null);
+  // What a fit was started with, stamped with the job it was sent for. The
+  // server does not echo the request back, so only the form knows the limit,
+  // and only for a fit this page started: a run picked up from the status read
+  // on mount, or from the stream after the slot was reused, has none. Keeping
+  // the job id alongside it is what stops the previous run's limit from being
+  // read against the new run's count; the status panel then shows the bare
+  // iteration count rather than "n of m" against an m that is not this fit's.
+  const [limit, setLimit] = useState<StartLimit | null>(null);
 
   const onSnapshot = useCallback((next: FitSnapshot, startedWith?: number) => {
     setSnapshot(next);
 
     if (startedWith !== undefined) {
-      setMaxIterations(startedWith);
+      setLimit({ jobId: next.jobId, maxIterations: startedWith });
     }
   }, []);
+
+  const limitApplies = limit !== null && limit.jobId === snapshot?.jobId;
+  const maxIterations = limitApplies ? limit.maxIterations : null;
 
   // A fit outlives the page: the server holds one slot and a reload lands back
   // on whatever is running. Reading the status once on mount is what makes the
