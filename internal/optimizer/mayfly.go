@@ -131,13 +131,36 @@ func (o *MayflyOptimizer) buildConfig(dims, iters int) (*mayfly.Config, error) {
 	return cfg, nil
 }
 
-func newMayflyConfig(variant string, pop, dims, iters int) (*mayfly.Config, error) {
-	// The upstream registry is the single source of truth for variant names, so
-	// new variants are picked up without touching this wrapper.
-	selected := mayfly.NewVariant(variant)
+// Validate resolves the configured variant without running anything.
+//
+// It exists for callers that decide whether to accept a request before they
+// book the work it names. Without it the name is first resolved inside
+// Optimize, which for the HTTP fit API means a malformed request is accepted,
+// claims the single fit slot, and fails asynchronously a moment later instead
+// of being rejected as the bad request it always was.
+func (o *MayflyOptimizer) Validate() error {
+	_, err := resolveVariant(o.variant())
+
+	return err
+}
+
+// resolveVariant looks a variant up in the upstream registry, which is the
+// single source of truth for variant names, so new variants are picked up
+// without touching this wrapper.
+func resolveVariant(name string) (mayfly.AlgorithmVariant, error) {
+	selected := mayfly.NewVariant(name)
 	if selected == nil {
 		return nil, fmt.Errorf("unsupported mayfly variant %q, want one of %s",
-			variant, strings.Join(mayfly.ListVariants(), ", "))
+			name, strings.Join(mayfly.ListVariants(), ", "))
+	}
+
+	return selected, nil
+}
+
+func newMayflyConfig(variant string, pop, dims, iters int) (*mayfly.Config, error) {
+	selected, err := resolveVariant(variant)
+	if err != nil {
+		return nil, err
 	}
 
 	cfg := selected.GetConfig()

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -158,6 +159,13 @@ func formDuration(request *http.Request, name string, fallback time.Duration) (t
 		return fallback, fmt.Errorf("%s must be a duration such as 30s or 10m, got %q", name, raw)
 	}
 
+	// ParseFloat accepts "NaN" and "Inf", and converting either to a Duration
+	// is undefined in the language spec -- so the bounds check that follows
+	// would be deciding on whatever the hardware happened to produce.
+	if math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		return fallback, fmt.Errorf("%s must be a finite duration, got %q", name, raw)
+	}
+
 	return time.Duration(seconds * float64(time.Second)), nil
 }
 
@@ -192,6 +200,15 @@ func queryFloat(query url.Values, name string, fallback, low, high float64) (flo
 	value, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		return fallback, fmt.Errorf("%s must be a number, got %q", name, raw)
+	}
+
+	// NaN has to be rejected before the range check rather than by it: every
+	// comparison against NaN is false, so the bounds below would pass it
+	// through to a render that silently produces an empty file. The infinities
+	// the range check does catch, but naming all three here is what keeps that
+	// from being a coincidence.
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return fallback, fmt.Errorf("%s must be a finite number, got %q", name, raw)
 	}
 
 	if value <= low || value > high {

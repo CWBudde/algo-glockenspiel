@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -45,6 +46,15 @@ const (
 	// maxRenderSeconds bounds the audition render. Rendering is linear in
 	// duration and the result is held whole in memory before it is sent.
 	maxRenderSeconds = 60.0
+
+	// minReferenceSampleRate and maxReferenceSampleRate bound the rate an
+	// uploaded WAV may declare. The rate is attacker-controlled -- it is a
+	// uint32 in the header that nothing else checks -- and it multiplies every
+	// later allocation, so it is bounded at the door rather than at each of the
+	// places it is later used. The range covers every rate audio equipment
+	// actually produces, from telephony upwards.
+	minReferenceSampleRate = 4000
+	maxReferenceSampleRate = 192000
 
 	// fitEventHeartbeat is how often an idle SSE stream emits a comment. It
 	// keeps an intermediary from reaping a quiet connection, and it is also
@@ -199,7 +209,7 @@ func (s *Server) runFit(
 
 	backend, err := selectOptimizer(settings)
 	if err != nil {
-		job.finish(fitFailed, nil, "", err)
+		job.finish(fitFailed, nil, nil, err)
 
 		return
 	}
@@ -212,14 +222,14 @@ func (s *Server) runFit(
 			Report:        job.report,
 		})
 	if err != nil {
-		job.finish(fitFailed, nil, "", err)
+		job.finish(fitFailed, nil, nil, err)
 
 		return
 	}
 
 	bestParams, err := objective.Codec().DecodeParams(result.BestParams)
 	if err != nil {
-		job.finish(fitFailed, nil, result.StopReason, err)
+		job.finish(fitFailed, nil, result, err)
 
 		return
 	}
@@ -236,7 +246,7 @@ func (s *Server) runFit(
 		state = fitCanceled
 	}
 
-	job.finish(state, fitted, result.StopReason, nil)
+	job.finish(state, fitted, result, nil)
 
 	s.logf("fit %s finished: state=%s best=%0.6g stop=%s iterations=%d evals=%d",
 		job.id, state, result.BestCost, result.StopReason, result.Iterations, result.Evaluations)
@@ -344,7 +354,13 @@ func (s *Server) handleFitAudio(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
-	duration, err := queryFloat(query, "duration", job.referenceSeconds, 0, maxRenderSeconds)
+	// The reference may be longer than the render cap -- the upload limit
+	// allows several minutes of audio -- so the fallback is clamped rather than
+	// passed through. A default that ignored maxRenderSeconds would book
+	// exactly the render the cap exists to refuse.
+	fallback := math.Min(job.referenceSeconds, maxRenderSeconds)
+
+	duration, err := queryFloat(query, "duration", fallback, 0, maxRenderSeconds)
 	if err != nil {
 		writeJSONError(writer, http.StatusBadRequest, err.Error())
 
@@ -448,8 +464,15 @@ func readReferencePart(request *http.Request, limit int64) ([]float32, int, erro
 		return nil, 0, errors.New("the reference contains no samples")
 	}
 
-	if sampleRate <= 0 {
-		return nil, 0, fmt.Errorf("the reference declares a sample rate of %d", sampleRate)
+	// A WAV header states its sample rate as an unsigned 32-bit number, and
+	// nothing downstream questions it: the rate becomes the job's, and the
+	// audition endpoint sizes its render as duration * sampleRate. A one-second
+	// upload claiming two gigahertz therefore asks RenderNote for 1.2e11
+	// samples, which is a 480 GB allocation and an unrecoverable
+	// "fatal error: out of memory" rather than a failed request.
+	if sampleRate < minReferenceSampleRate || sampleRate > maxReferenceSampleRate {
+		return nil, 0, fmt.Errorf("the reference declares a sample rate of %d Hz, outside the supported [%d,%d] range",
+			sampleRate, minReferenceSampleRate, maxReferenceSampleRate)
 	}
 
 	return samples, sampleRate, nil
@@ -534,11 +557,20 @@ func selectOptimizer(settings fitRequest) (optimizer.Optimizer, error) {
 	case "simple":
 		return &optimizer.SimpleOptimizer{}, nil
 	case "mayfly":
-		return &optimizer.MayflyOptimizer{
+		backend := &optimizer.MayflyOptimizer{
 			Variant:    settings.MayflyVariant,
 			Population: settings.MayflyPopulation,
 			Seed:       settings.MayflySeed,
-		}, nil
+		}
+
+		// The variant is resolved here rather than left to Optimize, so an
+		// unknown name is a 400 on the start request instead of a job that is
+		// accepted, takes the single fit slot, and then fails.
+		if err := backend.Validate(); err != nil {
+			return nil, err
+		}
+
+		return backend, nil
 	default:
 		return nil, fmt.Errorf("unsupported optimizer %q", settings.Optimizer)
 	}

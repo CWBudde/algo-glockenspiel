@@ -134,6 +134,13 @@ candidate evaluation, so a three-minute reference makes a hundred-iteration run
 take hours — and small enough that the decoded form stays bounded. An oversized
 body is a `413`.
 
+The reference's declared sample rate is bounded too, at **4 kHz to 192 kHz**.
+A WAV header states its rate as an unsigned 32-bit number, and that rate becomes
+the job's: it multiplies every later allocation, so an upload claiming a
+multi-gigahertz rate would ask the audition render for a hundred billion
+samples. A rate outside the range is a `400`, checked before a job slot is
+claimed.
+
 ### Watching it
 
 `GET /api/fit/events` is a Server-Sent Events stream. Each event carries a whole
@@ -154,6 +161,10 @@ existing `Progress` callback, the same one the CLI hangs checkpointing off, so
 nothing inside the optimizer knows that HTTP exists. Missing a `progress` event
 loses a point on a curve and nothing else; the terminal `done` event is never
 missed, because a subscriber watches the job's completion directly.
+
+`HEAD` on the stream answers with its headers and returns instead of entering
+the loop: Go suppresses the body for `HEAD` but not the handler, so a probe that
+streamed would hang until the fit ended.
 
 A stream ends when the job ends, when the client goes away, or when the server
 shuts down — in the last case with an `event: shutdown` first, so the browser
@@ -180,7 +191,9 @@ for a cancelled job too.
 writes, so it loads with `glockenspiel synth --preset`. `GET /api/fit/audio`
 renders it: `?note=`, `?velocity=` and `?duration=` default to the job's own note
 and velocity and to the reference's length, which is what makes the render and
-the reference directly comparable. Duration is capped at 60 seconds, because the
+the reference directly comparable. Duration is capped at 60 seconds — the
+default included, so a reference longer than the cap renders its first 60
+seconds rather than all of it — because the
 whole file is built in memory before a byte is sent — which is also what keeps a
 mid-encode failure a `500` rather than a truncated download the browser reports
 as successful.

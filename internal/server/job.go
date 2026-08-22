@@ -185,13 +185,29 @@ func (j *fitJob) report(progress optimizer.Progress) {
 // It is called exactly once, by the goroutine running the fit, as the last
 // thing that goroutine does -- which is what makes "done is closed" mean "the
 // job slot is free" rather than "the job asked to stop".
-func (j *fitJob) finish(state fitState, result *preset.Preset, stopReason string, cause error) {
+func (j *fitJob) finish(state fitState, result *preset.Preset, final *optimizer.Result, cause error) {
 	j.mu.Lock()
 
 	j.state = state
 	j.result = result
-	j.stopReason = stopReason
 	j.finishedAt = time.Now()
+
+	// The periodic Report callback is the only other thing that advances
+	// j.progress, and reportEvery is allowed to be zero, so a terminal snapshot
+	// that did not fold the backend's own Result in would state the numbers of
+	// the last report -- or, with no report at all, a finished run that claims
+	// zero evaluations and a best cost of zero.
+	if final != nil {
+		j.stopReason = final.StopReason
+		j.progress.OptimizerIterations = final.Iterations
+		j.progress.Evaluations = final.Evaluations
+		j.progress.BestCost = final.BestCost
+		// A finished run has no candidate under evaluation any more, so its
+		// current position is the best one it found.
+		j.progress.CurrentCost = final.BestCost
+		j.progress.Elapsed = final.Elapsed
+		j.progress.BestParams = append([]float64(nil), final.BestParams...)
+	}
 
 	if cause != nil {
 		j.failure = cause.Error()

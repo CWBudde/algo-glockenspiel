@@ -37,6 +37,18 @@ func (s *Server) handleFitEvents(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 
+	// A HEAD probe must not enter the stream. Go suppresses the body for HEAD
+	// but not the handler, so a probe against a live fit would sit in the loop
+	// below until the fit ended -- up to the whole one-hour budget -- holding a
+	// connection that Shutdown then waits for. The headers are the whole of
+	// what HEAD asks for.
+	if request.Method == http.MethodHead {
+		writeEventStreamHeaders(writer)
+		writer.WriteHeader(http.StatusOK)
+
+		return
+	}
+
 	flusher, ok := writer.(http.Flusher)
 	if !ok {
 		// Without a flusher every event would sit in a buffer until the
@@ -51,11 +63,7 @@ func (s *Server) handleFitEvents(writer http.ResponseWriter, request *http.Reque
 	wake, release := job.subscribe()
 	defer release()
 
-	writer.Header().Set("Content-Type", "text/event-stream")
-	writer.Header().Set("Cache-Control", "no-store")
-	// Named explicitly because a buffering reverse proxy is the one thing that
-	// breaks SSE without any error to look at.
-	writer.Header().Set("X-Accel-Buffering", "no")
+	writeEventStreamHeaders(writer)
 	writer.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
@@ -102,6 +110,16 @@ func (s *Server) handleFitEvents(writer http.ResponseWriter, request *http.Reque
 			return
 		}
 	}
+}
+
+// writeEventStreamHeaders states what the stream is. It is one function so the
+// answer to a HEAD and the answer to a GET cannot drift apart.
+func writeEventStreamHeaders(writer http.ResponseWriter) {
+	writer.Header().Set("Content-Type", "text/event-stream")
+	writer.Header().Set("Cache-Control", "no-store")
+	// Named explicitly because a buffering reverse proxy is the one thing that
+	// breaks SSE without any error to look at.
+	writer.Header().Set("X-Accel-Buffering", "no")
 }
 
 // writeFitEvent sends one snapshot. It reports whether the stream is still
