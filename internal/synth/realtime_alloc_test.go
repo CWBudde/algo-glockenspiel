@@ -63,32 +63,68 @@ func TestProcessBlockDoesNotAllocateAfterFirstBlock(t *testing.T) {
 	}
 }
 
-// TestNoteOnAllocatesNothingBeyondTheVoice pins the fix for the per-note-on
-// block buffer: what NoteOn allocates is what constructing the voice costs, and
-// nothing on top of it.
+// TestNoteOnAllocatesNothing is the note-on half of Phase 2's "no allocation on
+// the audio path": a note-on allocates nothing at all, not merely nothing on
+// top of the voice it used to build.
 //
-// Constructing a voice is not free -- it builds a transposed bar -- and making
-// it free is not this change's job. The comparison against NewVoice is what
-// makes the assertion stable regardless of what that costs.
-func TestNoteOnAllocatesNothingBeyondTheVoice(t *testing.T) {
+// The earlier form of this test compared NoteOn against NewVoice, because
+// constructing a voice cost 18 allocations -- a transposed BarParams, a bar,
+// its oscillator bank -- and making that free was a separate piece of work.
+// It is done: the engine pools a voice per slot and restrikes it in place
+// through Synthesizer.ResetVoice, so there is no construction left to allow for.
+//
+// All three arms of NoteOn are measured, because they take different paths to a
+// slot and only the retrigger arm would be exercised by striking one note over
+// and over.
+func TestNoteOnAllocatesNothing(t *testing.T) {
 	engine := newTestEngine(t)
 
-	const note = 72
+	// Retrigger: the note is already in a slot, so NoteOn finds it and
+	// restrikes it in place.
+	engine.NoteOn(72, 100)
 
-	engine.NoteOn(note, 100)
+	if allocs := testing.AllocsPerRun(20, func() { engine.NoteOn(72, 100) }); allocs != 0 {
+		t.Fatalf("retriggering a sounding note allocated %.1f times, want 0", allocs)
+	}
 
-	voiceAllocs := testing.AllocsPerRun(20, func() {
-		if _, err := engine.synth.NewVoice(note, 100, engine.noteDuration, engine.renderOptions); err != nil {
-			t.Fatalf("NewVoice failed: %v", err)
+	// Fresh slots: each note claims a slot that has never sounded, until the
+	// engine is full. AllocsPerRun would retrigger, so the sweep is measured as
+	// a whole rather than per note-on.
+	fresh := newTestEngine(t)
+	fresh.maxVoices = 8
+
+	allocs := testing.AllocsPerRun(1, func() {
+		for note := 60; note < 68; note++ {
+			fresh.NoteOn(note, 100)
 		}
 	})
 
-	noteOnAllocs := testing.AllocsPerRun(20, func() {
-		engine.NoteOn(note, 100)
+	if allocs != 0 {
+		t.Fatalf("filling every voice slot allocated %.1f times, want 0", allocs)
+	}
+
+	if fresh.ActiveVoices() != fresh.maxVoices {
+		t.Fatalf("expected the engine to be full, got %d voices", fresh.ActiveVoices())
+	}
+
+	// Voice stealing: the engine is full and none of these notes is sounding,
+	// so each one rotates the oldest slot to the back and restrikes it there.
+	// The two batches are disjoint and alternate, so no note in a batch is
+	// already sounding when it is struck and every one of the eight is a steal
+	// rather than a retrigger.
+	batch := 0
+
+	stealAllocs := testing.AllocsPerRun(4, func() {
+		base := 80 + batch%2*8
+		batch++
+
+		for note := base; note < base+8; note++ {
+			fresh.NoteOn(note, 100)
+		}
 	})
 
-	if noteOnAllocs > voiceAllocs {
-		t.Fatalf("NoteOn allocated %.1f times, the voice it builds costs %.1f", noteOnAllocs, voiceAllocs)
+	if stealAllocs != 0 {
+		t.Fatalf("stealing a voice allocated %.1f times, want 0", stealAllocs)
 	}
 }
 

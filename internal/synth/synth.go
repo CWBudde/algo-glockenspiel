@@ -21,8 +21,16 @@ type RenderOptions struct {
 }
 
 // Voice streams a single struck note incrementally.
+//
+// scratch is the voice's own transposition workspace. A voice that is reset for
+// a new note has to land the transposed parameters somewhere before handing
+// them to the bar, and on the audio thread that somewhere must not be freshly
+// allocated -- so every voice carries one, sized on its first use and reused
+// for the rest of its life. It holds no state between notes; it is a buffer,
+// not a field of the voice's identity.
 type Voice struct {
 	bar                    *model.Bar
+	scratch                model.BarParams
 	remainingSamples       int
 	strikeVelocity         int
 	autoStop               bool
@@ -91,38 +99,131 @@ func (s *Synthesizer) RenderNoteWithOptions(note, velocity int, duration float64
 }
 
 // NewVoice prepares a streaming note voice.
+//
+// It is the allocating form, for callers that are not on the audio thread: it
+// builds the bar and then hands it to ResetVoice, so there is exactly one
+// definition of what a voice reset means rather than one here and one there.
+// A caller that already owns a voice -- the realtime engine, whose slots are
+// pooled -- calls ResetVoice directly and allocates nothing.
 func (s *Synthesizer) NewVoice(note, velocity int, duration float64, options RenderOptions) (*Voice, error) {
-	if duration <= 0 {
-		return nil, fmt.Errorf("duration must be positive: %g", duration)
+	// Checked before the bar is built so that a bad duration is reported as a
+	// bad duration, exactly as it was when the two checks stood at the top of
+	// this function.
+	if _, err := s.durationSamples(duration); err != nil {
+		return nil, err
 	}
 
-	totalSamples := int(math.Round(duration * float64(s.sampleRate)))
-	if totalSamples <= 0 {
-		return nil, fmt.Errorf("duration produced no samples: %g", duration)
-	}
-
-	params := s.scaledParamsForNote(note)
-
-	bar, err := model.NewBar(&params, s.sampleRate)
+	voice, err := s.newIdleVoice()
 	if err != nil {
 		return nil, err
 	}
 
-	bar.Reset()
+	if err := s.ResetVoice(voice, note, velocity, duration, options); err != nil {
+		return nil, err
+	}
+
+	return voice, nil
+}
+
+// newIdleVoice builds a voice whose bar is configured for the preset's own note
+// and which has struck nothing yet. Every voice starts life this way, including
+// the pooled slots the realtime engine builds at construction; ResetVoice is
+// what turns one into a particular note.
+//
+// The bar is built from the voice's own scratch parameters rather than from the
+// preset directly, so the scratch slices exist at the right shape from the
+// start and the first ResetVoice already reuses them.
+func (s *Synthesizer) newIdleVoice() (*Voice, error) {
+	voice := &Voice{blockSize: s.blockSize}
+
+	s.preset.Parameters.CopyInto(&voice.scratch)
+
+	bar, err := model.NewBar(&voice.scratch, s.sampleRate)
+	if err != nil {
+		return nil, err
+	}
+
+	voice.bar = bar
+
+	return voice, nil
+}
+
+// ResetVoice restrikes an existing voice as another note, without allocating.
+//
+// This is the audio-thread form of NewVoice: the bar is retuned in place
+// through model.Bar.UpdateParams, which reuses the bar's own slices when the
+// mode and harmonic counts are unchanged -- and they are, since every note of a
+// preset has the same shape and only its frequencies and decays move.
+//
+// The Reset is not optional and is the whole correctness argument for pooling.
+// A bar carries oscillator phase and the excitation lowpass's delay line, and
+// model.Bar.setLowpass deliberately retunes the filter without clearing that
+// delay line, because a parameter change mid-note is not a discontinuity in the
+// signal. A new note is: without Reset, the tail of the previous note would
+// leak through the filter's memory into the new strike, and a pooled slot would
+// render a note differently from a freshly built voice. TestPooledVoiceMatches*
+// in realtime_pooling_test.go pins that it does not.
+//
+// On failure nothing but scratch has been touched: the duration is checked
+// first, and UpdateParams validates before it writes. A caller may therefore
+// treat a refused reset as having left the voice exactly as it found it, which
+// is what lets the engine refuse a note without disturbing the one that slot is
+// already playing.
+func (s *Synthesizer) ResetVoice(v *Voice, note, velocity int, duration float64, options RenderOptions) error {
+	totalSamples, err := s.durationSamples(duration)
+	if err != nil {
+		return err
+	}
+
+	s.scaledParamsForNoteInto(&v.scratch, note)
+
+	if err := v.bar.UpdateParams(&v.scratch); err != nil {
+		return err
+	}
+
+	v.bar.Reset()
 
 	threshold := math.Pow(10, options.DecayDBFS/20)
 	if options.DecayDBFS == 0 {
 		threshold = math.Pow(10, defaultDecayThreshold/20)
 	}
 
-	return &Voice{
-		bar:              bar,
-		remainingSamples: totalSamples,
-		strikeVelocity:   velocity,
-		autoStop:         options.AutoStop,
-		threshold:        threshold,
-		blockSize:        s.blockSize,
-	}, nil
+	v.remainingSamples = totalSamples
+	v.strikeVelocity = velocity
+	v.autoStop = options.AutoStop
+	v.threshold = threshold
+	v.consecutiveQuietBlocks = 0
+	v.done = false
+	v.blockSize = s.blockSize
+
+	return nil
+}
+
+// warm renders one silent block so that model.Bar.ensureBuffers allocates its
+// five working buffers here rather than during the first block of the first
+// real note. Pooling the voices is pointless if the audio thread still pays for
+// their buffers the first time each slot sounds.
+//
+// The block is a strike of velocity 0, which is silence in, silence out, and
+// the Reset afterwards leaves the bar in the same state a fresh one is in.
+func (v *Voice) warm() {
+	v.bar.Synthesize(0, v.blockSize)
+	v.bar.Reset()
+}
+
+// durationSamples converts a note duration to a sample count, rejecting the two
+// durations that cannot produce a note.
+func (s *Synthesizer) durationSamples(duration float64) (int, error) {
+	if duration <= 0 {
+		return 0, fmt.Errorf("duration must be positive: %g", duration)
+	}
+
+	totalSamples := int(math.Round(duration * float64(s.sampleRate)))
+	if totalSamples <= 0 {
+		return 0, fmt.Errorf("duration produced no samples: %g", duration)
+	}
+
+	return totalSamples, nil
 }
 
 // scaledParamsForNote transposes the preset to another note. The clone is not
@@ -146,6 +247,18 @@ func (s *Synthesizer) scaledParamsForNote(note int) model.BarParams {
 	model.TransposeToNote(&scaled, s.preset.Note, note)
 
 	return scaled
+}
+
+// scaledParamsForNoteInto is the same transposition into a destination the
+// caller already owns. It is what the audio path uses: BarParams.CopyInto
+// reuses dst's slices whenever their capacity suffices, so a voice that has
+// been struck once transposes every later note without touching the allocator.
+//
+// The value-returning form above stays for the offline render path, where the
+// caller has no destination to offer and a Clone is the clearer thing to write.
+func (s *Synthesizer) scaledParamsForNoteInto(dst *model.BarParams, note int) {
+	s.preset.Parameters.CopyInto(dst)
+	model.TransposeToNote(dst, s.preset.Note, note)
 }
 
 // peakForNote renders one strike of the given note and returns its peak level

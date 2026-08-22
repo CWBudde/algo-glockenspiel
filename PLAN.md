@@ -48,15 +48,15 @@ Reviewed against the goal above. What exists and works:
 - CI that builds, vets, race-tests on amd64 at `GOAMD64=v1` and `v3` **and** on arm64, lints,
   checks formatting, and builds the WASM target.
 - A deployed browser demo and a VST3 spike.
+- An audio path that neither allocates nor locks. `RealtimeEngine` pools a `Voice` per slot
+  and restrikes it in place on note-on, so `NoteOn` costs 0 allocations rather than the 18
+  `synth.NewVoice` used to; and `internal/cpufeat` warms its detection cache from an `init()`,
+  so the one-off first-block acquisition of `detectMu` can no longer land on the audio thread.
 
 What does not match the goal:
 
 - Cross-voice lane packing is missing. A bank fills its lanes from one voice's oscillators and
   `internal/synth/realtime.go` renders voices serially, so voice count still costs linearly.
-- The audio path still allocates. `synth.NewVoice` builds a whole transposed `model.Bar` per
-  note-on (`internal/synth/synth.go:106`), measured at 19 allocations. It no longer locks:
-  `internal/cpufeat` warms its detection cache from an `init()`, so the one-off first-block
-  acquisition of `detectMu` can no longer land on the audio thread. See Phase 2.4.
 - The NEON kernel has no measured throughput. It is exercised under qemu-user, which is
   worthless for timing, so the NEON row of the benchmark table in `docs/oscillator-bank.md` is
   still `TODO` pending a native arm64 host.
@@ -145,19 +145,22 @@ Acceptance criteria:
       has AVX2, SSE2 and portable rows, and the NEON row is `TODO`. qemu-user is a translation
       layer, so a number taken there would be fiction; this stays open until the kernel can be
       benchmarked on a native arm64 host.
-- [ ] No allocation and no mutex acquisition on the audio path. **Not met, and not quietly
-      reworded so that it passes.** The mutex half is now closed; the allocation half is
-      still open, which is why the box stays unticked.
-      **Allocation — open.** `RealtimeEngine.ProcessBlock` is allocation-free, pinned by
-      `TestProcessBlockDoesNotAllocateAfterFirstBlock`. Note-on is not: `synth.NewVoice`
-      calls `model.NewBar` (`internal/synth/synth.go:106`), which builds a transposed bar and
-      its buffers, measured at 19 allocations per note-on.
-      `TestNoteOnAllocatesNothingBeyondTheVoice` measures `NoteOn` against that cost rather
-      than against zero, and says so in its own comment. What remains is to build the voice
-      without allocating — reusing a `Bar` the engine already owns and reconfiguring it in
-      place rather than constructing a new one per note. That is voice/bar pooling, and it is
-      deliberately scheduled for the next wave rather than bolted on here; it is what this
-      criterion is now waiting on, and nothing else.
+- [x] No allocation and no mutex acquisition on the audio path. Both halves are now closed.
+      **Allocation — closed.** `RealtimeEngine.ProcessBlock` is allocation-free, pinned by
+      `TestProcessBlockDoesNotAllocateAfterFirstBlock`, and so is note-on. `NoteOn` used to
+      call `synth.NewVoice`, which built a transposed `model.Bar` and its buffers: 18
+      allocations per note-on by `testing.AllocsPerRun` (the 19 this line carried before was
+      the figure taken when it was written). The engine now builds one `Voice` per slot at
+      construction, warms its bar's buffers there, and restrikes it in place on note-on
+      through `Synthesizer.ResetVoice`, which transposes into the voice's own scratch
+      `BarParams` and hands it to `Bar.UpdateParams` — reusing every slice, per PR #13.
+      Measured at 0 allocations on all three arms of `NoteOn` — retrigger, a fresh slot and
+      voice stealing — by `TestNoteOnAllocatesNothing`, which is now an absolute assertion
+      rather than the relative one it replaced. Reusing a bar for another note is only correct
+      because `ResetVoice` calls `Bar.Reset`: `Bar.setLowpass` deliberately retunes the
+      excitation filter without clearing its delay line, so the previous note's tail would
+      otherwise leak into the new strike. `internal/synth/realtime_pooling_test.go` pins that
+      a reused slot renders a note bit-identically to a freshly built voice.
       **Mutex — closed.** The steady state never took one: `cpufeat.Detect()` is an
       `atomic.Pointer` load once the feature set is published, and nothing else on the path
       locks. The _first_ block used to. `current` starts nil, nothing warmed it, and the
@@ -299,10 +302,11 @@ Goal: the render loop neither allocates nor stalls.
       swapping it past the end instead of overwriting it, so a retired voice leaves its buffer
       in the slot the next note-on picks up. Retrigger and voice stealing keep the slot's
       buffer too. `internal/synth/realtime_alloc_test.go` covers all four paths.
-      What is left of this line is not the buffer but the voice: `synth.NewVoice` still builds
-      a whole transposed `model.Bar` per note-on (`internal/synth/synth.go:106`), 19
-      allocations, and that is why the phase's "no allocation on the audio path" criterion is
-      not ticked.
+      The voice itself followed: the slots carry a pooled `*Voice` too, built and warmed by
+      `newVoiceSlots` at engine construction, and `NoteOn` restrikes it through
+      `Synthesizer.ResetVoice` instead of calling `NewVoice`. A note-on now allocates nothing
+      at all, down from 18, which is what let the phase's "no allocation on the audio path"
+      criterion be ticked.
 - [ ] Pack `voices x oscillators` into lanes. Deferred from Phase 1: a bank currently fills its
       lanes from one voice and the render loop in `RealtimeEngine.ProcessBlock`
       (`internal/synth/realtime.go:185`) walks voices serially, so voice count costs linearly.
@@ -661,29 +665,28 @@ Goal: document what is undocumented, retire what is finished.
 
 Phases 0, 1 and 3 are closed. Phases 2, 4, 5, 6 and 7 are open.
 
-**Phase 2 has three open items: two in 2.4, which want the same thing, and one measurement
-that needs hardware nobody here has.** 2.1, 2.2 and 2.3 are done as subphases: the dead
+**Phase 2 has two open items: one in 2.4, and one measurement that needs hardware nobody
+here has.** 2.1, 2.2 and 2.3 are done as subphases: the dead
 assembly is gone, every layout an `.s` file assumes is pinned at compile time,
 the numeric contract is written down with a harness that enforces it, and three packed kernels
 — AVX2, SSE2, NEON — are registered in `availableBackends()`
-(`internal/oscbank/contract_test.go`) and green on both CI runners. 2.4 has its denormal scope
-and its per-note-on block buffers. What is left of 2.4:
+(`internal/oscbank/contract_test.go`) and green on both CI runners. 2.4 has its denormal
+scope, its per-note-on block buffers and its pooled voices. What is left of 2.4:
 
 - **Cross-voice lane packing.** A bank fills its lanes from one voice, so four oscillators
   leave twelve of sixteen lanes empty and `RealtimeEngine.ProcessBlock` renders voices
   serially. This is a redesign of the voice engine, not a patch: it needs per-lane excitation
   and per-voice output separation.
-- **The note-on allocation.** `synth.NewVoice` builds a fresh `model.Bar` per note, 19
-  allocations. The fix is to reconfigure a bar the engine already owns instead of constructing
-  one, which is also what lane packing needs from the model. This is now the only thing
-  keeping "no allocation and no mutex acquisition on the audio path" unticked: the mutex half
-  is closed, since `internal/cpufeat` warms detection from its own `init()` and the audio
-  thread can no longer be the first caller.
+- ~~**The note-on allocation.**~~ Closed. The engine pools one `Voice` per slot, built and
+  warmed at construction, and `NoteOn` restrikes it in place through `Synthesizer.ResetVoice`
+  rather than building a bar per note: 0 allocations, down from 18. With the mutex half
+  already closed by `internal/cpufeat` warming detection from its own `init()`, "no allocation
+  and no mutex acquisition on the audio path" is ticked.
 
-Both want the same thing from `model.Bar` — a bar that can be pointed at new parameters
-instead of rebuilt — so doing them independently means doing that model work twice.
+The model work both items wanted — a bar that can be pointed at new parameters instead of
+rebuilt — is in place and exercised on the audio path: `Bar.UpdateParams`, `BarParams.CopyInto`.
 
-**The third open item, and not code:** the NEON row of the benchmark table in
+**The other open item, and not code:** the NEON row of the benchmark table in
 `docs/oscillator-bank.md` needs a native arm64 host. Everything here runs the kernel under
 qemu-user, which is trustworthy for correctness and worthless for timing, so the row stays
 `TODO` rather than being filled in with a translated number. Take

@@ -44,7 +44,11 @@ const (
 const maxKeyboardPan = 0.6
 
 type realtimeVoice struct {
-	note   int
+	note int
+	// stream is the slot's voice, built once at engine construction and reused
+	// for every note the slot ever plays. It is never replaced on the audio
+	// thread: NoteOn restrikes it through Synthesizer.ResetVoice instead, which
+	// is what keeps a note-on free of allocation.
 	stream *Voice
 	// left and right are unit-gain pan coefficients, master gain excluded.
 	// Baking the master gain in here instead is what used to make SetMasterGain
@@ -55,13 +59,13 @@ type realtimeVoice struct {
 	buffer []float32
 }
 
-// start points a voice slot at a new stream. It deliberately leaves buffer
-// alone: every path that hands a slot a new stream -- retrigger, voice
-// stealing, a freshly claimed slot -- runs on the audio thread, and the block
-// buffer the slot already owns is exactly the buffer the new stream needs.
-func (v *realtimeVoice) start(note int, stream *Voice, left, right float32) {
+// start records what a slot is now playing, after its stream has already been
+// restruck. It deliberately touches neither buffer nor stream: every path that
+// starts a note -- retrigger, voice stealing, a freshly claimed slot -- runs on
+// the audio thread, and the block buffer and the voice the slot already owns
+// are exactly the ones the new note needs.
+func (v *realtimeVoice) start(note int, left, right float32) {
 	v.note = note
-	v.stream = stream
 	v.left = left
 	v.right = right
 }
@@ -90,20 +94,41 @@ type RealtimeEngine struct {
 }
 
 // newVoiceSlots returns an empty voice list of maxVoices capacity whose slots
-// all carry a block buffer already.
+// all carry a block buffer and a ready-to-strike voice already.
 //
 // The buffers come out of one backing array, so the whole voice bank is a
 // single allocation and neighbouring voices sit next to each other in cache.
 // The full slice expression keeps a slot from ever reaching into the next one:
 // ProcessBlock is allowed to replace a buffer with a wider one, and appending
 // into a neighbour instead would be silent cross-talk.
-func newVoiceSlots(maxVoices, frames int) []realtimeVoice {
+//
+// The voices are built here, off the audio thread, and warmed so their bars
+// have their working buffers too. That is the second half of the note-on
+// allocation story: the slot buffers stopped a note-on from allocating a block
+// buffer, and pooling the voices stops it from building a bar. Everything a
+// note-on can possibly need exists before the first one arrives.
+//
+// A voice that cannot be built leaves its slot's stream nil, and NoteOn refuses
+// such a slot rather than crashing on it. It cannot happen for a preset that
+// built a Synthesizer -- the parameters are the same ones -- but the engine
+// constructor has nowhere to return an error to, and a silent nil dereference
+// on the audio thread is a worse answer than a counted refusal.
+func newVoiceSlots(s *Synthesizer, maxVoices, frames int) []realtimeVoice {
 	slots := make([]realtimeVoice, maxVoices)
 	pool := make([]float32, maxVoices*frames)
 
 	for i := range slots {
 		start := i * frames
 		slots[i].buffer = pool[start : start+frames : start+frames]
+
+		voice, err := s.newIdleVoice()
+		if err != nil {
+			continue
+		}
+
+		voice.warm()
+
+		slots[i].stream = voice
 	}
 
 	return slots[:0]
@@ -118,10 +143,16 @@ func newVoiceSlots(maxVoices, frames int) []realtimeVoice {
 // NewSynthesizer: internal/optimizer/objective.go builds a synthesizer per
 // candidate evaluation, and 61 extra renders per evaluation would make fitting
 // unusable.
+//
+// Construction also builds and warms one voice per slot, which is what a
+// note-on no longer has to do. Measured against the same preset it is 1472
+// further allocations and 654 KB, and it does not move construction time out of
+// the noise of the calibration it sits next to (38.7..41.3 ms before,
+// 39.1..42.8 ms after, three runs each). Both are paid once at startup.
 func NewRealtimeEngine(s *Synthesizer) *RealtimeEngine {
 	return &RealtimeEngine{
 		synth:        s,
-		voices:       newVoiceSlots(defaultRealtimeMaxVoices, defaultRealtimeBlockFrames),
+		voices:       newVoiceSlots(s, defaultRealtimeMaxVoices, defaultRealtimeBlockFrames),
 		mixBuffer:    make([]float32, defaultRealtimeBlockFrames*2),
 		masterGain:   0.7,
 		noteDuration: defaultVoiceDuration,
@@ -239,7 +270,8 @@ func (e *RealtimeEngine) SetMasterGain(gain float32) {
 
 // NoteOn retriggers the requested bar.
 //
-// A note whose voice cannot be built is counted rather than reported. NoteOn
+// A note the engine cannot strike -- one whose transposed parameters do not
+// validate -- is counted rather than reported. NoteOn
 // runs on the audio thread -- the browser's audio callback, the plugin's
 // process call -- where the usual ways of not losing an error are all
 // unavailable: returning one would push the handling into a caller that has
@@ -253,14 +285,6 @@ func (e *RealtimeEngine) SetMasterGain(gain float32) {
 // and no trace of having been asked for, so the bug read as "the low keys are
 // quiet" rather than as "the engine is refusing them".
 func (e *RealtimeEngine) NoteOn(note, velocity int) {
-	stream, err := e.synth.NewVoice(note, velocity, e.noteDuration, e.renderOptions)
-	if err != nil {
-		e.lastDroppedNote.Store(int32(note))
-		e.droppedNoteOns.Add(1)
-
-		return
-	}
-
 	// The pan law and the level law are applied here rather than in
 	// ProcessBlock, and stay two separate functions rather than one combined
 	// one. gainsForNote redistributes a note's energy between the channels and
@@ -276,9 +300,19 @@ func (e *RealtimeEngine) NoteOn(note, velocity int) {
 	left *= trim
 	right *= trim
 
+	// Every arm below restrikes the slot's pooled voice before it commits to
+	// the slot. That order is what keeps a refused note harmless: restrikeSlot
+	// leaves the voice untouched when it fails, so the ringing note a retrigger
+	// would have replaced keeps ringing, the voice a steal would have taken
+	// keeps playing, and a freshly claimed slot is given straight back.
 	for i := range e.voices {
 		if e.voices[i].note == note {
-			e.voices[i].start(note, stream, left, right)
+			if !e.restrikeSlot(i, note, velocity) {
+				return
+			}
+
+			e.voices[i].start(note, left, right)
+
 			return
 		}
 	}
@@ -286,20 +320,60 @@ func (e *RealtimeEngine) NoteOn(note, velocity int) {
 	if len(e.voices) >= e.maxVoices {
 		// Steal the oldest voice. Rotating the slot to the back rather than
 		// dropping it and appending a new one keeps its buffer, which is
-		// already the right size.
+		// already the right size, and its voice, which is already built.
+		if !e.restrikeSlot(0, note, velocity) {
+			return
+		}
+
 		last := len(e.voices) - 1
 		stolen := e.voices[0]
 
 		copy(e.voices, e.voices[1:])
 
 		e.voices[last] = stolen
-		e.voices[last].start(note, stream, left, right)
+		e.voices[last].start(note, left, right)
 
 		return
 	}
 
 	slot := e.claimSlot()
-	e.voices[slot].start(note, stream, left, right)
+	if !e.restrikeSlot(slot, note, velocity) {
+		e.voices = e.voices[:slot]
+
+		return
+	}
+
+	e.voices[slot].start(note, left, right)
+}
+
+// restrikeSlot restrikes a slot's pooled voice as the given note and reports
+// whether it succeeded, counting the refusal if it did not.
+//
+// The slot is addressed through the full-capacity view rather than the live
+// list, because claimSlot's caller restrikes the slot before the slot is
+// committed to, and because a stolen slot is restruck before it is rotated.
+func (e *RealtimeEngine) restrikeSlot(slot, note, velocity int) bool {
+	v := &e.voices[:cap(e.voices)][slot]
+
+	if v.stream == nil {
+		e.dropNoteOn(note)
+
+		return false
+	}
+
+	if err := e.synth.ResetVoice(v.stream, note, velocity, e.noteDuration, e.renderOptions); err != nil {
+		e.dropNoteOn(note)
+
+		return false
+	}
+
+	return true
+}
+
+// dropNoteOn records a note-on the engine could not turn into sound.
+func (e *RealtimeEngine) dropNoteOn(note int) {
+	e.lastDroppedNote.Store(int32(note))
+	e.droppedNoteOns.Add(1)
 }
 
 // claimSlot extends the voice list by one and returns the index of the slot,
@@ -326,6 +400,18 @@ func (e *RealtimeEngine) claimSlot() int {
 
 	if cap(e.voices[slot].buffer) < defaultRealtimeBlockFrames {
 		e.voices[slot].buffer = make([]float32, defaultRealtimeBlockFrames)
+	}
+
+	// Same story as the buffer: every slot the engine was built with already
+	// carries a voice, so this only ever runs for a slot appended past that
+	// capacity. Building one here degrades that case to an allocation rather
+	// than to a slot NoteOn has to refuse.
+	if e.voices[slot].stream == nil {
+		if voice, err := e.synth.newIdleVoice(); err == nil {
+			voice.warm()
+
+			e.voices[slot].stream = voice
+		}
 	}
 
 	return slot
