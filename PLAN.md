@@ -697,9 +697,12 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       one token layer, with separate roles for canvas, parchment, charcoal ink, structural wood,
       brass/bronze, copper, metal bars and focus. Existing selectors resolve to their previous
       values; all four pixel-exact Playwright references pass without a snapshot update.
-- [ ] **5.5.3 — Calm the application shell.** Restyle the page background and top bar, reduce the
-      title and shadow weight, and make the Play/Optimize navigation a compact, balanced control.
-      Preserve the logo, product name, active-tab state and mobile wrapping.
+- [x] **5.5.3 — Calm the application shell.** The page now has quiet flax canvas depth, while a
+      shorter, softly elevated masthead uses restrained dark wood behind a smaller brand mark and
+      title. Play/Optimize is one compact segmented control with an unambiguous active segment and
+      clean 390px wrapping. The logo, product name, hash links and focus ring remain intact, and the
+      inaccurate kicker now reads “Algorithmic Instrument.” All four shell-affected references
+      were intentionally updated and pass pixel-exact comparison.
 - [ ] **5.5.4 — Simplify the Play surfaces.** Remove redundant cream frames and repeated texture
       layers around the instrument. Restrict the baked wood texture from 5.4 to the rack frame and
       deliberate trim, with flat neutral surfaces elsewhere.
