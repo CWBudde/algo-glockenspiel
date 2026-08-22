@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/cpufeat"
+	"github.com/cwbudde/algo-glockenspiel/internal/cpufeat"
 )
 
 func TestSquaredDiffSumFallsBackWhenAVX2ForcedOff(t *testing.T) {

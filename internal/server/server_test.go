@@ -16,8 +16,8 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/cwbudde/glockenspiel/internal/server"
-	"github.com/cwbudde/glockenspiel/web"
+	"github.com/cwbudde/algo-glockenspiel/internal/server"
+	"github.com/cwbudde/algo-glockenspiel/web"
 )
 
 // testTree stands in for the embedded tree, which now holds exactly one file:

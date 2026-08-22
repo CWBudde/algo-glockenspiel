@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cwbudde/glockenspiel/internal/optimizer"
-	"github.com/cwbudde/glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 )
 
 // fitState names where a job is. The strings are part of the HTTP API, so they

@@ -8,7 +8,7 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/cpufeat"
+	"github.com/cwbudde/algo-glockenspiel/internal/cpufeat"
 )
 
 // renderWithFeatures renders the same configuration with CPU detection forced,

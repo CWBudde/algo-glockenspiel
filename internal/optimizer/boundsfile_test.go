@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cwbudde/glockenspiel/internal/optimizer"
+	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 )
 
 func TestDecodeParamBounds(t *testing.T) {

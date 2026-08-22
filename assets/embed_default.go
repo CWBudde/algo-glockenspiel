@@ -3,7 +3,7 @@ package assets
 import (
 	_ "embed"
 
-	"github.com/cwbudde/glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 )
 
 //go:embed presets/default.json
