@@ -265,3 +265,174 @@ sampleloop:
 
 done:
 	RET
+
+// func oscVoiceRotorsSSE2(re, im, cosCoeff, sinCoeff, amp *float32, rotors int, input *float32, samples int, acc *float32)
+//
+// The voice-major counterpart of oscBankBlocksSSE2, and the same four-way split
+// of the same 64 bytes: a rotor is eight voices, XMM is four lanes, so a rotor
+// pair is four XMM registers -- rotor A voices 0-3, A voices 4-7, B voices 0-3,
+// B voices 4-7. Every offset, every register and the whole ROTORSTEP macro are
+// unchanged; what a lane means is what changed.
+//
+// Two consequences.
+//
+// The excitation is two vector loads instead of one broadcast: voices 0-3 of the
+// frame drive the two low half-rotors, voices 4-7 drive the two high ones. X12
+// still carries it into LOOKAHEAD, so this needs no extra register -- it needs
+// the loads in the right order, which is why the lookahead group below is
+// grouped by half rather than by rotor.
+//
+// And there is no horizontal fold. acc is [samples][8]float32 and lane l is
+// voice l's output, so the pass adds A to B within each half and stores both
+// halves: 32 bytes per sample, no reduction pass, nothing to get rule two wrong
+// in. Rule four of the numeric contract is what this order is held to, and the
+// association inside ROTORSTEP still makes this kernel bit-identical to
+// processVoiceRotorsGeneric.
+TEXT ·oscVoiceRotorsSSE2(SB), NOSPLIT, $0-72
+	MOVQ re+0(FP), AX
+	MOVQ im+8(FP), BX
+	MOVQ cosCoeff+16(FP), CX
+	MOVQ sinCoeff+24(FP), DX
+	MOVQ amp+32(FP), R8
+	MOVQ rotors+40(FP), R9
+	MOVQ input+48(FP), R10
+	MOVQ samples+56(FP), R11
+	MOVQ acc+64(FP), R12
+
+	TESTQ R11, R11
+	JLE   voicedone
+
+	SHRQ  $1, R9 // rotor pairs
+	TESTQ R9, R9
+	JLE   voicedone
+
+	// First pair: same arithmetic, but it writes acc instead of adding to it.
+	MOVUPS (AX), X0
+	MOVUPS 16(AX), X1
+	MOVUPS 32(AX), X2
+	MOVUPS 48(AX), X3
+	MOVUPS (BX), X4
+	MOVUPS 16(BX), X5
+	MOVUPS 32(BX), X6
+	MOVUPS 48(BX), X7
+
+	MOVQ R10, SI
+	MOVQ R12, DI
+	MOVQ R11, R13
+
+	MOVUPS (SI), X12 // excitation, voices 0-3
+	LOOKAHEAD(X8, 0)
+	LOOKAHEAD(X10, 32)
+	MOVUPS 16(SI), X12 // excitation, voices 4-7
+	LOOKAHEAD(X9, 16)
+	LOOKAHEAD(X11, 48)
+
+voicefirstloop:
+	ROTORSTEP(X0, X4, X8, 0)
+	ROTORSTEP(X2, X6, X10, 32)
+	ROTORSTEP(X1, X5, X9, 16)
+	ROTORSTEP(X3, X7, X11, 48)
+
+	ADDPS X10, X8 // rotor A + rotor B, voices 0-3
+	ADDPS X11, X9 // rotor A + rotor B, voices 4-7
+
+	MOVUPS X8, (DI)
+	MOVUPS X9, 16(DI)
+
+	MOVUPS 32(SI), X12
+	LOOKAHEAD(X8, 0)
+	LOOKAHEAD(X10, 32)
+	MOVUPS 48(SI), X12
+	LOOKAHEAD(X9, 16)
+	LOOKAHEAD(X11, 48)
+
+	ADDQ $32, SI
+	ADDQ $32, DI
+	DECQ R13
+	JNZ  voicefirstloop
+
+	MOVUPS X0, (AX)
+	MOVUPS X1, 16(AX)
+	MOVUPS X2, 32(AX)
+	MOVUPS X3, 48(AX)
+	MOVUPS X4, (BX)
+	MOVUPS X5, 16(BX)
+	MOVUPS X6, 32(BX)
+	MOVUPS X7, 48(BX)
+
+	ADDQ $64, AX
+	ADDQ $64, BX
+	ADDQ $64, CX
+	ADDQ $64, DX
+	ADDQ $64, R8
+	DECQ R9
+	JZ   voicedone
+
+voicepairloop:
+	MOVUPS (AX), X0
+	MOVUPS 16(AX), X1
+	MOVUPS 32(AX), X2
+	MOVUPS 48(AX), X3
+	MOVUPS (BX), X4
+	MOVUPS 16(BX), X5
+	MOVUPS 32(BX), X6
+	MOVUPS 48(BX), X7
+
+	MOVQ R10, SI
+	MOVQ R12, DI
+	MOVQ R11, R13
+
+	MOVUPS (SI), X12
+	LOOKAHEAD(X8, 0)
+	LOOKAHEAD(X10, 32)
+	MOVUPS 16(SI), X12
+	LOOKAHEAD(X9, 16)
+	LOOKAHEAD(X11, 48)
+
+voicesampleloop:
+	ROTORSTEP(X0, X4, X8, 0)
+	ROTORSTEP(X2, X6, X10, 32)
+	ROTORSTEP(X1, X5, X9, 16)
+	ROTORSTEP(X3, X7, X11, 48)
+
+	ADDPS X10, X8
+	ADDPS X11, X9
+
+	MOVUPS (DI), X13
+	ADDPS  X8, X13 // acc + folded, in that order
+	MOVUPS X13, (DI)
+	MOVUPS 16(DI), X13
+	ADDPS  X9, X13
+	MOVUPS X13, 16(DI)
+
+	MOVUPS 32(SI), X12
+	LOOKAHEAD(X8, 0)
+	LOOKAHEAD(X10, 32)
+	MOVUPS 48(SI), X12
+	LOOKAHEAD(X9, 16)
+	LOOKAHEAD(X11, 48)
+
+	ADDQ $32, SI
+	ADDQ $32, DI
+	DECQ R13
+	JNZ  voicesampleloop
+
+	MOVUPS X0, (AX)
+	MOVUPS X1, 16(AX)
+	MOVUPS X2, 32(AX)
+	MOVUPS X3, 48(AX)
+	MOVUPS X4, (BX)
+	MOVUPS X5, 16(BX)
+	MOVUPS X6, 32(BX)
+	MOVUPS X7, 48(BX)
+
+	ADDQ $64, AX
+	ADDQ $64, BX
+	ADDQ $64, CX
+	ADDQ $64, DX
+	ADDQ $64, R8
+	DECQ R9
+	JNZ  voicepairloop
+
+voicedone:
+	RET

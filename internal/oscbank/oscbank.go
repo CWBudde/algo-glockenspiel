@@ -75,13 +75,7 @@ type Bank struct {
 
 	// AoSoA rotor arrays, len == numBlocks*LaneWidth. Padding lanes carry zero
 	// coefficients and zero amplitude, so they contribute nothing.
-	re       []float32
-	im       []float32
-	cosCoeff []float32
-	sinCoeff []float32
-	amp      []float32
-
-	decayFactor []float64
+	rotorArrays
 
 	// acc is the partial output accumulator, [blockSamples][accLanes].
 	acc []float32
@@ -160,10 +154,7 @@ func (b *Bank) SetOscillators(oscillators []Oscillator) error {
 
 	// Round up to an even number of blocks so a 16-lane kernel can consume two
 	// blocks at a time without a separate tail path.
-	blocks := (b.numRotors + LaneWidth - 1) / LaneWidth
-	if blocks%2 == 1 {
-		blocks++
-	}
+	blocks := roundUpToEven((b.numRotors + LaneWidth - 1) / LaneWidth)
 
 	b.numBlocks = blocks
 	b.allocate(blocks * LaneWidth)
@@ -181,21 +172,29 @@ func (b *Bank) SetOscillators(oscillators []Oscillator) error {
 // Clone, which is what this used to do, cost one allocation for the oscillator
 // slice plus one per oscillator carrying harmonics, on every single call.
 func (b *Bank) storeOscillators(oscillators []Oscillator) {
-	if b.oscillators != nil && cap(b.oscillators) >= len(oscillators) {
-		b.oscillators = b.oscillators[:len(oscillators)]
+	b.oscillators = storeOscillators(b.oscillators, oscillators)
+}
+
+// storeOscillators copies src into dst, reusing dst's backing array and its
+// per-oscillator harmonic slices wherever their capacity allows.
+func storeOscillators(dst, src []Oscillator) []Oscillator {
+	if dst != nil && cap(dst) >= len(src) {
+		dst = dst[:len(src)]
 	} else {
-		b.oscillators = make([]Oscillator, len(oscillators))
+		dst = make([]Oscillator, len(src))
 	}
 
-	for i := range oscillators {
-		src := &oscillators[i]
-		dst := &b.oscillators[i]
+	for i := range src {
+		from := &src[i]
+		to := &dst[i]
 
-		dst.Amplitude = src.Amplitude
-		dst.Frequency = src.Frequency
-		dst.DecayMs = src.DecayMs
-		dst.Harmonics = copyFloat64s(dst.Harmonics, src.Harmonics)
+		to.Amplitude = from.Amplitude
+		to.Frequency = from.Frequency
+		to.DecayMs = from.DecayMs
+		to.Harmonics = copyFloat64s(to.Harmonics, from.Harmonics)
 	}
+
+	return dst
 }
 
 // copyFloat64s copies src into dst, reusing dst's backing array when it is
@@ -219,27 +218,67 @@ func copyFloat64s(dst, src []float64) []float64 {
 	return dst
 }
 
-func (b *Bank) allocate(size int) {
-	if cap(b.re) >= size {
-		b.re = b.re[:size]
-		b.im = b.im[:size]
-		b.cosCoeff = b.cosCoeff[:size]
-		b.sinCoeff = b.sinCoeff[:size]
-		b.amp = b.amp[:size]
-		b.decayFactor = b.decayFactor[:size]
+// rotorArrays is the state and coefficient storage both banks are built from.
+//
+// Bank indexes it by rotor and VoiceBank by rotor and voice, but the storage,
+// the reuse-on-resize rule and the "padding lanes stay at zero forever"
+// invariant are the same either way, so they share one implementation rather
+// than two that have to be kept in step.
+type rotorArrays struct {
+	re       []float32
+	im       []float32
+	cosCoeff []float32
+	sinCoeff []float32
+	amp      []float32
 
-		clear(b.re)
-		clear(b.im)
+	decayFactor []float64
+}
+
+// allocate sizes every array to size, reusing the backing arrays when their
+// capacity allows and clearing the rotor state either way. Reconfiguring a bank
+// whose shape has not changed must not allocate: it sits on the path a pooled
+// voice takes when it is retuned, and the audio thread has no allocator budget.
+func (a *rotorArrays) allocate(size int) {
+	if cap(a.re) >= size {
+		a.re = a.re[:size]
+		a.im = a.im[:size]
+		a.cosCoeff = a.cosCoeff[:size]
+		a.sinCoeff = a.sinCoeff[:size]
+		a.amp = a.amp[:size]
+		a.decayFactor = a.decayFactor[:size]
+
+		clear(a.re)
+		clear(a.im)
 
 		return
 	}
 
-	b.re = make([]float32, size)
-	b.im = make([]float32, size)
-	b.cosCoeff = make([]float32, size)
-	b.sinCoeff = make([]float32, size)
-	b.amp = make([]float32, size)
-	b.decayFactor = make([]float64, size)
+	a.re = make([]float32, size)
+	a.im = make([]float32, size)
+	a.cosCoeff = make([]float32, size)
+	a.sinCoeff = make([]float32, size)
+	a.amp = make([]float32, size)
+	a.decayFactor = make([]float64, size)
+}
+
+// clearCoefficients zeroes everything a coefficient pass is about to rewrite,
+// so a rotor the new configuration does not reach is inert rather than stale.
+func (a *rotorArrays) clearCoefficients() {
+	clear(a.cosCoeff)
+	clear(a.sinCoeff)
+	clear(a.amp)
+	clear(a.decayFactor)
+}
+
+// roundUpToEven rounds n up to the next even number. Both banks hand the
+// kernels their working set in pairs -- block pairs for Bank, rotor pairs for
+// VoiceBank -- so an odd count would need a tail path in every kernel.
+func roundUpToEven(n int) int {
+	if n%2 == 1 {
+		return n + 1
+	}
+
+	return n
 }
 
 // SetSampleRate updates the sample rate and recomputes the rotor coefficients.
@@ -306,10 +345,7 @@ func (b *Bank) processChunk(input, output []float32) {
 }
 
 func (b *Bank) calculateCoefficients() {
-	clear(b.cosCoeff)
-	clear(b.sinCoeff)
-	clear(b.amp)
-	clear(b.decayFactor)
+	b.clearCoefficients()
 
 	rotor := 0
 
@@ -317,23 +353,48 @@ func (b *Bank) calculateCoefficients() {
 		decayFactor, decaying := decayFactorFor(osc.DecayMs, b.sampleRate)
 
 		for harmonic := 0; harmonic < b.numHarm; harmonic++ {
-			gain, active := harmonicGain(osc, harmonic)
-			if !decaying || !active {
-				rotor++
-				continue
+			coeff, active := rotorCoefficients(osc, harmonic, decayFactor, decaying, b.sampleRate)
+			if active {
+				b.decayFactor[rotor] = coeff.decay
+				b.cosCoeff[rotor] = coeff.cos
+				b.sinCoeff[rotor] = coeff.sin
+				b.amp[rotor] = coeff.amp
 			}
-
-			phase := 2 * math.Pi * float64(harmonic+1) * osc.Frequency / b.sampleRate
-			sinVal, cosVal := math.Sincos(phase)
-
-			b.decayFactor[rotor] = decayFactor
-			b.cosCoeff[rotor] = float32(decayFactor * cosVal)
-			b.sinCoeff[rotor] = float32(decayFactor * sinVal)
-			b.amp[rotor] = float32(osc.Amplitude * gain)
 
 			rotor++
 		}
 	}
+}
+
+// rotorCoefficient is one rotor's packed coefficient set.
+type rotorCoefficient struct {
+	decay    float64
+	cos, sin float32
+	amp      float32
+}
+
+// rotorCoefficients derives the coefficients for harmonic k of one oscillator,
+// given the oscillator's per-sample decay factor. active is false when the
+// rotor is inert -- a muted decay or a harmonic the oscillator does not carry --
+// and the caller must then leave the rotor at zero rather than write anything.
+//
+// The decay factor is passed in rather than derived here so both banks compute
+// math.Exp once per oscillator, not once per harmonic.
+func rotorCoefficients(osc Oscillator, harmonic int, decayFactor float64, decaying bool, sampleRate float64) (rotorCoefficient, bool) {
+	gain, active := harmonicGain(osc, harmonic)
+	if !decaying || !active {
+		return rotorCoefficient{}, false
+	}
+
+	phase := 2 * math.Pi * float64(harmonic+1) * osc.Frequency / sampleRate
+	sinVal, cosVal := math.Sincos(phase)
+
+	return rotorCoefficient{
+		decay: decayFactor,
+		cos:   float32(decayFactor * cosVal),
+		sin:   float32(decayFactor * sinVal),
+		amp:   float32(osc.Amplitude * gain),
+	}, true
 }
 
 func harmonicGain(osc Oscillator, harmonic int) (float64, bool) {

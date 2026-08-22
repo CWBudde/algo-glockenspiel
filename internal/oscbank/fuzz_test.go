@@ -59,6 +59,15 @@ func FuzzOscBankMatchesGeneric(f *testing.F) {
 		{"no-excitation", 1, 128, regimeSustained, amplitudeSilent, 0, 9},
 		{"tiny-amplitudes-long", 2, 255, regimeCollapsing, amplitudeTiny, 0xAAAAAAAA, 10},
 		{"widest-bank", 3, 255, regimeSplit, amplitudeSpread, 0x00FF00FF, 11},
+
+		// Partially-populated lanes, which the voice-major reading of the mask
+		// turns into a bank with some voices sounding and some not. That is the
+		// ordinary state of a polyphonic engine, and it is the one pathology the
+		// rotor-major path never had: there, an unused lane is padding the bank
+		// itself controls, while here it is a voice the caller has not set.
+		{"two-voices-idle", 2, 100, regimeSustained, amplitudeUnit, 0b00100100, 12},
+		{"one-voice-sounding", 3, 200, regimeSplit, amplitudeSpread, 0b11111110, 13},
+		{"alternating-voices", 1, 63, regimeCollapsing, amplitudeUnit, 0b01010101, 14},
 	}
 
 	for _, seed := range seeds {
@@ -80,47 +89,29 @@ func FuzzOscBankMatchesGeneric(f *testing.F) {
 			t.Skip("degenerate case: the error envelope is not finite")
 		}
 
-		var (
-			reference []float32
-			fused     []float32
-			fusedName string
+		requireBackendsAgree(t, backends, tolerance, func(current backend) []float32 {
+			return state.clone().render(current.features, input)
+		})
+
+		// The same parameters, read as a voice-major bank: the block count
+		// becomes a rotor count, the silent-lane mask becomes a silent-voice
+		// mask, and the excitation becomes one stream per voice. Everything the
+		// pathology list is exercising -- both decay extremes, zero-amplitude
+		// rotors, chunk lengths that are not multiples of eight, a single-sample
+		// chunk -- means the same thing on either layout, so the two paths share
+		// a corpus rather than needing two.
+		voiceState, voiceInput := generateVoiceCase(
+			blocks, chunk, int(regime)%regimeCount, int(amplitude)%amplitudeModeCount, silentLanes, seed,
 		)
 
-		for _, current := range backends {
-			got := state.clone().render(current.features, input)
-
-			for i, sample := range got {
-				if math.IsNaN(float64(sample)) || math.IsInf(float64(sample), 0) {
-					t.Fatalf("%s: sample %d is %g on a bounded recursion", current.name, i, sample)
-				}
-			}
-
-			switch {
-			case current.name == "portable":
-				reference = got
-			case current.packedFused && fused == nil:
-				fused, fusedName = got, current.name
-			case current.packedFused:
-				// Rule one: every fused packed backend is the same program.
-				requireBitIdentical(t, current.name+" vs "+fusedName, got, fused)
-			}
-
-			if reference != nil {
-				requireWithinContract(t, current.name, got, reference, tolerance)
-
-				if current.bitExactWithPortable {
-					// Stronger than the contract demands, and the reason to
-					// demand it is that it is free: a packed kernel with no FMA
-					// has to round four times either way, so associating as the
-					// reference does costs nothing and buys an exact oracle.
-					requireBitIdentical(t, current.name+" vs portable", got, reference)
-				}
-			}
+		voiceTolerance := voiceContractTolerance(voiceState, voiceInput)
+		if math.IsNaN(voiceTolerance) || math.IsInf(voiceTolerance, 0) {
+			return
 		}
 
-		if fused != nil {
-			requireWithinContract(t, fusedName, fused, reference, tolerance)
-		}
+		requireBackendsAgree(t, backends, voiceTolerance, func(current backend) []float32 {
+			return voiceState.clone().render(current, voiceInput)
+		})
 	})
 }
 
@@ -214,4 +205,59 @@ func amplitudeFor(rng *rand.Rand, mode, lane int) float64 {
 
 		return rng.NormFloat64()
 	}
+}
+
+// generateVoiceCase builds one voice-major bank and one chunk of interleaved
+// excitation from the same knobs generateCase uses.
+//
+// silentVoices is read one bit per voice, low bit first, so a mask that means
+// "these rotor lanes are padding" on the rotor-major path means "these voices
+// are not sounding" here. Both are the case where part of a vector is inert;
+// which part, and who owns it, is what the two layouts disagree about.
+//
+// Every voice gets its own excitation stream, including the silent ones. Driving
+// a lane whose amplitudes are all zero costs nothing numerically and is exactly
+// what a lane-crosstalk bug would need in order to show up.
+func generateVoiceCase(rotors, chunk, regime, amplitude int, silentVoices uint32, seed int64) (voiceRotorState, []float32) {
+	rng := rand.New(rand.NewSource(seed))
+	state := newVoiceRotorState(rotors)
+	input := make([]float32, chunk*LaneWidth)
+
+	for voice := range LaneWidth {
+		if silentVoices>>voice&1 == 1 {
+			continue
+		}
+
+		for rotor := range rotors {
+			lane := rotor*LaneWidth + voice
+
+			decay := decayForRegime(rng, regime, rotor)
+			phase := 2 * math.Pi * rng.Float64()
+			sinVal, cosVal := math.Sincos(phase)
+
+			state.cosCoeff[lane] = float32(decay * cosVal)
+			state.sinCoeff[lane] = float32(decay * sinVal)
+			state.amp[lane] = float32(amplitudeFor(rng, amplitude, rotor))
+
+			scale := 1.0
+			if amplitude == amplitudeTiny {
+				scale = 1e-30
+			}
+
+			state.re[lane] = float32(scale * rng.NormFloat64())
+			state.im[lane] = float32(scale * rng.NormFloat64())
+		}
+	}
+
+	if amplitude != amplitudeSilent {
+		for voice := range LaneWidth {
+			input[voice] = 1
+		}
+
+		for i := LaneWidth; i < len(input); i++ {
+			input[i] = float32(rng.NormFloat64() * 0.05)
+		}
+	}
+
+	return state, input
 }

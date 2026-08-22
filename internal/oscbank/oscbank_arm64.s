@@ -252,3 +252,131 @@ reduceloop:
 
 reducedone:
 	RET
+
+// ADVANCEVOICEPAIR advances a rotor pair -- two rotors of eight voices -- by one
+// sample and leaves the eight per-voice outputs in V26 and V27.
+//
+// It is ADVANCEPAIR with the lane index reinterpreted. The 64 bytes a LOADPAIR
+// covers are two rotors of eight voices here instead of two blocks of eight
+// rotors, so the four vectors are rotor A voices 0-3, A voices 4-7, B voices 0-3
+// and B voices 4-7 -- and the sums that used to be a horizontal lane fold are
+// now the reduction over rotors, which is the whole reduction. Nothing is folded
+// across lanes anywhere on this path.
+//
+// The excitation is a pair of vectors rather than a broadcast: V30 drives the
+// half-rotors holding voices 0-3 and V31 those holding voices 4-7. Reading the
+// next frame is one VLD1.P of 32 bytes, still placed in the middle of the fold
+// where the four independent multiplies fill the slots the dependent adds leave
+// empty, and still the reason the caller must pad its input -- by a frame now,
+// not by an element.
+#define ADVANCEVOICEPAIR() \
+	ROTORSTEP(0, 4,  8, 12, 20, 25, 26) \ // rotor A, voices 0-3
+	ROTORSTEP(1, 5,  9, 13, 21, 25, 27) \ // rotor A, voices 4-7
+	ROTORSTEP(2, 6, 10, 14, 22, 25, 28) \ // rotor B, voices 0-3
+	VFADD4S(28, 26, 26)                 \ // A + B, voices 0-3
+	ROTORSTEP(3, 7, 11, 15, 23, 25, 28) \ // rotor B, voices 4-7
+	VFADD4S(28, 27, 27)                 \ // A + B, voices 4-7
+	VLD1.P 32(R9), [V30.S4, V31.S4]     \ // the next excitation frame
+	VFMUL4S(30, 16, 20)                 \
+	VFMUL4S(31, 17, 21)                 \
+	VFMUL4S(30, 18, 22)                 \
+	VFMUL4S(31, 19, 23)
+
+// LOADVOICEPAIR reads one rotor pair into registers and primes the lookahead.
+// The loads are LOADPAIR's, byte for byte: only what the four vectors mean has
+// changed.
+#define LOADVOICEPAIR() \
+	VLD1 (R0), [V0.S4, V1.S4, V2.S4, V3.S4]     \ // re
+	VLD1 (R1), [V4.S4, V5.S4, V6.S4, V7.S4]     \ // im
+	VLD1 (R2), [V8.S4, V9.S4, V10.S4, V11.S4]   \ // cos
+	VLD1 (R3), [V12.S4, V13.S4, V14.S4, V15.S4] \ // sin
+	VLD1 (R4), [V16.S4, V17.S4, V18.S4, V19.S4] \ // amp
+	MOVD R6, R9                                 \ // input cursor
+	MOVD R8, R10                                \ // accumulator cursor
+	MOVD R7, R11                                \ // samples remaining
+	VLD1.P 32(R9), [V30.S4, V31.S4]             \ // the first excitation frame
+	VFMUL4S(30, 16, 20)                         \
+	VFMUL4S(31, 17, 21)                         \
+	VFMUL4S(30, 18, 22)                         \
+	VFMUL4S(31, 19, 23)
+
+// func oscVoiceRotorsNEON(re, im, cosCoeff, sinCoeff, amp *float32, rotors int, input *float32, samples int, acc *float32)
+//
+// The voice-major counterpart of oscBankBlocksNEON, and the arm64 counterpart of
+// oscVoiceRotorsAVX2. Same recursion, same ROTORSTEP, same association, so the
+// two remain bit-identical on the new path for the reason they are on the old
+// one.
+//
+// Register map, held across the whole sample loop:
+//
+//	V0-V3    re    A.v0-3 A.v4-7 B.v0-3 B.v4-7
+//	V4-V7    im    same order
+//	V8-V11   cos   same order
+//	V12-V15  sin   same order
+//	V16-V19  amp   same order
+//	V20-V23  amp*x for the sample in flight, computed one iteration ahead
+//	V25      im' under construction
+//	V26-V27  the per-voice outputs of the pair
+//	V28-V29  the accumulator being added into
+//	V30-V31  the excitation frame, voices 0-3 and 4-7
+//
+//	R0-R4    re, im, cos, sin, amp, walked one rotor pair at a time
+//	R5       rotor pairs remaining
+//	R6-R8    input base, sample count, accumulator base
+//	R9-R11   input cursor, accumulator cursor, samples remaining
+//
+// acc is [samples][8]float32 and is the output: lane l is voice l. The first
+// pair writes it and every later pair adds into it, so the caller never has to
+// zero the buffer. Rule four of the numeric contract fixes that order.
+TEXT ·oscVoiceRotorsNEON(SB), NOSPLIT, $0-72
+	MOVD re+0(FP), R0
+	MOVD im+8(FP), R1
+	MOVD cosCoeff+16(FP), R2
+	MOVD sinCoeff+24(FP), R3
+	MOVD amp+32(FP), R4
+	MOVD rotors+40(FP), R5
+	MOVD input+48(FP), R6
+	MOVD samples+56(FP), R7
+	MOVD acc+64(FP), R8
+
+	CMP  $0, R7
+	BLE  voicedone
+	LSR  $1, R5, R5 // rotor pairs
+	CBZ  R5, voicedone
+
+	// First pair: the same arithmetic, but it writes acc instead of adding to
+	// it, which is what saves the caller from zeroing the buffer.
+	LOADVOICEPAIR()
+
+voicefirstloop:
+	ADVANCEVOICEPAIR()
+	VST1.P [V26.S4, V27.S4], 32(R10)
+
+	SUB  $1, R11
+	CBNZ R11, voicefirstloop
+
+	NEXTPAIR()
+
+	SUB  $1, R5
+	CBZ  R5, voicedone
+
+voicepairloop:
+	LOADVOICEPAIR()
+
+voicesampleloop:
+	ADVANCEVOICEPAIR()
+	VLD1   (R10), [V28.S4, V29.S4]
+	VFADD4S(28, 26, 26)
+	VFADD4S(29, 27, 27)
+	VST1.P [V26.S4, V27.S4], 32(R10)
+
+	SUB  $1, R11
+	CBNZ R11, voicesampleloop
+
+	NEXTPAIR()
+
+	SUB  $1, R5
+	CBNZ R5, voicepairloop
+
+voicedone:
+	RET

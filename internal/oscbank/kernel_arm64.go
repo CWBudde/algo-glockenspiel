@@ -36,6 +36,14 @@ const (
 	// VST1.P [V6.S4], 16(R1) in reduceLanesNEON: the four scalars it wrote.
 	_ = sizeofFloat32Arm64*reduceNEONFrames - 16
 	_ = 16 - sizeofFloat32Arm64*reduceNEONFrames
+
+	// VLD1.P 32(R9), [V30.S4, V31.S4] and VST1.P [V26.S4, V27.S4], 32(R10) in
+	// oscVoiceRotorsNEON: one interleaved frame is one sample per voice, and it
+	// is the same width on the way out because nothing folds. A rotor pair
+	// there is the same 64 bytes a block pair is here, which is why that stride
+	// needs no assertion of its own.
+	_ = sizeofFloat32Arm64*LaneWidth - 32
+	_ = 32 - sizeofFloat32Arm64*LaneWidth
 )
 
 // sizeofFloat32Arm64 duplicates the amd64 file's constant rather than sharing
@@ -57,6 +65,25 @@ func processRotorBlocks(re, im, cosCoeff, sinCoeff, amp []float32, blocks int, i
 		&re[0], &im[0], &cosCoeff[0], &sinCoeff[0], &amp[0],
 		blocks,
 		&input[0], len(input),
+		&acc[0],
+	)
+}
+
+// processVoiceRotors is the voice-major seam. Like processRotorBlocks it is
+// ungated, and it has no reduction pass to go with it: in the [rotor][voice]
+// layout the accumulator already is the output.
+//
+// acc is [samples][LaneWidth] and input must hold one frame more than that, for
+// the same one-sample lookahead the rotor-major kernel takes.
+func processVoiceRotors(re, im, cosCoeff, sinCoeff, amp []float32, rotors int, input, acc []float32) {
+	if rotors == 0 || len(acc) == 0 {
+		return
+	}
+
+	oscVoiceRotorsNEON(
+		&re[0], &im[0], &cosCoeff[0], &sinCoeff[0], &amp[0],
+		rotors,
+		&input[0], len(acc)/LaneWidth,
 		&acc[0],
 	)
 }
@@ -89,3 +116,11 @@ func oscBankBlocksNEON(re, im, cosCoeff, sinCoeff, amp *float32, blocks int, inp
 //
 //go:noescape
 func reduceLanesNEON(acc, output *float32, samples int)
+
+// oscVoiceRotorsNEON advances rotors rotors of LaneWidth voices over samples
+// interleaved input frames, accumulating into acc ([samples][LaneWidth]).
+// rotors must be even, and input must be readable at frame samples: the kernel
+// computes the excitation term one sample ahead.
+//
+//go:noescape
+func oscVoiceRotorsNEON(re, im, cosCoeff, sinCoeff, amp *float32, rotors int, input *float32, samples int, acc *float32)

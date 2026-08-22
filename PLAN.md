@@ -308,11 +308,26 @@ Goal: the render loop neither allocates nor stalls.
       `Synthesizer.ResetVoice` instead of calling `NewVoice`. A note-on now allocates nothing
       at all, down from 18, which is what let the phase's "no allocation on the audio path"
       criterion be ticked.
-- [ ] Pack `voices x oscillators` into lanes. Deferred from Phase 1: a bank currently fills its
-      lanes from one voice and the render loop in `RealtimeEngine.ProcessBlock`
-      (`internal/synth/realtime.go:185`) walks voices serially, so voice count costs linearly.
-      This needs per-lane excitation and per-voice output separation, which is a redesign of
-      the voice engine.
+- [ ] Pack `voices x oscillators` into lanes. Half done, and the half that is done is the
+      bank. `oscbank.VoiceBank` (`internal/oscbank/voicebank.go`) is voice-major: the lane
+      index is the voice index, the rotor arrays are `[rotor][voice]`, the excitation is
+      `[samples][LaneWidth]` interleaved instead of a broadcast scalar, and there is no
+      horizontal fold at all, because summing over rotors already yields per-voice output.
+      All three packed kernels are landed — `oscVoiceRotorsAVX2`, `oscVoiceRotorsSSE2`,
+      `oscVoiceRotorsNEON` — alongside the portable oracle, and the harness covers the new
+      path: `FuzzOscBankMatchesGeneric` drives both layouts from one corpus,
+      `goldenVoiceFused`/`goldenVoicePortable` pin the cross-architecture claim, and
+      `TestVoiceBankIsBitIdenticalToSingleVoiceRenders` asserts with no tolerance that eight
+      voices rendered together equal eight rendered one at a time. Rule four of the numeric
+      contract is written down in `docs/oscillator-bank.md`.
+      **This line stays unticked because nothing renders through it.** `RealtimeEngine.ProcessBlock`
+      (`internal/synth/realtime.go:185`) still walks voices serially through the rotor-major
+      `Bank`, so voice count still costs linearly in everything that ships. The remaining work
+      is the engine adoption in `internal/synth` — a voice engine that keeps its voices in lane
+      order, drives one interleaved excitation buffer and deinterleaves the result — which is
+      the redesign this line always meant and which the bank was the prerequisite for. The
+      rotor-major path is untouched and stays: offline rendering keeps using it, because with
+      fewer sounding voices than lanes the voice-major bank leaves lanes idle.
 - [ ] Optional: step two samples at a time through the squared rotation matrix. The recursion
       costs eight cycles per sample per block pair; this halves it at the cost of a second
       coefficient set and a sample-count tail.
@@ -673,10 +688,13 @@ the numeric contract is written down with a harness that enforces it, and three 
 (`internal/oscbank/contract_test.go`) and green on both CI runners. 2.4 has its denormal
 scope, its per-note-on block buffers and its pooled voices. What is left of 2.4:
 
-- **Cross-voice lane packing.** A bank fills its lanes from one voice, so four oscillators
-  leave twelve of sixteen lanes empty and `RealtimeEngine.ProcessBlock` renders voices
-  serially. This is a redesign of the voice engine, not a patch: it needs per-lane excitation
-  and per-voice output separation.
+- **Cross-voice lane packing — the bank is done, the engine is not.** `oscbank.VoiceBank` is
+  landed: lane index is voice index, excitation is per-lane and interleaved, output is
+  per-voice with no horizontal fold, and AVX2, SSE2 and NEON kernels all exist for it and are
+  bit-identical where the contract says they must be. Nothing renders through it yet.
+  `RealtimeEngine.ProcessBlock` still walks voices serially through the rotor-major `Bank`, so
+  voice count still costs linearly. What is left is the engine adoption in `internal/synth`:
+  voices held in lane order, one interleaved excitation buffer, a deinterleave on the way out.
 - ~~**The note-on allocation.**~~ Closed. The engine pools one `Voice` per slot, built and
   warmed at construction, and `NoteOn` restrikes it in place through `Synthesizer.ResetVoice`
   rather than building a bar per note: 0 allocations, down from 18. With the mutex half

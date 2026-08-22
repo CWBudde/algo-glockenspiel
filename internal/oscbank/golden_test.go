@@ -154,3 +154,134 @@ func TestPortableKernelMatchesTheGoldenVector(t *testing.T) {
 
 	requireGolden(t, "portable", out, goldenPortable)
 }
+
+// The voice-major path needs the same cross-architecture pin for the same
+// reason: rule one is a claim about two kernels that no single process can run
+// together, and rule four fixes an accumulation order that a vector of bits is
+// the only way to check from outside.
+const (
+	// goldenVoiceRotors is three rotor pairs, so the vector covers the
+	// accumulation path as well as the arithmetic: the first pair writes acc and
+	// the other two add into it.
+	goldenVoiceRotors = 6
+
+	// Two lanes are left unconfigured, so the vector also pins that an idle
+	// voice stays at exactly zero however hard its excitation stream is driven.
+	goldenLiveVoices = 6
+
+	goldenVoiceSamples = 11
+)
+
+// goldenVoiceCase builds three rotor pairs of six sounding voices and a short
+// chunk of interleaved excitation. As in goldenCase, every number is a small
+// dyadic rational computed in float32: no Sincos, no Exp, no rand, because those
+// are allowed to differ by an ULP between architectures and a golden vector that
+// inherited their rounding would be testing them instead of the kernel.
+func goldenVoiceCase() (voiceRotorState, []float32) {
+	state := newVoiceRotorState(goldenVoiceRotors)
+
+	for rotor := range goldenVoiceRotors {
+		for voice := range goldenLiveVoices {
+			lane := rotor*LaneWidth + voice
+			index := rotor*goldenLiveVoices + voice
+
+			decay := 1 - float32(index%16+1)/64
+			unit := goldenUnitVectors[index%4]
+
+			state.cosCoeff[lane] = decay * unit[0]
+			state.sinCoeff[lane] = decay * unit[1]
+			state.amp[lane] = (float32(index%7) - 3) / 4
+			state.re[lane] = (float32((index*7)%13) - 6) / 8
+			state.im[lane] = (float32((index*5)%11) - 5) / 8
+		}
+	}
+
+	// Every lane is driven, including the two that hold no voice: a lane fed an
+	// excitation it must ignore is the case a crosstalk bug needs.
+	input := make([]float32, goldenVoiceSamples*LaneWidth)
+
+	for voice := range LaneWidth {
+		input[voice] = 1 - float32(voice)/8
+
+		for frame := 1; frame < goldenVoiceSamples; frame++ {
+			input[frame*LaneWidth+voice] = (float32((frame*3+voice)%5) - 2) / 16
+		}
+	}
+
+	return state, input
+}
+
+// goldenVoiceFused is what a packed voice kernel with FMA renders from
+// goldenVoiceCase, one frame of eight voices per row. It was read off the AVX2
+// kernel; the NEON kernel reproduces it under emulation, and any future fused
+// backend has to as well. The last two columns are the two lanes no voice
+// occupies, and they are exactly zero on every frame.
+var goldenVoiceFused = [goldenVoiceSamples * LaneWidth]uint32{
+	0xbf038f5c, 0x3e73ae12, 0xbfc091eb, 0xbf97f0a4, 0x3d9170a0, 0x3e64f5c4, 0x00000000, 0x00000000,
+	0xbef7057c, 0x3ea2d446, 0x3d8260d8, 0xbf7fd3b6, 0xbf260567, 0x3ebdbf8b, 0x00000000, 0x00000000,
+	0xbe6b61a6, 0x3d8ed5ec, 0x3fa4bd3c, 0xbe8e3985, 0xbf6a714c, 0x3f0f9121, 0x00000000, 0x00000000,
+	0x3f982966, 0xbdc4f376, 0xbf4a3674, 0x3edd4016, 0x3e9e168f, 0x3f1d9e13, 0x00000000, 0x00000000,
+	0x3f8a91b7, 0xbdc4ea4e, 0xbf7209c4, 0x3f6b948e, 0x3f4c4b84, 0x3ec96c2b, 0x00000000, 0x00000000,
+	0xbf101b87, 0x3cf1eda0, 0x3f76e452, 0x3f83caeb, 0xbcd9b110, 0x3e697438, 0x00000000, 0x00000000,
+	0xbf3a4fe8, 0x3dc3139f, 0x3ed295e9, 0x3f3c8020, 0xbe7c9ebf, 0x3e4e6e1e, 0x00000000, 0x00000000,
+	0xbeed52f9, 0x3d942f97, 0xbf56b402, 0x3e8acd94, 0x3e082439, 0x3e12b7b1, 0x00000000, 0x00000000,
+	0xbf6c1e5e, 0xbda8ba66, 0x3e5584f6, 0xbe5e54f7, 0xbdaabe5e, 0x3e7d26ae, 0x00000000, 0x00000000,
+	0x3e0d7ca3, 0xbe8454f5, 0x3f1040e6, 0xbefd5ad4, 0xbe703762, 0x3e6887e8, 0x00000000, 0x00000000,
+	0x3fd5f0a4, 0xbea6177c, 0xbf178c76, 0xbf0485b2, 0x3e5e1673, 0x3e67938f, 0x00000000, 0x00000000,
+}
+
+// goldenVoicePortable is what processVoiceRotorsGeneric renders from the same
+// case, and it is the same number at every GOAMD64 level and on arm64 for the
+// same reason goldenPortable is: advanceRotor is shared, and its rounding
+// barriers are what keep it one program.
+var goldenVoicePortable = [goldenVoiceSamples * LaneWidth]uint32{
+	0xbf038f5c, 0x3e73ae12, 0xbfc091eb, 0xbf97f0a4, 0x3d9170a0, 0x3e64f5c4, 0x00000000, 0x00000000,
+	0xbef7057c, 0x3ea2d446, 0x3d8260d4, 0xbf7fd3b8, 0xbf260567, 0x3ebdbf8c, 0x00000000, 0x00000000,
+	0xbe6b61ac, 0x3d8ed5ed, 0x3fa4bd3c, 0xbe8e3987, 0xbf6a714c, 0x3f0f9122, 0x00000000, 0x00000000,
+	0x3f982967, 0xbdc4f379, 0xbf4a3674, 0x3edd4015, 0x3e9e1690, 0x3f1d9e13, 0x00000000, 0x00000000,
+	0x3f8a91bb, 0xbdc4ea4c, 0xbf7209c4, 0x3f6b948e, 0x3f4c4b84, 0x3ec96c2a, 0x00000000, 0x00000000,
+	0xbf101b84, 0x3cf1eda4, 0x3f76e453, 0x3f83caea, 0xbcd9b118, 0x3e697436, 0x00000000, 0x00000000,
+	0xbf3a4feb, 0x3dc3139f, 0x3ed295e6, 0x3f3c801e, 0xbe7c9ebd, 0x3e4e6e1c, 0x00000000, 0x00000000,
+	0xbeed5303, 0x3d942f9a, 0xbf56b404, 0x3e8acd93, 0x3e082438, 0x3e12b7af, 0x00000000, 0x00000000,
+	0xbf6c1e62, 0xbda8ba67, 0x3e5584fb, 0xbe5e54f6, 0xbdaabe62, 0x3e7d26ae, 0x00000000, 0x00000000,
+	0x3e0d7c9a, 0xbe8454f6, 0x3f1040e7, 0xbefd5ad4, 0xbe703764, 0x3e6887e8, 0x00000000, 0x00000000,
+	0x3fd5f0a6, 0xbea6177c, 0xbf178c76, 0xbf0485b2, 0x3e5e1672, 0x3e67938e, 0x00000000, 0x00000000,
+}
+
+func requireGoldenVoice(t *testing.T, label string, got []float32, want [goldenVoiceSamples * LaneWidth]uint32) {
+	t.Helper()
+
+	for i, expected := range want {
+		if math.Float32bits(got[i]) != expected {
+			t.Fatalf("%s: frame %d voice %d is %#08x, the golden vector says %#08x (%g vs %g)",
+				label, i/LaneWidth, i%LaneWidth, math.Float32bits(got[i]), expected,
+				got[i], math.Float32frombits(expected))
+		}
+	}
+}
+
+func TestFusedPackedVoiceKernelsMatchTheGoldenVector(t *testing.T) {
+	state, input := goldenVoiceCase()
+
+	checked := 0
+
+	for _, current := range availableBackends() {
+		if !current.packedFused {
+			continue
+		}
+
+		checked++
+
+		requireGoldenVoice(t, current.name, state.clone().render(current, input), goldenVoiceFused)
+	}
+
+	if checked == 0 {
+		t.Skip("no fused packed backend on this machine")
+	}
+}
+
+func TestPortableVoiceKernelMatchesTheGoldenVector(t *testing.T) {
+	state, input := goldenVoiceCase()
+
+	requireGoldenVoice(t, "portable", state.clone().render(backend{name: "portable"}, input), goldenVoicePortable)
+}

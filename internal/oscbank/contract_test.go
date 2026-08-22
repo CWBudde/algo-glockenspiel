@@ -351,3 +351,188 @@ func requireBitIdentical(t *testing.T, label string, got, want []float32) {
 		}
 	}
 }
+
+// The voice-major path gets its own state holder for the same reason the
+// rotor-major one has one: the contract has to hold for coefficients no real
+// configuration produces, so the harness builds the arrays itself rather than
+// going through VoiceBank.
+//
+// The layout is [rotor][voice]: rotor r of voice l lives at r*LaneWidth+l.
+type voiceRotorState struct {
+	re, im             []float32
+	cosCoeff, sinCoeff []float32
+	amp                []float32
+	rotors             int
+}
+
+func newVoiceRotorState(rotors int) voiceRotorState {
+	size := rotors * LaneWidth
+
+	return voiceRotorState{
+		re:       make([]float32, size),
+		im:       make([]float32, size),
+		cosCoeff: make([]float32, size),
+		sinCoeff: make([]float32, size),
+		amp:      make([]float32, size),
+		rotors:   rotors,
+	}
+}
+
+func (s voiceRotorState) clone() voiceRotorState {
+	out := newVoiceRotorState(s.rotors)
+
+	copy(out.re, s.re)
+	copy(out.im, s.im)
+	copy(out.cosCoeff, s.cosCoeff)
+	copy(out.sinCoeff, s.sinCoeff)
+	copy(out.amp, s.amp)
+
+	return out
+}
+
+func (s voiceRotorState) maxDecayFactor() float64 {
+	worst := 0.0
+
+	for lane := range s.cosCoeff {
+		worst = math.Max(worst, math.Hypot(float64(s.cosCoeff[lane]), float64(s.sinCoeff[lane])))
+	}
+
+	return worst
+}
+
+// render runs one interleaved chunk through the voice-major seam. input is
+// [samples][LaneWidth] and so is the result; there is no reduction pass,
+// because in this layout the accumulator is the output.
+//
+// The portable backend is called directly rather than through the dispatcher.
+// On amd64 that is the same function either way, but on arm64 the packed kernel
+// is ungated, so dispatching with an empty feature set would run NEON and
+// quietly compare it against itself.
+func (s voiceRotorState) render(current backend, input []float32) []float32 {
+	samples := len(input) / LaneWidth
+
+	// One guard frame: the packed kernels compute amp*x a sample ahead, and a
+	// sample is a whole frame here.
+	padded := make([]float32, len(input)+LaneWidth)
+	copy(padded, input)
+
+	acc := make([]float32, samples*LaneWidth)
+
+	if current.name == "portable" {
+		processVoiceRotorsGeneric(s.re, s.im, s.cosCoeff, s.sinCoeff, s.amp, s.rotors, padded, acc)
+
+		return acc
+	}
+
+	cpufeat.SetForcedFeatures(current.features)
+
+	defer cpufeat.ResetDetection()
+
+	processVoiceRotors(s.re, s.im, s.cosCoeff, s.sinCoeff, s.amp, s.rotors, padded, acc)
+
+	return acc
+}
+
+// voiceContractTolerance is the same bound as contractTolerance, restated for a
+// layout in which a lane is a voice.
+//
+// Two things change and neither is a relaxation. The envelope is per voice: lane
+// l accumulates only its own rotors, driven only by its own excitation stream,
+// so the quadrature sum runs over the rotors of one lane rather than over the
+// whole bank, and the harness takes the worst lane. And the fold term counts the
+// adds on this path instead of the old ones: one per rotor pair to sum the pair,
+// one per later pair to accumulate into acc, and none at all for a horizontal
+// reduction, because there is not one.
+func voiceContractTolerance(state voiceRotorState, input []float32) float64 {
+	samples := len(input) / LaneWidth
+	pairs := state.rotors / 2
+	folds := max(2*pairs-1, 0)
+
+	recursion := contractRoundings * contractGain(samples, state.maxDecayFactor())
+
+	worst := 0.0
+
+	for voice := range LaneWidth {
+		rho := make([]float64, state.rotors)
+		decay := make([]float64, state.rotors)
+
+		for rotor := range rho {
+			lane := rotor*LaneWidth + voice
+			rho[rotor] = math.Hypot(float64(state.re[lane]), float64(state.im[lane]))
+			decay[rotor] = math.Hypot(float64(state.cosCoeff[lane]), float64(state.sinCoeff[lane]))
+		}
+
+		peak := 0.0
+
+		for i := range samples {
+			excitation := math.Abs(float64(input[i*LaneWidth+voice]))
+			squares := 0.0
+
+			for rotor := range rho {
+				driven := math.Abs(float64(state.amp[rotor*LaneWidth+voice])) * excitation
+				scale := driven + decay[rotor]*rho[rotor]
+				squares += scale * scale
+				rho[rotor] = decay[rotor]*rho[rotor] + driven
+			}
+
+			peak = math.Max(peak, math.Sqrt(squares))
+		}
+
+		worst = math.Max(worst, unitRoundoff*peak*(recursion+float64(folds)))
+	}
+
+	return worst
+}
+
+// requireBackendsAgree holds every backend on this machine to the contract for
+// one case: fused packed backends agree with each other to the bit, a packed
+// backend that chose the reference's association reproduces it to the bit, and
+// everything stays inside tolerance of the portable kernel.
+//
+// It takes the render as a closure so the rotor-major and voice-major paths are
+// judged by the same code rather than by two copies of it that could drift.
+func requireBackendsAgree(t *testing.T, backends []backend, tolerance float64, render func(backend) []float32) {
+	t.Helper()
+
+	var (
+		reference []float32
+		fused     []float32
+		fusedName string
+	)
+
+	for _, current := range backends {
+		got := render(current)
+
+		for i, sample := range got {
+			if math.IsNaN(float64(sample)) || math.IsInf(float64(sample), 0) {
+				t.Fatalf("%s: sample %d is %g on a bounded recursion", current.name, i, sample)
+			}
+		}
+
+		switch {
+		case current.name == "portable":
+			reference = got
+		case current.packedFused && fused == nil:
+			fused, fusedName = got, current.name
+		case current.packedFused:
+			// Rule one: every fused packed backend is the same program.
+			requireBitIdentical(t, current.name+" vs "+fusedName, got, fused)
+		}
+
+		if reference != nil {
+			requireWithinContract(t, current.name, got, reference, tolerance)
+
+			if current.bitExactWithPortable {
+				// Stronger than the contract demands, and the reason to demand
+				// it is that it is free: a packed kernel with no FMA has to
+				// round four times either way, so associating as the reference
+				// does costs nothing and buys an exact oracle.
+				requireBitIdentical(t, current.name+" vs portable", got, reference)
+			}
+		}
+	}
+
+	if fused != nil && reference != nil {
+		requireWithinContract(t, fusedName, fused, reference, tolerance)
+	}
+}
