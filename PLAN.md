@@ -466,7 +466,8 @@ Goal: the browser side of the same loop.
       end does. Every scalar is held client-side to the range `internal/server/params.go`
       holds it to, because a 400 that arrives after a 16 MiB upload is a slow way to learn
       that `note` was 200, and the 409 is surfaced as "a fit is already running" rather than
-      as a generic failure.
+      as a generic failure — and the job holding the slot is read once and adopted, so the
+      Cancel button that message points at is reachable rather than disabled.
 - [x] A live cost curve fed from the SSE stream, an audition button for the fitted preset, and
       a download. `useFitEvents.ts`, `CostChart.tsx`, `FitStatus.tsx` and `Audition.tsx`.
       Three things about the stream shaped the code: it carries no `id:` and no `retry:`, so a

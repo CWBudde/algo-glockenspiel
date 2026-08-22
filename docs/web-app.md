@@ -168,7 +168,9 @@ the result.
    Each scalar is held client-side to the range `internal/server/params.go` holds
    it to, because a `400` that arrives after a 16 MiB upload is a slow way to
    learn that `note` was 200. The `409` — "a fit is already running" — is
-   surfaced with those words rather than as a generic failure.
+   surfaced with those words rather than as a generic failure, and the current
+   job is read once and adopted, so the Cancel button the message points at is
+   actually reachable when the slot is held by another tab or by the CLI.
 3. **Watch.** `useFitEvents` opens an `EventSource` on `api/fit/events` for the
    job's lifetime. The stream opens with the current snapshot, so attaching
    mid-run, or after the run already ended, paints immediately.

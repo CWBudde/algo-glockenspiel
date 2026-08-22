@@ -1,6 +1,6 @@
 import { useId, useMemo, useRef, useState } from "react";
 
-import { cancelFit, FitApiError, startFit } from "../../api/fit";
+import { cancelFit, FitApiError, getFitStatus, startFit } from "../../api/fit";
 import {
   BOUNDS_KEYS,
   DEFAULT_FIT_REQUEST,
@@ -500,11 +500,36 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
             ? `${cause.message}. Cancel it first, or wait for it to finish.`
             : cause.message,
         );
+
+        if (cause.isConflict) {
+          await watchTheRunningFit();
+        }
       } else {
         setFormError("The fit could not be started.");
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * Makes the fit that holds the slot the job this page is watching.
+   *
+   * A 409 says another tab or a CLI client owns the single slot, so the job
+   * behind the conflict is not the one on screen -- the page may be showing an
+   * older, finished run, or nothing at all. Without this the Cancel button the
+   * error message points at stays disabled and the advice cannot be followed
+   * without a reload. No `maxIterations` is passed with the snapshot: this
+   * page did not send the request and does not know the limit.
+   */
+  async function watchTheRunningFit() {
+    try {
+      onSnapshot(await getFitStatus());
+    } catch {
+      // The conflict itself is already on screen and is the actionable half.
+      // A follow-up read that fails as well adds nothing the user can act on,
+      // and replacing the conflict message with its error would take the
+      // useful half away.
     }
   }
 
