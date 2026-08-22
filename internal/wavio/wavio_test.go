@@ -441,31 +441,101 @@ func TestTheShippedReferenceIsAStruckBarNotASquareWave(t *testing.T) {
 // the fix. Refusing is the point: PCM and float differ by about 30 dB at the
 // same bit depth, so a wrong guess is not a small error, and the failure it
 // produces is silent.
+//
+// wantUnsupported separates the two cases, because "an error came back" is not
+// the same claim for both. The extensible file is well-formed and go-audio
+// decodes it happily, so the only thing that can refuse it is this package's
+// own guard, and the test says so by name. The 64-bit file never reaches that
+// guard: go-audio's reader has no case for the byte depth and fails first. The
+// guard is still right to be there -- it stops a library change from turning
+// 64-bit float into a silent misdecode -- but asserting ErrUnsupportedWAV for
+// it would be asserting something that is not true today.
 func TestAmbiguousFloatFormatsAreRefusedRatherThanGuessed(t *testing.T) {
 	samples := []float32{0.25, -0.5, 0.75}
 
 	cases := []struct {
-		name          string
-		formatTag     uint16
-		bitsPerSample int
+		name            string
+		formatTag       uint16
+		bitsPerSample   int
+		wantUnsupported bool
 	}{
 		// WAVE_FORMAT_EXTENSIBLE names its real format in a subformat GUID
 		// go-audio does not surface, so at 32 bits it could be either.
-		{"extensible at 32 bits", 0xFFFE, 32},
+		{"extensible at 32 bits", 0xFFFE, 32, true},
 
-		// 64-bit float is refused, though today go-audio's own reader rejects
-		// the byte depth before this package sees it. Either way the caller
-		// gets an error rather than a misdecode, which is what is asserted.
-		{"64-bit float", 3, 64},
+		// Refused before this package sees it, by the byte depth rather than by
+		// the format tag. What matters is that the caller gets an error instead
+		// of a misdecode.
+		{"64-bit float", 3, 64, false},
 	}
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			encoded := floatWAV(44100, samples, testCase.formatTag, testCase.bitsPerSample)
 
-			if _, _, err := wavio.DecodeMono(bytes.NewReader(encoded), testCase.name); err == nil {
+			_, _, err := wavio.DecodeMono(bytes.NewReader(encoded), testCase.name)
+			if err == nil {
 				t.Fatal("decoded without error, want a refusal")
 			}
+
+			if got := errors.Is(err, wavio.ErrUnsupportedWAV); got != testCase.wantUnsupported {
+				t.Errorf("errors.Is(err, ErrUnsupportedWAV) = %v, want %v (err: %v)",
+					got, testCase.wantUnsupported, err)
+			}
 		})
+	}
+}
+
+// TestNonFiniteFloatSamplesAreRefused pins what a NaN in a reference would
+// otherwise do downstream.
+//
+// internal/optimizer's validateObjectiveInputs checks only that a reference is
+// non-empty, so one NaN makes every RMS and every correlation against it NaN as
+// well. The objective then stops ordering candidates -- no comparison is true
+// of NaN -- and a fit runs its whole budget without ranking anything, reporting
+// a result at the end as though it had found one. An integer file cannot carry
+// these values; a float file can, which is why the check arrived with the float
+// path rather than before it.
+func TestNonFiniteFloatSamplesAreRefused(t *testing.T) {
+	cases := map[string]float32{
+		"NaN":               float32(math.NaN()),
+		"positive infinity": float32(math.Inf(1)),
+		"negative infinity": float32(math.Inf(-1)),
+	}
+
+	for name, poison := range cases {
+		t.Run(name, func(t *testing.T) {
+			// Buried mid-buffer rather than first, so a check that only looked
+			// at the head would still pass.
+			samples := []float32{0.25, -0.5, 0.75, poison, 0.1}
+
+			_, _, err := wavio.DecodeMono(bytes.NewReader(floatWAV(44100, samples, 3, 32)), name)
+			if err == nil {
+				t.Fatal("decoded without error, want a refusal")
+			}
+
+			if !errors.Is(err, wavio.ErrInvalidWAV) {
+				t.Errorf("got %v, want it to wrap ErrInvalidWAV", err)
+			}
+		})
+	}
+}
+
+// TestFloatSamplesAboveFullScaleSurvive is the other side of that: a float file
+// mastered above full scale is legitimate data, not corruption, and clamping it
+// would reshape a reference rather than read it. Only non-finite values are
+// refused.
+func TestFloatSamplesAboveFullScaleSurvive(t *testing.T) {
+	want := []float32{1.5, -1.5, 3.25}
+
+	got, _, err := wavio.DecodeMono(bytes.NewReader(floatWAV(44100, want, 3, 32)), "hot.wav")
+	if err != nil {
+		t.Fatalf("DecodeMono: %v", err)
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("sample %d = %v, want %v", i, got[i], want[i])
+		}
 	}
 }

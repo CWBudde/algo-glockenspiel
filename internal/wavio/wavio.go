@@ -94,8 +94,14 @@ func LoadMono(path string) ([]float32, int, error) {
 }
 
 // DecodeMono decodes a WAV stream and returns its first channel as float32
-// samples in [-1,1] plus the declared sample rate. source only names the origin
-// in error messages; it is never used as a path.
+// samples plus the declared sample rate. source only names the origin in error
+// messages; it is never used as a path.
+//
+// Integer PCM lands in [-1,1] by construction, since it is divided by the
+// widest magnitude its bit depth can hold. IEEE float carries whatever was
+// written, which for a file mastered above full scale is legitimately outside
+// that range -- clamping it here would quietly reshape a reference rather than
+// read it. Every sample is finite, though: see rejectNonFinite.
 //
 // A multi-channel file is reduced by taking channel zero rather than by mixing
 // down. The fitting objective compares one rendered voice against the
@@ -139,7 +145,40 @@ func DecodeMono(reader io.ReadSeeker, source string) ([]float32, int, error) {
 		samples[i] = convert(intBuffer.Data[i*channels])
 	}
 
+	// Only the float path can produce a non-finite sample, so only it pays for
+	// the scan.
+	if decoder.WavAudioFormat == wavFormatIEEEFloat {
+		if err := rejectNonFinite(samples, source); err != nil {
+			return nil, 0, err
+		}
+	}
+
 	return samples, intBuffer.Format.SampleRate, nil
+}
+
+// rejectNonFinite fails a decode that produced a NaN or an infinity.
+//
+// An integer sample cannot be either, but a float file can carry both, and
+// nothing downstream is prepared for them. internal/optimizer's
+// validateObjectiveInputs checks only that a reference is non-empty, so a
+// single NaN makes every RMS and every correlation against that reference NaN
+// as well: the objective stops ordering candidates, the optimizer spends its
+// whole budget comparing values none of which is better than any other, and it
+// reports a fit at the end as though it had found one.
+//
+// Failing here rather than sanitising is the same call the format check above
+// makes. There is no defensible value to substitute -- zero invents silence
+// where the file says something is wrong, and clamping an infinity to full
+// scale invents a transient -- and a reference the caller believes in is worth
+// a message rather than a repair.
+func rejectNonFinite(samples []float32, source string) error {
+	for i, sample := range samples {
+		if math.IsInf(float64(sample), 0) || math.IsNaN(float64(sample)) {
+			return fmt.Errorf("%s: %w: sample %d is %v", source, ErrInvalidWAV, i, sample)
+		}
+	}
+
+	return nil
 }
 
 // sampleConverter returns the function that turns one go-audio sample word into
