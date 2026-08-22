@@ -103,8 +103,9 @@ function waitForWasmReady(): Promise<GlockenspielWasm | undefined> {
 /**
  * useWasmEngine loads the module once for the lifetime of the page and reports
  * how far it got. It deliberately does not tear the module down on unmount:
- * the Go runtime cannot be unloaded, and the Play tab is mounted and unmounted
- * every time the user switches tabs.
+ * the Go runtime cannot be unloaded, so a teardown would only cost the page its
+ * engine with no way to get it back. It is called from App, which outlives
+ * every tab switch.
  */
 export function useWasmEngine(): WasmEngine {
   const [wasm, setWasm] = useState<GlockenspielWasm | null>(null);
@@ -117,13 +118,20 @@ export function useWasmEngine(): WasmEngine {
     // React 19 runs effects twice in development StrictMode. Instantiating the
     // Go runtime twice would leave two modules fighting over the ready hook,
     // so the load is guarded rather than cleaned up.
+    //
+    // For the same reason there is no cancellation flag and no cleanup: the
+    // load has to publish its result whatever happens to the effect that
+    // started it. A flag set by StrictMode's simulated unmount would be read by
+    // the still-running first load -- the second setup is skipped by the guard,
+    // so nothing restarts it -- and the page would sit on "Loading
+    // WebAssembly..." forever. Setting state after an unmount is a no-op React
+    // has not warned about since 18, and this hook lives in App, which is
+    // mounted for the lifetime of the page anyway.
     if (startedRef.current) {
       return;
     }
 
     startedRef.current = true;
-
-    let cancelled = false;
 
     const load = async () => {
       const go = new Go();
@@ -147,10 +155,8 @@ export function useWasmEngine(): WasmEngine {
       }
 
       const exports = result.instance.exports;
-      const memory = (exports.mem ?? exports.memory) as
-        | WebAssembly.Memory
-        | undefined;
-      if (!memory) {
+      const memory = exports.mem ?? exports.memory;
+      if (!(memory instanceof WebAssembly.Memory)) {
         throw new Error("WASM memory export not found");
       }
 
@@ -171,10 +177,6 @@ export function useWasmEngine(): WasmEngine {
         throw new Error(`${WASM_NAMESPACE} is missing its exports`);
       }
 
-      if (cancelled) {
-        return;
-      }
-
       setWasm(api);
       setStatus("WASM loaded. Strike a bar to start audio.");
       setError(false);
@@ -182,17 +184,9 @@ export function useWasmEngine(): WasmEngine {
 
     load().catch((loadError: unknown) => {
       console.error("Failed to load WASM demo", loadError);
-      if (cancelled) {
-        return;
-      }
-
       setStatus(messageOf(loadError));
       setError(true);
     });
-
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   return { wasm, memoryRef, status, error };
