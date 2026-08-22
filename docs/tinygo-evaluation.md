@@ -60,7 +60,7 @@ path additionally depends on the scheduler behaving sanely around `syscall/js` c
 **4. The payload is not the bottleneck we actually have.** The module is fetched once per
 build and revalidated by ETag afterwards, and this is a local demo served from `localhost`
 or a static host. The measurable first-paint cost on this page today is
-`web/wood-texture.js` filling a 1024x576 canvas pixel by pixel before the WASM fetch even
+`web/src/lib/wood.ts` filling a 1024x576 canvas pixel by pixel before the WASM fetch even
 starts (Phase 5.4), not the three megabytes.
 
 ## What Would Change the Answer

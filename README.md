@@ -21,7 +21,7 @@ python3 -m http.server -d web 8080
 
 Then open `http://localhost:8080`.
 
-`scripts/build-wasm.sh` compiles `cmd/glockenspiel-wasm` to `web/dist/glockenspiel.wasm` and writes `web/dist/manifest.json`, whose content hash the page appends to the fetch URL so a rebuilt module is never served from cache. `web/wasm_exec.js` is tracked in git and lives next to `index.html` rather than next to the `.wasm` file; the build only warns when it no longer matches the toolchain, and refreshes it on `./scripts/build-wasm.sh --refresh-wasm-exec`. If `wasm-opt` (binaryen) is on `PATH` the module is optimized as well, otherwise that step is skipped with a note. The GitHub Pages deployment runs the same script from `.github/workflows/deploy-pages.yml`.
+`scripts/build-web.sh` builds both halves into `web/dist`: the React front end through Vite, then `scripts/build-wasm.sh`, which compiles `cmd/glockenspiel-wasm` to `web/dist/glockenspiel.wasm` and writes `web/dist/manifest.json`, whose content hash the page appends to the fetch URL so a rebuilt module is never served from cache. `web/wasm_exec.js` is tracked in git and copied into the bundle verbatim rather than bundled, because it shares an ABI with the module; the build only warns when it no longer matches the toolchain, and refreshes it on `./scripts/build-wasm.sh --refresh-wasm-exec`. If `wasm-opt` (binaryen) is on `PATH` the module is optimized as well, otherwise that step is skipped with a note. The GitHub Pages deployment runs the same script from `.github/workflows/deploy-pages.yml` and publishes `web/dist`.
 
 The web build uses the standard Go toolchain; [docs/tinygo-evaluation.md](docs/tinygo-evaluation.md) records why, and what would change that.
 

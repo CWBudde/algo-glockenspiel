@@ -12,7 +12,8 @@ import (
 // can strike, and that check has to run in the package that owns the bounds.
 //
 // internal/synth re-exports them so the engine keeps its own vocabulary, and
-// they mirror KEYBOARD_FIRST_NOTE and KEYBOARD_LAST_NOTE in web/ui.js.
+// they mirror KEYBOARD_FIRST_NOTE and KEYBOARD_LAST_NOTE in
+// web/src/lib/layout.ts.
 const (
 	KeyboardFirstNote = 36
 	KeyboardLastNote  = 96

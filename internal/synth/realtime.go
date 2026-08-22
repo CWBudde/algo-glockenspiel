@@ -18,14 +18,16 @@ const (
 
 // KeyboardFirstNote and KeyboardLastNote are the MIDI range the player can
 // actually strike. They mirror KEYBOARD_FIRST_NOTE and KEYBOARD_LAST_NOTE in
-// web/ui.js and are the Go-side source of truth for anything that has to reason
+// web/src/lib/layout.ts and are the Go-side source of truth for anything that
+// has to reason
 // about the span of the instrument.
 //
 // The values themselves live in model, because preset validation needs them:
 // whether a preset is well-formed depends on whether it survives transposition
 // to both ends of this range. These are the engine's names for them.
 //
-// The narrower FIRST_NOTE/LAST_NOTE pair in web/ui.js (60..84) describes the
+// The narrower FIRST_NOTE/LAST_NOTE pair in web/src/lib/layout.ts (60..84)
+// describes the
 // drawn bar row, not the playable range: the on-screen keyboard below it sends
 // note-ons across the full 36..96 span, and so do incoming MIDI and the
 // computer-keyboard bindings. Panning has to cover every note that can reach
