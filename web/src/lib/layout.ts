@@ -99,14 +99,7 @@ export function computeNoteLayout(): NoteLayout {
         name: midiToName(note),
         center: whiteIndex + 0.5,
         length: naturalLength(note),
-        // Carried over from web/ui.js: the naturals are labelled by their
-        // position among the naturals, the accidentals by their semitone
-        // offset. The two rules disagree from D4 upwards, so some printed
-        // hints do not name the key that actually strikes the bar -- see
-        // computeKeyMap, which is what the keyboard listener uses. Kept as it
-        // was so that this port changes nothing but the framework; the label
-        // is a separate fix.
-        keyHint: KEY_BINDINGS[naturals.length] ?? "",
+        keyHint: keyBindingFor(note),
       });
       whiteIndex += 1;
     } else {

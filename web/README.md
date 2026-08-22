@@ -171,11 +171,7 @@ lands in the output buffer as NaN. See the comment on `interleavedFrames`.
 ## Usage
 
 - Click or tap bars and keys to strike notes, or Tab to one and press Enter
-- Use the printed keyboard bindings for quick play. Note a carried-over bug: the
-  hints printed on the natural bars are indexed by position among the naturals
-  while the key map uses the semitone offset, so from D4 upwards a bar names a
-  key that strikes a different note. The keyboard itself is right; the label is
-  not. See the comment in `src/lib/layout.ts`
+- Use the printed keyboard bindings for quick play
 - Adjust `Velocity` for attack strength
 - Adjust `Volume` for overall output gain, including while a note rings
 - The status line reports the sample rate, and the number of dropouts once

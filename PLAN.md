@@ -632,12 +632,9 @@ Goal: fast first paint, usable by keyboard, and no controls that lie.
       4.3 rewrite: the generator is now `web/src/lib/wood.ts`, still a synchronous 1024x576
       pixel-by-pixel fill running before first paint and again on every species change. Keep
       the generator as a build tool.
-- [ ] Fix the printed key hints. `computeNoteLayout` labels the natural bars by their position
-      among the naturals while `computeKeyMap` — what the keyboard listener actually uses —
-      keys on the semitone offset, so from D4 upwards a bar prints a key that strikes a
-      different note. The bug predates the rewrite; 4.3 carried it over verbatim and
-      documented it in `web/src/lib/layout.ts` rather than fixing it silently, so that the
-      port changed nothing but the framework. It belongs here, under "no controls that lie".
+- [x] Fix the printed key hints. `computeNoteLayout` now derives every natural and accidental
+      label from `keyBindingFor`, the same source used by `computeKeyMap`. A focused Vitest
+      regression checks every bound bar against the keyboard listener map.
 - [x] Accessibility. Done with the React rewrite in 4.3, because retrofitting it into markup
       that was being replaced anyway would have cost several times more. Bars and keys are
       real `<button>`s, so click, Enter and Space all strike, and every one carries an
