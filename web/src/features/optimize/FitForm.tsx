@@ -862,6 +862,9 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
                   <input
                     aria-describedby={describedBy(`bounds-${key}`)}
                     aria-invalid={errors[`bounds-${key}`] !== undefined}
+                    // The visible label reads "Minimum" seven times over; the
+                    // accessible name names the dimension it belongs to.
+                    aria-label={`${BOUNDS_LABELS[key]} minimum`}
                     id={fieldId(`bounds-${key}-min`)}
                     onChange={(event) => {
                       setBound(key, "min", event.target.value);
@@ -877,6 +880,7 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
                   <input
                     aria-describedby={describedBy(`bounds-${key}`)}
                     aria-invalid={errors[`bounds-${key}`] !== undefined}
+                    aria-label={`${BOUNDS_LABELS[key]} maximum`}
                     id={fieldId(`bounds-${key}-max`)}
                     onChange={(event) => {
                       setBound(key, "max", event.target.value);
