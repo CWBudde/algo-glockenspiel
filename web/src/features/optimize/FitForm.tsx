@@ -39,6 +39,17 @@ export interface FitFormProps {
   onSnapshot: (snapshot: FitSnapshot, maxIterations?: number) => void;
 }
 
+/**
+ * What buildForm answers with: the finished body plus the `maxIterations` it
+ * sent, or the per-field errors that stopped it.
+ *
+ * Named rather than written inline because prettier 3.8 and 3.9 format a
+ * multi-line union differently and each rewrites the other's output; on one
+ * line every 3.x agrees. See the note in the CI format job.
+ */
+type BuiltBody = { form: FormData; maxIterations: number };
+type BuiltForm = BuiltBody | { errors: FieldErrors };
+
 /** The scalar fields, held as strings so a half-typed number is not clobbered. */
 interface ScalarFields {
   note: string;
@@ -279,9 +290,7 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
    * Validates everything and builds the multipart body, or returns the field
    * errors. Nothing is uploaded until this succeeds.
    */
-  function buildForm():
-    | { form: FormData; maxIterations: number }
-    | { errors: FieldErrors } {
+  function buildForm(): BuiltForm {
     const found: FieldErrors = {};
 
     const reference = referenceRef.current?.files?.[0] ?? null;
