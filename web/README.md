@@ -16,7 +16,7 @@ web/
   src/
     App.tsx           tab bar, hash router and the audio engine
     routes/           PlayPage, OptimizePage
-    components/       Topbar, PresetStrip, ControlRail, Dial, Rack, Keyboard
+    components/       Topbar, ControlDeck, Dial, Rack, Keyboard
     audio/            the engine worker, the worklet, and the AudioContext graph
     api/              the typed fit-API client and the wire types
     features/optimize/  the fit form, the event stream, the chart, the audition

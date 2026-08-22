@@ -162,48 +162,6 @@ h1 {
   text-shadow: 0 1px 3px rgba(20, 13, 9, 0.34);
 }
 
-.preset-strip {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  flex-wrap: wrap;
-  margin: -2px 0 0;
-  padding: var(--space-lg) var(--space-xl) var(--space-2xl);
-  border: 1px solid rgba(72, 55, 39, 0.18);
-  border-top: 0;
-  border-radius: 0 0 var(--radius-panel) var(--radius-panel);
-  background: #eee7dc;
-  box-shadow: 0 4px 12px rgba(49, 37, 28, 0.08);
-}
-
-.preset-field {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  color: #402414;
-  font-size: var(--type-body);
-}
-
-.preset-field span {
-  font-weight: 700;
-}
-
-.preset-field select {
-  min-height: 36px;
-  padding: 0 var(--space-lg);
-  border: 1px solid rgba(85, 52, 24, 0.35);
-  border-radius: var(--radius-control);
-  background: linear-gradient(180deg, #76502a, #55331a);
-  color: #fff4e7;
-  font: inherit;
-}
-
-.preset-note {
-  margin: 0 0 0 auto;
-  color: rgba(61, 36, 21, 0.82);
-  font-size: var(--type-caption);
-}
-
 .instrument-card {
   overflow: hidden;
   margin-top: var(--space-xl);
@@ -213,19 +171,76 @@ h1 {
   box-shadow: 0 12px 30px rgba(49, 37, 28, 0.14);
 }
 
-.instrument-main {
+.control-deck {
   display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-  gap: var(--space-xl);
-  padding: var(--space-3xl) var(--space-4xl) var(--space-sm);
+  grid-template-columns: auto auto minmax(280px, 1.2fr) minmax(240px, 1fr);
+  align-items: center;
+  gap: var(--space-4xl);
+  padding: var(--space-lg) var(--space-4xl);
+  border-bottom: 1px solid rgba(72, 55, 39, 0.18);
+  background: #eee7dc;
+  box-shadow: 0 4px 12px rgba(49, 37, 28, 0.06);
 }
 
-.control-rail {
+.control-deck-appearance,
+.control-deck-status {
+  min-width: 0;
+  padding: var(--space-lg) var(--space-xl);
+  border: 1px solid rgba(72, 55, 39, 0.13);
+  border-radius: var(--radius-group);
+  background: rgba(255, 250, 241, 0.48);
+}
+
+.control-deck-appearance {
   display: grid;
-  justify-items: center;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-lg) var(--space-xl);
+}
+
+.wood-field {
+  display: grid;
+  gap: var(--space-xs);
+  color: var(--charcoal);
+  font-size: var(--type-body);
+  font-weight: 700;
+}
+
+.wood-field select {
+  min-height: 36px;
+  padding: 0 var(--space-lg);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-control);
+  background: linear-gradient(180deg, #76502a, #55331a);
+  color: var(--text-on-wood);
+  font: inherit;
+  font-weight: 400;
+}
+
+.wood-description {
+  margin: 0;
+  color: var(--charcoal-muted);
+  font-size: var(--type-caption);
+  line-height: 1.35;
+}
+
+.control-deck-status {
+  display: grid;
   align-content: center;
-  gap: 26px;
-  padding: var(--space-sm) 0;
+  gap: var(--space-xs);
+  min-height: 76px;
+}
+
+.status-label {
+  color: var(--charcoal);
+  font-family: var(--font-display);
+  font-size: var(--type-sm);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.instrument-main {
+  padding: var(--space-3xl) var(--space-4xl) var(--space-sm);
 }
 
 .dial-control {
@@ -305,8 +320,7 @@ h1 {
 }
 
 .status-panel {
-  margin: 4px 0 0;
-  text-align: center;
+  margin: 0;
   color: var(--charcoal-muted);
   font-size: var(--type-caption);
   line-height: 1.4;
@@ -572,15 +586,6 @@ h1 {
 }
 
 @media (max-width: 1080px) {
-  .instrument-main {
-    grid-template-columns: 1fr;
-  }
-
-  .control-rail {
-    grid-template-columns: repeat(3, minmax(0, auto));
-    justify-content: start;
-  }
-
   .instrument-stage {
     min-height: 470px;
   }
@@ -592,32 +597,31 @@ h1 {
     padding-top: var(--space-md);
   }
 
-  .studio-topbar,
-  .preset-strip {
-    border-radius: var(--space-4xl);
-  }
-
   .studio-topbar {
     border-radius: var(--radius-group);
   }
 
-  .preset-note {
-    width: 100%;
-    margin-left: 0;
+  .control-deck {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-lg);
+    padding: var(--space-lg);
+  }
+
+  .control-deck .dial-control {
+    justify-self: center;
+  }
+
+  .control-deck-appearance,
+  .control-deck-status {
+    grid-column: 1 / -1;
+  }
+
+  .control-deck-status {
+    min-height: 0;
   }
 
   .instrument-main {
     padding: var(--space-xl) var(--space-xl) var(--space-sm);
-  }
-
-  .control-rail {
-    grid-template-columns: repeat(2, minmax(0, auto));
-    gap: var(--space-3xl) var(--space-4xl);
-  }
-
-  .status-panel {
-    grid-column: 1 / -1;
-    text-align: left;
   }
 
   .instrument-stage {
@@ -723,7 +727,7 @@ h1 {
 .tab:focus-visible,
 .bar:focus-visible,
 .piano-key:focus-visible,
-.preset-field select:focus-visible,
+.wood-field select:focus-visible,
 .dial-input:focus-visible + .dial-face,
 .optimize-panel a:focus-visible,
 .fit-field input:focus-visible,

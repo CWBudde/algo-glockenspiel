@@ -708,9 +708,12 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       single structural frame and its support rails retain the selected procedural wood; the extra
       cream inset, blurred rack shadow and repeated texture layers are gone. The three Play
       references were intentionally updated, while Optimize remains pixel-exact and unchanged.
-- [ ] **5.5.5 — Rebuild the performance control deck.** Place Volume, Velocity, wood selection and
-      engine status in one compact responsive deck. Preserve the current range-input semantics,
-      wheel and keyboard operation, live status announcement and error state.
+- [x] **5.5.5 — Rebuild the performance control deck.** `ControlDeck` now places the compact
+      Volume and Velocity dials, wood selector and description, and live engine status together
+      above the playfield, collapsing into a balanced two-column deck at 390px. Playwright verifies
+      the native range bounds, keyboard and wheel changes, formatted outputs, species application,
+      and both polite ready and error announcements. The three Play references were intentionally
+      updated; Optimize remains pixel-exact and the full six-test Chromium suite passes.
 - [ ] **5.5.6 — Refine the physical instrument.** Give bars a restrained metal finish, simplify
       rails and fasteners, reduce glossy highlights, and bring the mallet inside the composition.
       Define consistent hover, pressed and sounding-note states without changing note activation.
