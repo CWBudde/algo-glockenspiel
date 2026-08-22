@@ -136,6 +136,17 @@ export function useAudioEngine(
     }
   }, [wasm, masterGain]);
 
+  // teardown disconnects and closes whatever half of the graph exists. It is
+  // written to be safe on a graph that was never finished, because the failure
+  // path in start needs exactly that.
+  const teardown = useCallback(() => {
+    outputRef.current?.disconnect();
+    outputRef.current = null;
+    void contextRef.current?.close();
+    contextRef.current = null;
+    readyRef.current = false;
+  }, []);
+
   const start = useCallback(async () => {
     if (readyRef.current) {
       return;
@@ -218,6 +229,14 @@ export function useAudioEngine(
     try {
       await startup;
     } catch (startError) {
+      // Startup can fail after the AudioContext exists -- a module that
+      // refuses the sample rate, a resume() the browser rejects -- and the
+      // refs are already pointing at that half-built graph. Without this the
+      // next strike would open a second context over the first, which stays
+      // open and keeps its share of the (small) per-page context budget.
+      teardown();
+      setReady(false);
+
       console.error(startError);
       setStatus(messageOf(startError));
       setError(true);
@@ -226,7 +245,7 @@ export function useAudioEngine(
     } finally {
       startPromiseRef.current = null;
     }
-  }, [memoryRef]);
+  }, [memoryRef, teardown]);
 
   const isReady = useCallback(() => readyRef.current, []);
 
@@ -235,13 +254,9 @@ export function useAudioEngine(
       // The page owns exactly one graph, but a hot reload or an unmount of the
       // Play tab must not leave a ScriptProcessorNode pulling blocks out of a
       // module nothing is listening to.
-      outputRef.current?.disconnect();
-      outputRef.current = null;
-      void contextRef.current?.close();
-      contextRef.current = null;
-      readyRef.current = false;
+      teardown();
     },
-    [],
+    [teardown],
   );
 
   return { ready, status, error, start, isReady };
