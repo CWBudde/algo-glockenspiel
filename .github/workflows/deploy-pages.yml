@@ -40,6 +40,13 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
+      # The build script treats wasm-opt as optional, so this step only decides
+      # whether the deployed module is 3.21 MB or 3.40 MB; it never decides
+      # whether the build succeeds. It is installed here and not in test-wasm
+      # because size only matters for what users actually download.
+      - name: Install binaryen
+        run: sudo apt-get update && sudo apt-get install -y binaryen
+
       - name: Build web demo
         run: ./scripts/build-wasm.sh
 
