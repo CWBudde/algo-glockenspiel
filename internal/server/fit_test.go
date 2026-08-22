@@ -122,6 +122,20 @@ func referenceWAV(t *testing.T, seconds float64, sampleRate int) []byte {
 func multipartFit(t *testing.T, reference []byte, fields map[string]string) (io.Reader, string) {
 	t.Helper()
 
+	return multipartFitWithFiles(t, reference, fields, nil)
+}
+
+// multipartFitWithFiles assembles a start request body carrying further file
+// parts -- the optional starting preset and the optional bounds -- alongside
+// the reference.
+func multipartFitWithFiles(
+	t *testing.T,
+	reference []byte,
+	fields map[string]string,
+	files map[string][]byte,
+) (io.Reader, string) {
+	t.Helper()
+
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
@@ -136,6 +150,19 @@ func multipartFit(t *testing.T, reference []byte, fields map[string]string) (io.
 
 		if _, err := part.Write(reference); err != nil {
 			t.Fatalf("write reference part: %v", err)
+		}
+	}
+
+	for name, content := range files {
+		// Hostile filenames here too: the bounds and the starting preset are
+		// read from bytes, and neither part's filename may reach a path.
+		part, err := writer.CreateFormFile(name, `../../../etc/`+name+`.json`)
+		if err != nil {
+			t.Fatalf("create %s part: %v", name, err)
+		}
+
+		if _, err := part.Write(content); err != nil {
+			t.Fatalf("write %s part: %v", name, err)
 		}
 	}
 
@@ -162,7 +189,20 @@ func startFit(t *testing.T, handler http.Handler, fields map[string]string) *htt
 func startFitWithReference(t *testing.T, handler http.Handler, reference []byte, fields map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	body, contentType := multipartFit(t, reference, fields)
+	return startFitWithFiles(t, handler, reference, fields, nil)
+}
+
+// startFitWithFiles posts a start request carrying extra file parts.
+func startFitWithFiles(
+	t *testing.T,
+	handler http.Handler,
+	reference []byte,
+	fields map[string]string,
+	files map[string][]byte,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	body, contentType := multipartFitWithFiles(t, reference, fields, files)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/fit/start", body)
 	request.Header.Set("Content-Type", contentType)
@@ -536,6 +576,7 @@ func TestStartRejectsBadRequests(t *testing.T) {
 		name       string
 		reference  []byte
 		fields     map[string]string
+		bounds     []byte
 		wantStatus int
 		wantText   string
 	}{
@@ -630,11 +671,72 @@ func TestStartRejectsBadRequests(t *testing.T) {
 			wantStatus: http.StatusBadRequest,
 			wantText:   "align",
 		},
+		{
+			name:       "malformed bounds",
+			reference:  reference,
+			fields:     shortFit(),
+			bounds:     []byte(`{"decay_ms": [50.0`),
+			wantStatus: http.StatusBadRequest,
+			wantText:   "decode bounds",
+		},
+		{
+			name:       "bounds with an unknown key",
+			reference:  reference,
+			fields:     shortFit(),
+			bounds:     []byte(`{"decay_millis": [50.0, 400.0]}`),
+			wantStatus: http.StatusBadRequest,
+			wantText:   "decode bounds",
+		},
+		{
+			name:       "inverted bounds range",
+			reference:  reference,
+			fields:     shortFit(),
+			bounds:     []byte(`{"decay_ms": [400.0, 50.0]}`),
+			wantStatus: http.StatusBadRequest,
+			wantText:   "must be below max",
+		},
+		{
+			// Well-formed and ordered, but the model's own floor for the
+			// dimension is above zero, and a log-encoded dimension could not
+			// start there anyway. Rejected before a job slot is claimed.
+			name:       "bounds a codec cannot encode",
+			reference:  reference,
+			fields:     shortFit(),
+			bounds:     []byte(`{"decay_ms": [0.0, 400.0]}`),
+			wantStatus: http.StatusBadRequest,
+			wantText:   "decay_ms",
+		},
+		{
+			// Ordered and finite, but no candidate inside it survives
+			// model.ValidateBarParams, so the fit could only burn its budget on
+			// +Inf scores. Rejected up front instead.
+			name:       "bounds outside the model domain",
+			reference:  reference,
+			fields:     shortFit(),
+			bounds:     []byte(`{"input_mix": [3.0, 4.0]}`),
+			wantStatus: http.StatusBadRequest,
+			wantText:   "leaves the model range",
+		},
+		{
+			// Only the first object would be applied, so the fit would run
+			// against constraints the client never asked for.
+			name:       "bounds followed by a second document",
+			reference:  reference,
+			fields:     shortFit(),
+			bounds:     []byte(`{"decay_ms": [50.0, 400.0]}{"decay_ms": [1.0, 2.0]}`),
+			wantStatus: http.StatusBadRequest,
+			wantText:   "unexpected content after the bounds object",
+		},
 	}
 
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			response := startFitWithReference(t, handler, testCase.reference, testCase.fields)
+			var files map[string][]byte
+			if testCase.bounds != nil {
+				files = map[string][]byte{"bounds": testCase.bounds}
+			}
+
+			response := startFitWithFiles(t, handler, testCase.reference, testCase.fields, files)
 			if response.Code != testCase.wantStatus {
 				t.Fatalf("status = %d, want %d: %s", response.Code, testCase.wantStatus, response.Body.String())
 			}
@@ -652,6 +754,104 @@ func TestStartRejectsBadRequests(t *testing.T) {
 				t.Fatalf("a rejected request left a job behind: GET /api/fit = %d", status.Code)
 			}
 		})
+	}
+}
+
+// Bounds that arrive with the request are a hard constraint on the fitted
+// preset, exactly as `fit --bounds` is on the command line. The box below is
+// deliberately one the embedded starting preset violates -- its shortest mode
+// decays in well under a millisecond and its amplitudes sit at +/-2 -- so a run
+// that ignored the field, or that widened the box to contain the template,
+// would produce a preset outside it.
+func TestFitHonorsSuppliedBounds(t *testing.T) {
+	handler := newFitServer(t).Handler()
+
+	const (
+		minDecayMs   = 50.0
+		maxDecayMs   = 400.0
+		minAmplitude = -1.0
+		maxAmplitude = 1.0
+		minBaseHz    = 435.0
+		maxBaseHz    = 445.0
+		// Encoding and decoding a bound is a round trip through a logarithm,
+		// so a value sitting on a boundary comes back a few ulps outside it.
+		tolerance = 1e-6
+	)
+
+	bounds := []byte(`{"base_frequency": [435.0, 445.0], "decay_ms": [50.0, 400.0], "amplitude": [-1.0, 1.0]}`)
+
+	response := startFitWithFiles(t, handler, referenceWAV(t, testReferenceLength, testSampleRate), shortFit(),
+		map[string][]byte{"bounds": bounds})
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("start = %d, want 202: %s", response.Code, response.Body.String())
+	}
+
+	final := waitForTerminalState(t, handler, 60*time.Second)
+	if final.State != "succeeded" {
+		t.Fatalf("state = %q (error %q), want succeeded", final.State, final.Error)
+	}
+
+	presetResponse := httptest.NewRecorder()
+	handler.ServeHTTP(presetResponse, httptest.NewRequest(http.MethodGet, "/api/fit/preset", nil))
+
+	if presetResponse.Code != http.StatusOK {
+		t.Fatalf("GET /api/fit/preset = %d: %s", presetResponse.Code, presetResponse.Body.String())
+	}
+
+	fitted, err := preset.Decode(presetResponse.Body.Bytes(), "the fitted preset")
+	if err != nil {
+		t.Fatalf("the fitted preset does not validate: %v", err)
+	}
+
+	base := fitted.Parameters.BaseFrequency
+	if base < minBaseHz-tolerance || base > maxBaseHz+tolerance {
+		t.Fatalf("fitted base frequency %g is outside the requested [%g,%g]", base, minBaseHz, maxBaseHz)
+	}
+
+	for i, mode := range fitted.Parameters.Modes {
+		if mode.DecayMs < minDecayMs-tolerance || mode.DecayMs > maxDecayMs+tolerance {
+			t.Fatalf("mode %d decays in %g ms, outside the requested [%g,%g]", i, mode.DecayMs, minDecayMs, maxDecayMs)
+		}
+
+		if mode.Amplitude < minAmplitude-tolerance || mode.Amplitude > maxAmplitude+tolerance {
+			t.Fatalf("mode %d amplitude %g is outside the requested [%g,%g]",
+				i, mode.Amplitude, minAmplitude, maxAmplitude)
+		}
+	}
+}
+
+// Without the field the default box applies, and the default box is widened to
+// contain the starting preset -- so the very parameters the test above pins
+// inside a narrow range are free to sit outside it.
+func TestFitWithoutBoundsKeepsTheDefaultBox(t *testing.T) {
+	handler := newFitServer(t).Handler()
+
+	response := startFit(t, handler, shortFit())
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("start = %d, want 202: %s", response.Code, response.Body.String())
+	}
+
+	final := waitForTerminalState(t, handler, 60*time.Second)
+	if final.State != "succeeded" {
+		t.Fatalf("state = %q (error %q), want succeeded", final.State, final.Error)
+	}
+
+	presetResponse := httptest.NewRecorder()
+	handler.ServeHTTP(presetResponse, httptest.NewRequest(http.MethodGet, "/api/fit/preset", nil))
+
+	fitted, err := preset.Decode(presetResponse.Body.Bytes(), "the fitted preset")
+	if err != nil {
+		t.Fatalf("the fitted preset does not validate: %v", err)
+	}
+
+	fastest := math.Inf(1)
+	for _, mode := range fitted.Parameters.Modes {
+		fastest = math.Min(fastest, mode.DecayMs)
+	}
+
+	if fastest >= 50.0 {
+		t.Fatalf("the default box no longer admits the template's %g ms mode; "+
+			"TestFitHonorsSuppliedBounds proves nothing", fastest)
 	}
 }
 

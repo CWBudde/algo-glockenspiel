@@ -165,6 +165,13 @@ func (s *Server) handleFitStart(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
+	bounds, err := readBoundsPart(request)
+	if err != nil {
+		writeJSONError(writer, http.StatusBadRequest, err.Error())
+
+		return
+	}
+
 	fitSettings, err := parseFitRequest(request)
 	if err != nil {
 		writeJSONError(writer, http.StatusBadRequest, err.Error())
@@ -172,7 +179,7 @@ func (s *Server) handleFitStart(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
-	objective, initial, err := buildObjective(fitSettings, reference, referenceRate, template)
+	objective, initial, err := buildObjective(fitSettings, reference, referenceRate, template, bounds)
 	if err != nil {
 		writeJSONError(writer, http.StatusBadRequest, err.Error())
 
@@ -499,6 +506,43 @@ func readPresetPart(request *http.Request) (*preset.Preset, error) {
 	return preset.Decode(data, "the uploaded starting preset")
 }
 
+// readBoundsPart decodes the optional search bounds, returning nil when the
+// field is absent so the caller keeps the default box. Like the preset it is
+// read from bytes in memory and the part's filename is never touched;
+// optimizer.LoadParamBounds takes a path and is deliberately not reachable
+// from here.
+func readBoundsPart(request *http.Request) (*optimizer.ParamBounds, error) {
+	file, _, err := request.FormFile("bounds")
+
+	// Only a missing field means "no bounds". Any other failure -- a part that
+	// cannot be opened, say -- would otherwise be answered with a fit against
+	// the default box while the client believed its own box was in force.
+	if errors.Is(err, http.ErrMissingFile) {
+		//nolint:nilnil // an absent field is not an error: the default box applies.
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("the bounds could not be read: %w", err)
+	}
+
+	defer func() {
+		_ = file.Close()
+	}()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("the bounds could not be read: %w", err)
+	}
+
+	bounds, err := optimizer.DecodeParamBounds(data, "the uploaded bounds")
+	if err != nil {
+		return nil, err
+	}
+
+	return &bounds, nil
+}
+
 // buildObjective validates the request against the reference and assembles the
 // objective, returning it with the encoded starting point.
 func buildObjective(
@@ -506,6 +550,7 @@ func buildObjective(
 	reference []float32,
 	referenceRate int,
 	template *preset.Preset,
+	bounds *optimizer.ParamBounds,
 ) (*optimizer.ObjectiveFunction, []float64, error) {
 	metric, err := optimizer.ParseMetric(settings.Metric)
 	if err != nil {
@@ -514,6 +559,15 @@ func buildObjective(
 
 	config := optimizer.DefaultObjectiveConfig(metric)
 	config.Alignment = optimizer.AlignNone
+
+	if bounds != nil {
+		config.Bounds = *bounds
+		// Bounds the client sent are a hard constraint, exactly as --bounds is
+		// on the command line: they must not be widened to fit whatever the
+		// starting preset happens to contain, or the fitted preset can violate
+		// the limits that were asked for.
+		config.StrictBounds = true
+	}
 
 	if settings.Align {
 		config.Alignment = optimizer.AlignOnsetCorrelation
@@ -542,7 +596,9 @@ func buildObjective(
 
 	// The default bounds are widened to contain the template, so the starting
 	// point is inside the box already; clamping is belt and braces against a
-	// preset whose parameters sit on a boundary.
+	// preset whose parameters sit on a boundary. With client-supplied strict
+	// bounds it is load bearing: the template may sit outside the requested
+	// box, and the backend must not be handed an infeasible starting point.
 	clamped, err := objective.Codec().EncodedBounds().Clamp(encoded)
 	if err != nil {
 		return nil, nil, err

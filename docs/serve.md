@@ -100,6 +100,7 @@ and keeps that command's default when it is absent:
 | ------------------------------------------------- | ------------------ | --------------------------------------------------------- |
 | `reference` (file)                                | required           | Mono or the first channel of a multi-channel file.        |
 | `preset` (file)                                   | built-in           | An optional starting preset, as JSON.                     |
+| `bounds` (file)                                   | default box        | Optional search bounds, as JSON. See below.               |
 | `note`, `velocity`                                | 69, 100            | MIDI, `0`–`127`.                                          |
 | `optimizer`                                       | `simple`           | `simple` or `mayfly`.                                     |
 | `metric`                                          | `rms`              | `rms`, `log` or `spectral`.                               |
@@ -108,6 +109,47 @@ and keeps that command's default when it is absent:
 | `reportEvery`                                     | `10`               | How often progress is reported, and therefore streamed.   |
 | `align`, `normalizeGain`                          | on, off            | As `--align` and `--normalize-gain`.                      |
 | `mayflyVariant`, `mayflyPopulation`, `mayflySeed` | `desma`, `10`, `1` | Only read for `--optimizer mayfly`.                       |
+
+### Bounds
+
+`bounds` is the same document `fit --bounds` reads, parsed by the same code.
+Every key is optional and holds one `[min, max]` pair; an omitted key keeps the
+corresponding default bound, so a document can narrow a single dimension without
+restating the rest. Unknown keys are rejected rather than ignored — a misspelled
+dimension that was silently dropped would run the fit against the default box
+while the client believed it had narrowed one, and so is anything following the
+object: a second document appended to the first would be dropped just as
+quietly.
+
+```json
+{
+  "input_mix": [0.0, 2.0],
+  "filter_freq": [500.0, 8000.0],
+  "base_frequency": [400.0, 500.0],
+  "amplitude": [-1.0, 1.0],
+  "frequency_mult": [0.5, 10.0],
+  "decay_ms": [50.0, 400.0],
+  "harmonic_gain": [0.0, 1.0]
+}
+```
+
+Supplied bounds are a **hard constraint**, exactly as on the command line. The
+default box is widened where the starting preset falls outside it; a box the
+client asked for is not, or the fitted preset could violate the very limits that
+were requested. The starting point is clamped into the box instead. Malformed
+JSON, trailing content after the object, an unknown key, an inverted or empty
+range, a range a log-encoded dimension cannot take (`filter_freq`,
+`base_frequency`, `frequency_mult` and `decay_ms` must stay above zero) and a
+range that leaves the model's own domain (`input_mix` beyond `[0, 2]`, say) are
+each a `400` before a job slot is claimed.
+
+Like the reference and the starting preset, the part is read from bytes in
+memory and its filename is never touched.
+
+```bash
+curl -s -X POST http://localhost:8080/api/fit/start \
+  -F reference=@a4.wav -F bounds=@bounds.json -F timeBudget=1m
+```
 
 There is no `sampleRate` field. The CLI has `--sample-rate` and errors when it
 disagrees with the file; over an upload that check could only ever be the client
