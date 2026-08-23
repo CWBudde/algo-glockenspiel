@@ -18,6 +18,13 @@ export interface EngineClient {
    * is rebuilt around the new bar rather than retuned underneath the old one.
    */
   setPreset(presetId: string): void;
+  /**
+   * Makes a preset document playable under `presetId`, without switching to
+   * it. Safe before the first strike: the worker holds the registration until
+   * there is a module to give it to, and applies it before the engine is
+   * built.
+   */
+  registerPreset(presetId: string, document: string): void;
   /** Sets how much of the output goes through the engine's room, 0..1. */
   setReverb(mix: number): void;
   /**
@@ -108,6 +115,9 @@ export function useEngineWorker(): EngineWorker {
       },
       setPreset(presetId) {
         send({ type: "setPreset", presetId });
+      },
+      registerPreset(presetId, document) {
+        send({ type: "registerPreset", presetId, document });
       },
       setReverb(mix) {
         send({ type: "setReverb", mix });

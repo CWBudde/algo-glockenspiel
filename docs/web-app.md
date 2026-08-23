@@ -64,7 +64,7 @@ sends including the ones no component reads yet.
 
 Each Go module publishes exactly one global, `glockenspielWasm`, inside the
 worker that owns it. `cmd/glockenspiel-wasm` supplies `init`, `noteOn`,
-`setMasterGain`, `setPreset`, `setReverb` and `processBlock`; `cmd/glockenspiel-fit-wasm`
+`setMasterGain`, `setPreset`, `addPreset`, `setReverb` and `processBlock`; `cmd/glockenspiel-fit-wasm`
 supplies `fitStart`, `fitCancel`, `fitPreset` and `fitRender`. The workers have
 separate global scopes, and one namespace per module makes ownership visible at
 a glance.
@@ -117,6 +117,28 @@ static host has no service to ask, so a picker fed from the engine would be
 empty exactly when someone first looks at it -- and empty in the Playwright
 baselines. An unknown id is still refused in Go, so the generated list is a
 convenience rather than the authority.
+
+### Sounds that do not exist at build time
+
+`addPreset(id, document)` is how an optimizer result becomes playable. Everything
+in `assets/presets` is embedded in the module, so a preset fitted in the Optimize
+tab has no id to be chosen by until one is given to it: the page mints
+`fitted-<n>`, hands over the document, and only a later `setPreset` naming that
+id builds an engine. Registering itself is a `preset.Decode` and a map write --
+no engine, no calibration, no gap for the transport, so it is safe while a note
+is ringing. The document is decoded rather than stored as text so that an
+invalid preset is an error the caller is still holding, not a silent instrument
+at the next strike, and it goes through the same decoder the embedded presets do,
+schema upgrade included. An id that names a built-in sound is refused outright:
+shadowing one would leave the picker offering a built-in that plays something
+else.
+
+The registry lives as long as the module does, which is the whole contract the
+front end offers for a fitted sound -- `App` holds the matching list of entries
+and both are gone on reload. `engine.worker.ts` queues a registration that
+arrives before the module has loaded and flushes the queue before `init`, for the
+same reason it holds the chosen id: the Optimize tab is reachable on a page that
+has never made a sound.
 
 ### The room
 

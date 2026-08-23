@@ -124,7 +124,7 @@ glockenspiel fit \
 - `--time-budget`: wall-clock budget as a Go duration, for example `30s` or `10m`; a bare number is still read as seconds
 - `--align`: time-align each candidate to the reference before scoring, on by default. Leave it on for recorded references: a few samples of offset invert the phase of a high partial, so the correct parameters would score worse than incorrect ones
 - `--normalize-gain`: divide out the scalar gain that best matches the reference level, off by default. Use it when the reference level is unknown; it makes the model's amplitude parameters unidentifiable, so leave it off when the level is meaningful
-- `--report-every`: progress print interval
+- `--report-every`: progress print interval, counted in the chosen optimizer's own iterations. The default follows the backend -- 10 for `simple`, 1 for `mayfly` -- because a mayfly iteration is a whole generation, roughly fifty renders, against about one for a simple major iteration
 - `--checkpoint-interval`: checkpoint write interval in progress reports; `0` disables checkpointing entirely, including the final checkpoint
 - `--work-dir`: stores checkpoints and `fitted_output.wav`, resolved relative to the current directory (default `out/fit`)
 - `--resume`: restart from the latest `checkpoint_*.json` in `work-dir`

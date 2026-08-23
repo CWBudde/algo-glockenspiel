@@ -650,12 +650,22 @@ func (t *mayflyTracker) evaluate(pos []float64) float64 {
 // observe forwards mayfly's per-iteration progress. Progress.Iteration counts
 // the callbacks this wrapper emits, not mayfly's iterations, per the Progress
 // contract.
+//
+// The cadence is taken on the run's own iteration count rather than on
+// mayfly's. Progress.Iteration restarts at one for every OptimizeContext call,
+// and a schedule splits MaxIterations across epochs and restarts, so a round
+// shorter than ReportEvery would never satisfy the modulo: 100 iterations over
+// four epochs and eight restarts is twelve rounds of eight or nine, which at
+// the default cadence of ten reports nothing at all for the whole fit. Gating
+// on the global count is also what the simple backend does -- gonum's
+// stats.MajorIterations is monotonic across the search -- so the two backends
+// now mean the same thing by "every n".
 func (t *mayflyTracker) observe(progress mayfly.Progress) {
 	t.mu.Lock()
 
 	t.iterations = t.completedIterations + progress.Iteration
 
-	if t.opts.Report == nil || t.opts.ReportEvery <= 0 || progress.Iteration%t.opts.ReportEvery != 0 {
+	if t.opts.Report == nil || t.opts.ReportEvery <= 0 || t.iterations%t.opts.ReportEvery != 0 {
 		t.mu.Unlock()
 
 		return

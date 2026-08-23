@@ -242,6 +242,15 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		if err := validateMayflyOptions(cmd, options); err != nil {
 			return err
 		}
+
+		// A mayfly iteration is a whole generation -- roughly 47.7 objective
+		// evaluations at a population of ten -- against about one for a simple
+		// major iteration, so the shared default of ten would mean the first
+		// progress line lands after some five hundred renders. The default
+		// follows the backend; a cadence the caller passed is left alone.
+		if !cmd.Flags().Changed("report-every") {
+			options.reportEvery = 1
+		}
 	}
 
 	stopCPUProfile, err := startCPUProfile(options.cpuProfilePath)

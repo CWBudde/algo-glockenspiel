@@ -16,6 +16,7 @@ import {
   BOUNDS_KEYS,
   DEFAULT_FIT_REQUEST,
   DEFAULT_PARAM_BOUNDS,
+  defaultReportEvery,
   FIT_LIMITS,
   LOG_ENCODED_BOUNDS_KEYS,
   MAYFLY_PRESETS,
@@ -1264,7 +1265,24 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
             <select
               id={fieldId("optimizer")}
               onChange={(event) => {
-                setOptimizer(event.target.value as OptimizerName);
+                const chosen = event.target.value as OptimizerName;
+
+                // The cadence follows the backend, because its unit changes
+                // with it: an iteration is one evaluation for the simple
+                // optimizer and a whole generation -- some fifty renders --
+                // for mayfly. Only a field still holding the previous
+                // backend's default is moved, so a cadence the user typed is
+                // never overwritten underneath them.
+                setScalars((previous) =>
+                  previous.reportEvery === String(defaultReportEvery(optimizer))
+                    ? {
+                        ...previous,
+                        reportEvery: String(defaultReportEvery(chosen)),
+                      }
+                    : previous,
+                );
+
+                setOptimizer(chosen);
               }}
               value={optimizer}
             >
@@ -1370,7 +1388,9 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
                 value={scalars.reportEvery}
               />
               <p className="fit-hint">
-                Optimizer iterations between progress reports.
+                {mayfly
+                  ? "Mayfly generations between progress reports. One generation is the whole swarm, roughly fifty renders."
+                  : "Optimizer iterations between progress reports. One iteration is roughly one render."}
               </p>
               {fieldError("reportEvery")}
             </div>

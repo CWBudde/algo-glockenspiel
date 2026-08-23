@@ -123,6 +123,16 @@ func (r fitRequest) timeBudget() time.Duration {
 	return time.Duration(r.TimeBudgetMS) * time.Millisecond
 }
 
+// mayflyOptimizerName is the backend name selectOptimizer answers to, spelled
+// once so the cadence default below and the switch cannot drift apart.
+const mayflyOptimizerName = "mayfly"
+
+// defaultMayflyReportEvery is the progress cadence a mayfly run gets when the
+// client names no cadence of its own: every generation, which is what
+// internal/browserfit already asks the optimizer for. See parseFitRequest for
+// why it is not the ten the simple backend defaults to.
+const defaultMayflyReportEvery = 1
+
 // defaultFitRequest carries the same defaults as the fit command, so a preset
 // fitted from the browser and one fitted from the terminal are the same fit.
 func defaultFitRequest() fitRequest {

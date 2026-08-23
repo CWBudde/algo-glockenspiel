@@ -30,6 +30,13 @@ export interface GlockenspielAudioWasm {
    */
   setPreset(presetId: string): string | undefined;
   /**
+   * Registers a preset document under an id, so a later setPreset with that id
+   * plays it. Returns a non-empty error string when the document is not a
+   * preset, or when the id names a built-in sound. Builds nothing and never
+   * interrupts the render: the cost is paid by the setPreset that follows.
+   */
+  addPreset(presetId: string, document: string): string | undefined;
+  /**
    * Sets how much of the output goes through the engine's room, 0..1.
    *
    * Unlike setPreset this rebuilds nothing and never interrupts the render, so
@@ -93,6 +100,7 @@ export function hasAudioExports(api: unknown): api is GlockenspielAudioWasm {
   >;
 
   return (
+    typeof candidate.addPreset === "function" &&
     typeof candidate.init === "function" &&
     typeof candidate.noteOn === "function" &&
     typeof candidate.processBlock === "function" &&

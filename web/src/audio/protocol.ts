@@ -64,6 +64,26 @@ export type EngineCommand =
     }
   | {
       /**
+       * Make a preset document playable under an id, without playing it.
+       *
+       * This is how a sound that does not exist at build time -- an optimizer
+       * result -- becomes choosable: everything in assets is embedded in the
+       * module, so a fitted preset has no id to be chosen by until one is given
+       * to it here. A "setPreset" naming that id follows whenever the user
+       * picks it, and only then is an engine built.
+       *
+       * Accepted before the module has loaded, for the same reason setPreset
+       * is: the Optimize tab is reachable on a page that has never made a
+       * sound. The worker holds the registration until there is a module to
+       * hand it to, and applies it before init, so the id is resolvable by the
+       * time the first engine is built.
+       */
+      type: "registerPreset";
+      presetId: string;
+      document: string;
+    }
+  | {
+      /**
        * How much of the output goes through the engine's room, 0..1.
        *
        * It is a plain live setter, unlike setPreset: nothing is rebuilt, the

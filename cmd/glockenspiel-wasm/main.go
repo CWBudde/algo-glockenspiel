@@ -7,6 +7,7 @@ import (
 	"unsafe"
 
 	embeddedassets "github.com/cwbudde/algo-glockenspiel/assets"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/cwbudde/algo-glockenspiel/internal/synth"
 )
 
@@ -43,6 +44,16 @@ var globalEngine *synth.RealtimeEngine
 // told to expect the gap.
 var engines = map[string]*synth.RealtimeEngine{}
 
+// customPresets holds the preset documents the page handed over at runtime,
+// keyed by the id it addresses them with.
+//
+// They are what makes an optimizer result playable without a rebuild of this
+// binary: everything in assets is embedded at compile time, so a preset fitted
+// in the Optimize tab has no id to be chosen by. The map lives for as long as
+// the module does and no longer -- reloading the page is what clears it, which
+// is the whole contract the front end offers for a fitted sound.
+var customPresets = map[string]*preset.Preset{}
+
 // globalMasterGain remembers the gain the page last asked for.
 //
 // Switching presets builds a new engine, and a new engine starts at its own
@@ -71,6 +82,7 @@ func main() {
 	api.Set("noteOn", js.FuncOf(wasmNoteOn))
 	api.Set("setMasterGain", js.FuncOf(wasmSetMasterGain))
 	api.Set("setPreset", js.FuncOf(wasmSetPreset))
+	api.Set("addPreset", js.FuncOf(wasmAddPreset))
 	api.Set("setReverb", js.FuncOf(wasmSetReverb))
 	api.Set("processBlock", js.FuncOf(wasmProcessBlock))
 
@@ -170,9 +182,14 @@ func buildEngine(id string) interface{} {
 		id = embeddedassets.DefaultID
 	}
 
-	p, err := embeddedassets.Preset(id)
-	if err != nil {
-		return err.Error()
+	p, ok := customPresets[id]
+	if !ok {
+		embedded, err := embeddedassets.Preset(id)
+		if err != nil {
+			return err.Error()
+		}
+
+		p = embedded
 	}
 
 	engine, cached := engines[id]
@@ -201,6 +218,52 @@ func buildEngine(id string) interface{} {
 	}
 
 	globalEngine = engine
+
+	return nil
+}
+
+// wasmAddPreset registers a preset document under an id the page chose, so
+// that a later setPreset with that id plays it.
+//
+// It decodes rather than stores the text, for two reasons. The document is
+// validated once, here, where the caller is still holding the error -- rather
+// than at the next strike, where a bad preset would be a silent instrument.
+// And it is the same preset.Decode the embedded assets go through, so a
+// registered sound is a sound in exactly the sense the built-in ones are,
+// schema upgrade included.
+//
+// Registering does not build an engine and does not touch the one that is
+// playing: this is a cheap call the page may make while a note is ringing, and
+// the expensive part happens on the setPreset that follows.
+func wasmAddPreset(_ js.Value, args []js.Value) interface{} {
+	if len(args) < 2 || args[0].Type() != js.TypeString || args[1].Type() != js.TypeString {
+		return "addPreset takes an id and a preset document"
+	}
+
+	id := args[0].String()
+	if id == "" {
+		return "missing preset id"
+	}
+
+	// An id that names an embedded preset would shadow it for the rest of the
+	// session, so the built-in sound the picker still offers would play
+	// something else. Refused rather than resolved, because the front end mints
+	// these ids and a collision is its bug, not the user's choice.
+	if _, err := embeddedassets.Preset(id); err == nil {
+		return "preset " + id + " is a built-in sound"
+	}
+
+	decoded, err := preset.Decode([]byte(args[1].String()), "custom preset "+id)
+	if err != nil {
+		return err.Error()
+	}
+
+	customPresets[id] = decoded
+
+	// A cached engine was built around the previous document under this id, so
+	// it has to go: keeping it would make a re-registration a no-op that plays
+	// the old sound with no way to tell.
+	delete(engines, id)
 
 	return nil
 }

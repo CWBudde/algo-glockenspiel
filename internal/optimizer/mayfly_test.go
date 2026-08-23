@@ -196,6 +196,47 @@ func TestMayflyOptimizerCountsProgressCallbacks(t *testing.T) {
 	}
 }
 
+func TestMayflyOptimizerReportsAcrossShortRounds(t *testing.T) {
+	// Twelve rounds of eight or nine iterations against a cadence of ten. The
+	// per-round counter never reaches ten, so gating on it reports nothing at
+	// all for the whole fit -- which is exactly what a browser watching the
+	// cost curve of a scheduled mayfly run used to see.
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}}}
+
+	var updates []Progress
+
+	epochs, restarts := 4, 8
+
+	_, err := (&MayflyOptimizer{
+		Population: 4,
+		Seed:       1,
+		Tuning: &MayflyTuning{
+			Schedule: &MayflySchedule{Epochs: &epochs, Restarts: &restarts},
+		},
+	}).Optimize(
+		context.Background(), func(x []float64) float64 { return square(x[0]) },
+		[]float64{5}, bounds, OptimizeOptions{
+			MaxIterations: 100,
+			ReportEvery:   10,
+			Report:        func(p Progress) { updates = append(updates, p) },
+		},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if len(updates) == 0 {
+		t.Fatal("a scheduled run reported no progress at all")
+	}
+
+	for i, update := range updates {
+		if update.OptimizerIterations%10 != 0 {
+			t.Fatalf("update %d reported at iteration %d, which is not a multiple of the cadence",
+				i, update.OptimizerIterations)
+		}
+	}
+}
+
 func TestMayflyOptimizerRejectsNilObjective(t *testing.T) {
 	opt := &MayflyOptimizer{}
 

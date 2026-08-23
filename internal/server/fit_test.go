@@ -365,6 +365,57 @@ func TestFitRunsAndProducesAPresetAndAudio(t *testing.T) {
 
 // A second start while a fit runs must be refused rather than served: there is
 // one slot, and quietly replacing the running job would lose it.
+// A mayfly iteration is a whole generation, so the simple backend's cadence of
+// ten would ask for the first progress report after some five hundred renders
+// -- longer than the default time budget, which is why the cost curve stayed
+// empty for a whole run. A client that names no cadence gets one per
+// generation instead.
+func TestMayflyDefaultsToReportingEveryGeneration(t *testing.T) {
+	handler := newFitServer(t).Handler()
+
+	fields := shortMayflyFit()
+	delete(fields, "reportEvery")
+
+	response := startFit(t, handler, fields)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("start = %d, want 202: %s", response.Code, response.Body.String())
+	}
+
+	final := waitForTerminalState(t, handler, 60*time.Second)
+	if final.State != "succeeded" {
+		t.Fatalf("state = %q, want succeeded", final.State)
+	}
+
+	if final.Iteration == 0 {
+		t.Fatal("the fit reported no progress at all: the mayfly cadence default did not apply")
+	}
+}
+
+// The simple backend keeps the cadence it always had, so a fit started from
+// the terminal and one started from the browser still agree.
+func TestSimpleKeepsTheSharedReportCadence(t *testing.T) {
+	handler := newFitServer(t).Handler()
+
+	fields := shortFit()
+	delete(fields, "reportEvery")
+
+	response := startFit(t, handler, fields)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("start = %d, want 202: %s", response.Code, response.Body.String())
+	}
+
+	final := waitForTerminalState(t, handler, 60*time.Second)
+	if final.State != "succeeded" {
+		t.Fatalf("state = %q, want succeeded", final.State)
+	}
+
+	// Five iterations at a cadence of ten: the run ends before the first
+	// report, which is the shipped behaviour for this backend.
+	if final.Iteration != 0 {
+		t.Fatalf("iteration = %d, want 0 at the default cadence of ten", final.Iteration)
+	}
+}
+
 func TestSecondStartIsRefusedWhileAFitRuns(t *testing.T) {
 	srv := newFitServer(t)
 	handler := srv.Handler()

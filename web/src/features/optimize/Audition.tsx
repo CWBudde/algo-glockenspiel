@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { getFitPreset } from "../../api/fit";
 import type { FitSnapshot } from "../../api/types";
 
 /** The server's render cap, `maxRenderSeconds` in internal/server/fit.go. */
@@ -8,6 +9,14 @@ const maxRenderSeconds = 60;
 export interface AuditionProps {
   snapshot: FitSnapshot | null;
   artifacts?: FitArtifacts | undefined;
+  /**
+   * Makes the fitted preset choosable in the Play tab and returns the name it
+   * was listed under. Absent leaves the button out, which is what a harness
+   * that mounts this component on its own gets.
+   */
+  onUseInPlay?:
+    | ((document: string, jobId: string | null) => string)
+    | undefined;
 }
 
 export interface FitArtifacts {
@@ -42,7 +51,7 @@ function defaultDuration(referenceSeconds: number): number {
  * long mayfly run wants to hear. Gating on the state instead would hide a
  * perfectly good preset behind a "canceled" label.
  */
-export function Audition({ snapshot, artifacts }: AuditionProps) {
+export function Audition({ snapshot, artifacts, onUseInPlay }: AuditionProps) {
   const hasPreset = snapshot?.hasPreset ?? false;
 
   const jobId = snapshot?.jobId ?? null;
@@ -71,6 +80,12 @@ export function Audition({ snapshot, artifacts }: AuditionProps) {
     message: string;
   } | null>(null);
   const [rendering, setRendering] = useState(false);
+  // Stamped with the job for the same reason the error is: a new fit's results
+  // must not carry the previous one's confirmation.
+  const [added, setAdded] = useState<{
+    jobId: string | null;
+    label: string;
+  } | null>(null);
 
   const durationText =
     chosen !== null && chosen.jobId === jobId
@@ -171,6 +186,51 @@ export function Audition({ snapshot, artifacts }: AuditionProps) {
     });
   };
 
+  /**
+   * fittedDocument reads the preset back as text, from whichever backend
+   * produced it.
+   *
+   * Both paths already exist: the browser worker hands over the encoded bytes
+   * the download uses, and the service answers api/fit/preset with the document
+   * as JSON. Neither is a new endpoint, and the preset is deliberately not kept
+   * in page state -- it is fetched when it is wanted, so a long fit does not
+   * carry a document nobody asked for through every snapshot.
+   *
+   * The service's answer is re-encoded rather than fetched as text, because
+   * getFitPreset is the typed reader this front end already has for it. What
+   * the engine needs is a preset document, and a decoded-then-encoded one is
+   * the same document: every field survives, and Go validates it either way.
+   */
+  const fittedDocument = async (): Promise<string> => {
+    if (artifacts === undefined) {
+      return JSON.stringify(await getFitPreset());
+    }
+
+    return (await artifacts.preset()).text();
+  };
+
+  const sendToPlayTab = async () => {
+    if (onUseInPlay === undefined) {
+      return;
+    }
+
+    setArtifactError(null);
+
+    try {
+      const label = onUseInPlay(await fittedDocument(), jobId);
+      setAdded({ jobId, label });
+    } catch (cause) {
+      setAdded(null);
+      setArtifactError({
+        jobId,
+        message:
+          cause instanceof Error
+            ? cause.message
+            : "The fitted preset could not be added to the Play tab.",
+      });
+    }
+  };
+
   const downloadPreset = async () => {
     if (artifacts === undefined) {
       return;
@@ -253,7 +313,25 @@ export function Audition({ snapshot, artifacts }: AuditionProps) {
             Download preset JSON
           </button>
         )}
+
+        {onUseInPlay !== undefined && (
+          <button type="button" onClick={() => void sendToPlayTab()}>
+            Use in Play tab
+          </button>
+        )}
       </div>
+
+      {added?.jobId === jobId && (
+        /*
+          Polite rather than assertive, and a status rather than an alert: the
+          sound has been added, not switched to, so nothing the user is doing
+          has changed underneath them.
+        */
+        <p className="optimize-note" role="status">
+          Added to the Play tab as “{added.label}”. It stays until the page is
+          reloaded.
+        </p>
+      )}
 
       <p id="audition-duration-hint" className="optimize-note">
         Longer than 0 and at most {maxRenderSeconds} seconds; the server refuses

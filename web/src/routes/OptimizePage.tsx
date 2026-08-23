@@ -30,9 +30,15 @@ type StartLimit = { jobId: string; maxIterations: number };
 export interface OptimizePageProps {
   api: ApiProbe;
   wasm: WasmFitWorker;
+  /**
+   * Registers a fitted preset as a sound the Play tab can choose, and returns
+   * the name it was listed under. It lives in App, which owns both the engine
+   * and the session's list of fitted sounds.
+   */
+  onUseInPlay: (document: string, jobId: string | null) => string;
 }
 
-export function OptimizePage({ api, wasm }: OptimizePageProps) {
+export function OptimizePage({ api, wasm, onUseInPlay }: OptimizePageProps) {
   const { availability, version } = api;
   const [serverSnapshot, setServerSnapshot] = useState<FitSnapshot | null>(
     null,
@@ -185,6 +191,7 @@ export function OptimizePage({ api, wasm }: OptimizePageProps) {
             jobId={snapshot?.jobId ?? null}
             maxIterations={maxIterations}
             onSnapshot={onSnapshot}
+            onUseInPlay={onUseInPlay}
           />
         </div>
       ) : null}

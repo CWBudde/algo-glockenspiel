@@ -133,6 +133,18 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 		settings.MayflyVariant = ""
 	}
 
+	// A mayfly iteration is a whole generation -- population, offspring,
+	// mutants and elites, measured at roughly 47.7 objective evaluations at a
+	// population of ten -- while a simple iteration is about one. The default
+	// cadence of ten therefore means "report after ten renders" for one backend
+	// and "report after five hundred" for the other, which is long enough that
+	// a default 30 s budget ends before the first report and the cost curve
+	// stays empty for the whole run. The default follows the backend; a cadence
+	// the client actually asked for is left exactly as it asked for it.
+	if settings.Optimizer == mayflyOptimizerName && strings.TrimSpace(request.FormValue("reportEvery")) == "" {
+		settings.ReportEvery = defaultMayflyReportEvery
+	}
+
 	// The metric and the optimizer name are validated by the packages that own
 	// their vocabularies -- optimizer.ParseMetric and selectOptimizer -- rather
 	// than by a second list here that could fall out of step with them.

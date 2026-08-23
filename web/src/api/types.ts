@@ -282,6 +282,29 @@ export const DEFAULT_FIT_REQUEST: FitRequestFields = {
 };
 
 /**
+ * The progress cadence a Mayfly fit gets when nobody chooses one, mirroring
+ * `defaultMayflyReportEvery` in internal/server/fit.go.
+ *
+ * A Mayfly iteration is a whole generation -- population, offspring, mutants
+ * and elites, measured at roughly 47.7 objective evaluations at a population of
+ * ten -- while a simple iteration is about one evaluation. `reportEvery: 10`
+ * therefore means "after ten renders" for the simple backend and "after some
+ * five hundred" for Mayfly, which is longer than the default time budget: the
+ * run ends before it has reported once and the cost curve stays empty.
+ */
+export const MAYFLY_DEFAULT_REPORT_EVERY = 1;
+
+/**
+ * The default cadence for a backend, so the form can follow the optimizer the
+ * way the server does.
+ */
+export function defaultReportEvery(optimizer: OptimizerName): number {
+  return optimizer === "mayfly"
+    ? MAYFLY_DEFAULT_REPORT_EVERY
+    : DEFAULT_FIT_REQUEST.reportEvery;
+}
+
+/**
  * The server's own limits, from internal/server/fit.go and
  * internal/server/params.go. They are mirrored here so a value that cannot be
  * accepted is refused before it is uploaded, not after.

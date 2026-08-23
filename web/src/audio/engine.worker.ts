@@ -57,6 +57,17 @@ let rendering = false;
 let presetId = "";
 
 /**
+ * Preset documents the page has handed over but the module has not been given
+ * yet.
+ *
+ * They queue for the same reason the chosen id does: the Optimize tab can
+ * produce a preset on a page that has never made a sound, so the module may
+ * not exist when one arrives. Applied in arrival order, and before init, so an
+ * id registered here is resolvable by the time the first engine is built.
+ */
+let pendingRegistrations: { presetId: string; document: string }[] = [];
+
+/**
  * The buffers not currently in flight. postMessage transfers a buffer away and
  * detaches it here, so a block is only rendered when there is a free one to
  * render into; a buffer coming back is therefore the credit that asks for the
@@ -137,6 +148,29 @@ function interleavedFrames(
   return cache.view;
 }
 
+/**
+ * flushRegistrations hands every queued document to the module.
+ *
+ * A rejected document is reported and dropped rather than retried: it is
+ * rejected by preset.Decode, which is deterministic, so a retry would report
+ * the same failure on every later flush.
+ */
+function flushRegistrations(): void {
+  if (api === null || pendingRegistrations.length === 0) {
+    return;
+  }
+
+  const queued = pendingRegistrations;
+  pendingRegistrations = [];
+
+  for (const registration of queued) {
+    const failure = api.addPreset(registration.presetId, registration.document);
+    if (typeof failure === "string" && failure.length > 0) {
+      post({ type: "error", message: failure });
+    }
+  }
+}
+
 function post(event: EngineEvent): void {
   scope.postMessage(event);
 }
@@ -171,6 +205,7 @@ async function load(baseURL: string): Promise<void> {
 
   api = loaded.api;
   memory = loaded.memory;
+  flushRegistrations();
   post({ type: "loaded" });
 }
 
@@ -227,6 +262,10 @@ function startRendering(sampleRate: number, port: MessagePort): void {
 
     return;
   }
+
+  // Before init rather than after: presetId may name a document registered
+  // while the module was still loading, and init resolves it.
+  flushRegistrations();
 
   const initError = api.init(sampleRate, presetId);
   if (typeof initError === "string" && initError.length > 0) {
@@ -289,6 +328,16 @@ scope.onmessage = (event: MessageEvent<EngineCommand>) => {
       // remembers the value across an engine rebuild the same way it remembers
       // the master gain, so a swap does not silently drop the room.
       api?.setReverb(command.mix);
+      break;
+
+    case "registerPreset":
+      // No TransportPause and no pump(): nothing is built here, so the render
+      // loop never goes quiet. The gap belongs to the setPreset that follows.
+      pendingRegistrations.push({
+        presetId: command.presetId,
+        document: command.document,
+      });
+      flushRegistrations();
       break;
 
     case "setPreset": {

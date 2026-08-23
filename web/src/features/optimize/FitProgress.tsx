@@ -31,6 +31,13 @@ export interface FitProgressProps {
   events?: FitEvents | undefined;
   /** In-memory artifacts from the browser worker; absent for the HTTP service. */
   artifacts?: FitArtifacts | undefined;
+  /**
+   * Makes the fitted preset playable in the Play tab and returns the name it
+   * was listed under. Absent leaves the button out entirely.
+   */
+  onUseInPlay?:
+    | ((document: string, jobId: string | null) => string)
+    | undefined;
 }
 
 /**
@@ -48,6 +55,7 @@ export function FitProgress({
   onSnapshot,
   events,
   artifacts,
+  onUseInPlay,
 }: FitProgressProps) {
   const serverEvents = useFitEvents(events === undefined ? jobId : null);
   const { snapshot, points, revision, streaming, streamError } =
@@ -97,7 +105,11 @@ export function FitProgress({
         )}
       </div>
 
-      <Audition snapshot={snapshot} artifacts={artifacts} />
+      <Audition
+        snapshot={snapshot}
+        artifacts={artifacts}
+        onUseInPlay={onUseInPlay}
+      />
     </section>
   );
 }

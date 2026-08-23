@@ -93,8 +93,17 @@ export function FitStatus({
               only `optimizerIterations` is the backend's own count and the one
               `maxIterations` bounds. Showing either without the other invites
               reading a report count as progress towards the limit.
+
+              The label follows the backend, because the unit does: a mayfly
+              iteration is one generation of the whole swarm -- roughly fifty
+              renders -- so "3 of 100" is far more work than the same numbers
+              mean under the simple optimizer.
             */}
-            <dt>Optimizer iterations</dt>
+            <dt>
+              {snapshot.optimizer === "mayfly"
+                ? "Generations"
+                : "Optimizer iterations"}
+            </dt>
             <dd>
               {snapshot.optimizerIterations}
               {maxIterations === null ? "" : ` of ${String(maxIterations)}`}

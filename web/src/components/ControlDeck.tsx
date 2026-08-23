@@ -1,4 +1,5 @@
 import { SOUND_PRESETS } from "../api/presets.generated";
+import type { FittedPreset } from "../lib/fittedPreset";
 import { Dial } from "./Dial";
 import { StatusPanel } from "./StatusPanel";
 
@@ -6,9 +7,15 @@ export interface ControlDeckProps {
   /** Master output level as a percentage, 10..100. */
   gain: number;
   onGainChange: (gain: number) => void;
-  /** The id of the built-in sound the engine plays. */
+  /** The id of the sound the engine plays: a built-in one, or a fitted one. */
   presetId: string;
   onPresetChange: (presetId: string) => void;
+  /**
+   * Sounds the Optimize tab produced during this session. They are listed
+   * apart from the built-ins because they are not the same kind of thing: a
+   * built-in ships with the app, and these live until the page is reloaded.
+   */
+  fittedPresets: readonly FittedPreset[];
   /** Strike velocity, 1..127, the MIDI range the engine takes. */
   velocity: number;
   onVelocityChange: (velocity: number) => void;
@@ -36,6 +43,7 @@ export function ControlDeck({
   onGainChange,
   presetId,
   onPresetChange,
+  fittedPresets,
   velocity,
   onVelocityChange,
   reverb,
@@ -59,6 +67,16 @@ export function ControlDeck({
               {preset.label}
             </option>
           ))}
+
+          {fittedPresets.length > 0 && (
+            <optgroup label="Fitted this session">
+              {fittedPresets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.label}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
       </div>
 

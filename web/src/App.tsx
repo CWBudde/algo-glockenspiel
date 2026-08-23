@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DEFAULT_SOUND_PRESET_ID } from "./api/presets.generated";
 import { useAudioEngine } from "./audio/useAudioEngine";
@@ -6,6 +6,7 @@ import { useEngineWorker } from "./audio/useEngineWorker";
 import { Topbar } from "./components/Topbar";
 import { OptimizePage } from "./routes/OptimizePage";
 import { PlayPage } from "./routes/PlayPage";
+import { readFittedPreset, type FittedPreset } from "./lib/fittedPreset";
 import { useTheme } from "./lib/theme";
 import { parseRoute, type Route } from "./routes/routes";
 import { useApiAvailable } from "./features/optimize/useApiAvailable";
@@ -35,7 +36,13 @@ export function App() {
   const [gainPercent, setGainPercent] = useState(70);
   const [presetId, setPresetId] = useState(DEFAULT_SOUND_PRESET_ID);
   const [reverbPercent, setReverbPercent] = useState(DEFAULT_REVERB_PERCENT);
+  const [fittedPresets, setFittedPresets] = useState<FittedPreset[]>([]);
   const theme = useTheme();
+
+  // Numbers the registrations rather than the results: the fit slot is reused,
+  // so a job id is not unique across a session, and two entries sharing an id
+  // would be one entry the picker could not tell apart.
+  const fittedCount = useRef(0);
 
   useEffect(() => {
     const onHashChange = () => {
@@ -70,6 +77,56 @@ export function App() {
     engine.client?.setReverb(reverbPercent / 100);
   }, [engine.client, reverbPercent]);
 
+  /**
+   * Makes an optimizer result playable, and returns the name it was given.
+   *
+   * The engine is told once, here, and the sound is not switched to: someone
+   * who has just fitted a preset is watching the Optimize tab, and rebuilding
+   * the engine underneath them would stop whatever is ringing for a sound they
+   * have not asked to hear yet. Choosing it in the picker does that, exactly as
+   * choosing a built-in one does.
+   *
+   * The list is state in App for the same reason presetId is: Optimize
+   * unmounts the play surface, and a sound that vanished when the user changed
+   * tab would be a sound they could never select.
+   */
+  const addFittedPreset = useCallback(
+    (document: string, jobId: string | null): string => {
+      fittedCount.current += 1;
+
+      const fitted = readFittedPreset(document, jobId, fittedCount.current);
+
+      // Registration is a message, so a client that does not exist yet is not
+      // a failure: useEngineWorker publishes the client as soon as the module
+      // is up, and the effect below replays every registration onto it.
+      engine.client?.registerPreset(fitted.id, fitted.document);
+      setFittedPresets((previous) => [...previous, fitted]);
+
+      return fitted.label;
+    },
+    [engine.client],
+  );
+
+  // Replays the session's presets onto a client that appeared after they were
+  // added. The worker keeps its own queue for documents that arrive before the
+  // module loads, so this is only about the window before `client` is
+  // published; registering the same id twice is a decode and a map write, and
+  // the module drops the engine cached under that id either way.
+  useEffect(() => {
+    const client = engine.client;
+    if (client === null) {
+      return;
+    }
+
+    for (const fitted of fittedPresets) {
+      client.registerPreset(fitted.id, fitted.document);
+    }
+    // Deliberately not keyed on fittedPresets: addFittedPreset registers each
+    // new one as it arrives, and re-running this on every addition would
+    // re-register the whole list each time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engine.client]);
+
   const fitApi = useApiAvailable(route === "optimize");
   const wasmFit = useWasmFitWorker(
     route === "optimize" && fitApi.availability === "unavailable",
@@ -91,11 +148,16 @@ export function App() {
           onGainChange={setGainPercent}
           presetId={presetId}
           onPresetChange={setPresetId}
+          fittedPresets={fittedPresets}
           reverb={reverbPercent}
           onReverbChange={setReverbPercent}
         />
       ) : (
-        <OptimizePage api={fitApi} wasm={wasmFit} />
+        <OptimizePage
+          api={fitApi}
+          wasm={wasmFit}
+          onUseInPlay={addFittedPreset}
+        />
       )}
     </main>
   );

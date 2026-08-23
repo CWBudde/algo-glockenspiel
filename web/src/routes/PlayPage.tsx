@@ -4,6 +4,7 @@ import type { AudioEngine } from "../audio/useAudioEngine";
 import type { EngineWorker } from "../audio/useEngineWorker";
 import { ControlDeck } from "../components/ControlDeck";
 import { Playfield } from "../components/Playfield";
+import type { FittedPreset } from "../lib/fittedPreset";
 import { computeKeyMap } from "../lib/layout";
 import { useNoteActivation } from "../lib/useNoteActivation";
 import { applyWoodTexture } from "../lib/wood";
@@ -36,9 +37,11 @@ export interface PlayPageProps {
   /** Master output as a percentage; the engine takes 0.1..1.0. */
   gain: number;
   onGainChange: (gain: number) => void;
-  /** The built-in sound the engine plays, held in App so it survives a tab switch. */
+  /** The sound the engine plays, held in App so it survives a tab switch. */
   presetId: string;
   onPresetChange: (presetId: string) => void;
+  /** The sounds the Optimize tab has contributed this session, if any. */
+  fittedPresets: readonly FittedPreset[];
   /** Reverb mix as a percentage; the engine takes 0..1. */
   reverb: number;
   onReverbChange: (reverb: number) => void;
@@ -51,6 +54,7 @@ export function PlayPage({
   onGainChange,
   presetId,
   onPresetChange,
+  fittedPresets,
   reverb,
   onReverbChange,
 }: PlayPageProps) {
@@ -155,6 +159,7 @@ export function PlayPage({
         onGainChange={onGainChange}
         presetId={presetId}
         onPresetChange={onPresetChange}
+        fittedPresets={fittedPresets}
         velocity={velocity}
         onVelocityChange={setVelocity}
         reverb={reverb}

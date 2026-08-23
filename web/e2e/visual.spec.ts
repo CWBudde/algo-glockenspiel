@@ -1519,6 +1519,69 @@ test("Optimize keeps a canceled fit with a preset usable in Results", async ({
   ).toHaveAttribute("href", "api/fit/preset");
 });
 
+test("a fitted preset becomes a sound the Play tab can choose", async ({
+  page,
+}) => {
+  const finished = fitSnapshot({
+    state: "succeeded",
+    iteration: 4,
+    optimizerIterations: 40,
+    evaluations: 88,
+    currentCost: 0.2,
+    bestCost: 0.1,
+    elapsedMs: 4800,
+    stopReason: "FunctionConvergence",
+    finishedAt: "2026-08-22T12:00:05Z",
+    hasPreset: true,
+  });
+
+  await installStableEngine(page);
+  await installFitScenario(page, finished, {
+    name: "done",
+    snapshot: finished,
+  });
+
+  // Registered after installFitScenario so it wins the match: the scenario's
+  // "**/api/fit" covers the status endpoint only, and this is the document the
+  // button reads back.
+  await page.route("**/api/fit/preset", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        version: 2,
+        name: "Fitted Bar",
+        note: 69,
+        parameters: {},
+      }),
+    });
+  });
+
+  await page.goto("/#/optimize");
+
+  const results = page.getByRole("region", { name: "Results" });
+  await results.getByRole("button", { name: "Use in Play tab" }).click();
+  await expect(results.getByRole("status")).toContainText(
+    "Added to the Play tab",
+  );
+
+  // Clicked rather than navigated: a fresh goto would reload the document, and
+  // a session preset lives exactly as long as the document does.
+  const tabs = page.getByRole("navigation", { name: "Sections" });
+  await tabs.getByRole("link", { name: "Play" }).click();
+
+  const sound = page
+    .getByRole("region", { name: "Performance controls" })
+    .getByRole("combobox", { name: "Sound" });
+
+  await expect(sound.locator("optgroup")).toHaveAttribute(
+    "label",
+    "Fitted this session",
+  );
+
+  await sound.selectOption({ label: "Fitted Bar · job-visual" });
+  await expect(sound).toHaveValue("fitted-1");
+});
+
 test("Optimize recovers the active fit after a start conflict", async ({
   page,
 }) => {
