@@ -36,9 +36,19 @@ export interface PlayPageProps {
   /** Master output as a percentage; the engine takes 0.1..1.0. */
   gain: number;
   onGainChange: (gain: number) => void;
+  /** The built-in sound the engine plays, held in App so it survives a tab switch. */
+  presetId: string;
+  onPresetChange: (presetId: string) => void;
 }
 
-export function PlayPage({ engine, audio, gain, onGainChange }: PlayPageProps) {
+export function PlayPage({
+  engine,
+  audio,
+  gain,
+  onGainChange,
+  presetId,
+  onPresetChange,
+}: PlayPageProps) {
   const [velocity, setVelocity] = useState(96);
   const { activeNotes, activate } = useNoteActivation();
 
@@ -138,6 +148,8 @@ export function PlayPage({ engine, audio, gain, onGainChange }: PlayPageProps) {
       <ControlDeck
         gain={gain}
         onGainChange={onGainChange}
+        presetId={presetId}
+        onPresetChange={onPresetChange}
         velocity={velocity}
         onVelocityChange={setVelocity}
         status={status}

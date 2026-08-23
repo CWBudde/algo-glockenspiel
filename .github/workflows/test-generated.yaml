@@ -27,3 +27,10 @@ jobs:
       # generated, and this job fails if the checked-in mirror has drifted.
       - name: Verify the generated Mayfly tuning table
         run: go run ./cmd/gen-mayfly-tuning --check
+
+      # The built-in sound list is generated for the same reasons, from the
+      # documents in assets/presets: the Play deck renders long before the WASM
+      # module loads, so a picker fed from the engine would be empty on first
+      # paint.
+      - name: Verify the generated sound list
+        run: go run ./cmd/gen-presets --check

@@ -19,7 +19,7 @@ web/
   src/
     App.tsx           the tab bar, the hash router, and the audio engine
     routes/           PlayPage, OptimizePage
-    components/       Topbar, PresetStrip, ControlRail, Dial, Rack, Keyboard
+    components/       Topbar, ControlDeck, Dial, StatusPanel, Playfield, Rack, Keyboard
     audio/            the engine worker, the worklet, and the AudioContext graph
     features/optimize/  the fit form, the event stream, the chart, the audition
     api/              the typed fit-API client and the wire types
@@ -64,9 +64,37 @@ sends including the ones no component reads yet.
 
 Each Go module publishes exactly one global, `glockenspielWasm`, inside the
 worker that owns it. `cmd/glockenspiel-wasm` supplies `init`, `noteOn`,
-`setMasterGain` and `processBlock`; `cmd/glockenspiel-fit-wasm` supplies
-`fitStart`, `fitCancel`, `fitPreset` and `fitRender`. The workers have separate
-global scopes, and one namespace per module makes ownership visible at a glance.
+`setMasterGain`, `setPreset` and `processBlock`; `cmd/glockenspiel-fit-wasm`
+supplies `fitStart`, `fitCancel`, `fitPreset` and `fitRender`. The workers have
+separate global scopes, and one namespace per module makes ownership visible at
+a glance.
+
+### Changing the sound
+
+`setPreset` rebuilds the engine around another embedded preset rather than
+retuning the one that exists. `RealtimeEngine` has no preset API, and giving it
+one would mean reconfiguring oscillator banks underneath a running audio
+callback for a change someone made once, by hand, in a menu. A rebuild costs a
+level-calibration sweep -- 61 short renders -- and cannot leave a half-swapped
+bar behind. Notes ringing at that moment stop, which is what a patch change does
+on any sampler. The master gain is replayed onto the new engine in Go, because
+nothing on the page knows the volume changed and nothing would put it back.
+
+The choice reaches the module twice over, which is deliberate. `init` takes the
+preset id as an optional second argument and `setPreset` takes it on its own,
+because the picker is reachable long before the engine exists: an `AudioContext`
+cannot be created until the first user gesture, so a sound chosen on a freshly
+loaded page has to survive until the first strike. `engine.worker.ts` holds the
+last id and hands it to `init`, and only applies it live once `init` has run.
+
+The option list does **not** come from the module. `cmd/gen-presets` writes
+`src/api/presets.generated.ts` from the documents in `assets/presets`, checked
+by `just check-presets` in CI, for the same reasons the Mayfly tuning table is
+generated: the deck renders long before the module finishes loading, and a
+static host has no service to ask, so a picker fed from the engine would be
+empty exactly when someone first looks at it -- and empty in the Playwright
+baselines. An unknown id is still refused in Go, so the generated list is a
+convenience rather than the authority.
 
 ### The ready handshake
 

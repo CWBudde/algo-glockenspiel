@@ -45,6 +45,17 @@ let consumer: MessagePort | null = null;
 let rendering = false;
 
 /**
+ * The built-in sound the engine should play. Empty means the module's own
+ * default, so the worker never has to name it.
+ *
+ * It is remembered rather than forwarded straight through, because the picker
+ * is reachable before there is an engine to tell: the AudioContext only exists
+ * after the first strike, so a sound chosen on a freshly loaded page has to
+ * survive until init runs. Once init has run, a change is applied immediately.
+ */
+let presetId = "";
+
+/**
  * The buffers not currently in flight. postMessage transfers a buffer away and
  * detaches it here, so a block is only rendered when there is a free one to
  * render into; a buffer coming back is therefore the credit that asks for the
@@ -216,7 +227,7 @@ function startRendering(sampleRate: number, port: MessagePort): void {
     return;
   }
 
-  const initError = api.init(sampleRate);
+  const initError = api.init(sampleRate, presetId);
   if (typeof initError === "string" && initError.length > 0) {
     post({ type: "error", message: initError });
 
@@ -270,6 +281,25 @@ scope.onmessage = (event: MessageEvent<EngineCommand>) => {
     case "setMasterGain":
       api?.setMasterGain(command.gain);
       break;
+
+    case "setPreset": {
+      presetId = command.presetId;
+
+      // Before the engine exists there is nothing to swap and nothing to
+      // report: the id above is what init will be given. Applying it twice --
+      // here and again at init -- would pay for a calibration sweep the first
+      // strike is about to pay for anyway.
+      if (!rendering || api === null) {
+        break;
+      }
+
+      const presetError = api.setPreset(presetId);
+      if (typeof presetError === "string" && presetError.length > 0) {
+        post({ type: "error", message: presetError });
+      }
+
+      break;
+    }
 
     case "stop":
       stopRendering();

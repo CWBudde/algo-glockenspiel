@@ -180,13 +180,48 @@ h1 {
 
 .control-deck {
   display: grid;
-  grid-template-columns: auto auto minmax(240px, 1fr);
+  grid-template-columns: minmax(0, auto) auto auto minmax(240px, 1fr);
   align-items: center;
   gap: var(--space-4xl);
   padding: var(--space-lg) var(--space-4xl);
   border-bottom: 1px solid rgba(72, 55, 39, 0.18);
   background: #eee7dc;
   box-shadow: 0 4px 12px rgba(49, 37, 28, 0.06);
+}
+
+/*
+ * A labelled control that is not a dial. The label borrows the dial label's
+ * typography so the deck reads as one row of controls, and the select borrows
+ * the fit form's, because there is exactly one way a select looks here.
+ */
+.deck-field {
+  display: grid;
+  gap: var(--space-sm);
+  min-width: 0;
+  color: var(--charcoal);
+}
+
+.deck-field label {
+  font-family: var(--font-display);
+  font-size: var(--type-title-md);
+  letter-spacing: 0.04em;
+}
+
+/*
+ * 44px is the floor the visual suite enforces on every tabbable control at
+ * narrow widths, and it is enforced here rather than only in the media query so
+ * that the picker is the same size to a finger whatever the viewport is doing.
+ */
+.deck-field select {
+  max-width: 100%;
+  min-height: 44px;
+  padding: 7px 9px;
+  border: 1px solid rgba(85, 52, 24, 0.45);
+  border-radius: var(--radius-control);
+  background: var(--parchment-light);
+  color: var(--charcoal);
+  font: inherit;
+  font-size: var(--type-control);
 }
 
 .control-deck-status {
@@ -681,6 +716,27 @@ h1 {
     padding: var(--space-xs);
   }
 
+  /*
+   * The picker takes the full width of the narrow deck rather than half of it:
+   * a preset name is a phrase, and squeezed into one of two columns it either
+   * wraps under its own label or pushes the deck past the viewport, which
+   * nothing on this page is allowed to do.
+   */
+  .deck-field {
+    grid-column: 1 / -1;
+    gap: 2px;
+  }
+
+  .deck-field label {
+    font-size: 0.9rem;
+    line-height: 1;
+  }
+
+  .deck-field select {
+    padding: 4px 7px;
+    font-size: 0.78rem;
+  }
+
   .control-deck .dial-control {
     justify-self: center;
     gap: 2px;
@@ -920,6 +976,7 @@ h1 {
 .piano-key:focus-visible,
 .dial-input:focus-visible + .dial-face,
 .optimize-panel a:focus-visible,
+.deck-field select:focus-visible,
 .fit-field input:focus-visible,
 .fit-field select:focus-visible,
 .fit-check input:focus-visible,

@@ -329,6 +329,13 @@ Goal: fast first paint, usable by keyboard, and no controls that lie.
 - [x] Wire or remove the inert controls: removed with the rewrite. The hamburger, the
       one-hardcoded-option preset select and the disabled Save/Load buttons are all gone.
       Deleting beats shipping controls that lie.
+
+      Superseded for the preset select: it is back in the performance deck, with two
+      real sounds behind it. `assets/presets` is embedded as a directory, so adding a
+      preset is adding a file; `cmd/gen-presets` mirrors the list into the browser and
+      CI fails on a diff; and `cmd/glockenspiel-wasm` grew `setPreset`, which rebuilds
+      the engine around the chosen bar and replays the master gain onto it.
+
 - [x] Fix the `<h1>`, which still read "Algo Glockenspiel VST3" on a page that is not a VST3.
       It reads "Algo Glockenspiel".
 

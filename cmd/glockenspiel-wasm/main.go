@@ -30,6 +30,21 @@ const (
 
 var globalEngine *synth.RealtimeEngine
 
+// globalMasterGain remembers the gain the page last asked for.
+//
+// Switching presets builds a new engine, and a new engine starts at its own
+// default gain. Without this the volume would silently jump back to whatever
+// that default is every time someone changed the sound -- a state the UI has no
+// way to observe and would not correct, because from its side nothing about the
+// volume changed. Replaying the gain in Go rather than asking the worker to
+// re-send it keeps the two commands independent: a setPreset that arrives while
+// no setMasterGain has ever been sent still lands on the engine default.
+var globalMasterGain = float32(-1)
+
+// globalSampleRate is what init was given, kept so setPreset can rebuild at the
+// same rate rather than making the page repeat itself.
+var globalSampleRate int
+
 func main() {
 	done := make(chan struct{})
 
@@ -37,6 +52,7 @@ func main() {
 	api.Set("init", js.FuncOf(wasmInit))
 	api.Set("noteOn", js.FuncOf(wasmNoteOn))
 	api.Set("setMasterGain", js.FuncOf(wasmSetMasterGain))
+	api.Set("setPreset", js.FuncOf(wasmSetPreset))
 	api.Set("processBlock", js.FuncOf(wasmProcessBlock))
 
 	// The js.Func values above are never released, and no Go reference to them
@@ -79,23 +95,73 @@ func signalReady(api js.Value) {
 	ready.Invoke(api)
 }
 
+// wasmInit builds the engine. The optional second argument names a built-in
+// preset; an absent or empty one is the default, which is what every caller
+// written before presets could be chosen still passes.
 func wasmInit(_ js.Value, args []js.Value) interface{} {
 	if len(args) < 1 {
 		return "missing sample rate"
 	}
 
 	sampleRate := args[0].Int()
-	p, err := embeddedassets.DefaultPreset()
+
+	id := ""
+	if len(args) > 1 && args[1].Type() == js.TypeString {
+		id = args[1].String()
+	}
+
+	globalSampleRate = sampleRate
+
+	return buildEngine(id)
+}
+
+// wasmSetPreset swaps the sound the engine plays.
+//
+// It rebuilds the engine rather than reconfiguring the one that exists.
+// RealtimeEngine has no preset API, and giving it one means retuning oscillator
+// banks underneath a running audio callback for a change the user made once, by
+// hand, in a menu. Rebuilding costs a calibration sweep -- 61 short renders --
+// and cannot leave a half-swapped bar behind. Notes ringing at the moment of
+// the switch stop, which is the honest reading of "this is a different bar now"
+// and the same thing that happens when a sampler changes patch.
+//
+// There is no race with processBlock: the worker that owns this module is a
+// single JS thread, so nothing else can be inside the engine while this runs.
+func wasmSetPreset(_ js.Value, args []js.Value) interface{} {
+	if len(args) < 1 {
+		return "missing preset id"
+	}
+
+	if globalSampleRate <= 0 {
+		return "engine is not initialised"
+	}
+
+	return buildEngine(args[0].String())
+}
+
+// buildEngine replaces globalEngine, or leaves it untouched and reports why.
+//
+// Leaving it untouched matters: an unknown id has to be a message on a silent
+// instrument that still plays its old sound, not a null engine that swallows
+// every later noteOn.
+func buildEngine(id string) interface{} {
+	p, err := embeddedassets.Preset(id)
 	if err != nil {
 		return err.Error()
 	}
 
-	s, err := synth.NewSynthesizer(p, sampleRate)
+	s, err := synth.NewSynthesizer(p, globalSampleRate)
 	if err != nil {
 		return err.Error()
 	}
 
-	globalEngine = synth.NewRealtimeEngine(s)
+	engine := synth.NewRealtimeEngine(s)
+	if globalMasterGain >= 0 {
+		engine.SetMasterGain(globalMasterGain)
+	}
+
+	globalEngine = engine
+
 	return nil
 }
 
@@ -113,7 +179,9 @@ func wasmSetMasterGain(_ js.Value, args []js.Value) interface{} {
 		return nil
 	}
 
-	globalEngine.SetMasterGain(float32(args[0].Float()))
+	globalMasterGain = float32(args[0].Float())
+	globalEngine.SetMasterGain(globalMasterGain)
+
 	return nil
 }
 
