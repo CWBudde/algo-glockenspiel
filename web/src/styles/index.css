@@ -638,7 +638,7 @@ h1 {
 
 .instrument-stage {
   position: relative;
-  min-height: 430px;
+  min-height: 450px;
 }
 
 .rack-wrap {
@@ -659,7 +659,7 @@ h1 {
 
 .rack {
   position: relative;
-  min-height: 382px;
+  min-height: 402px;
   border-radius: 22px;
   background:
     var(--rack-tint),
@@ -718,7 +718,7 @@ h1 {
 }
 
 .note-lane-naturals {
-  top: 146px;
+  top: 166px;
 }
 
 .bar {
@@ -933,7 +933,7 @@ h1 {
 
 @media (max-width: 1080px) {
   .instrument-stage {
-    min-height: 410px;
+    min-height: 430px;
   }
 }
 
@@ -1059,7 +1059,7 @@ h1 {
   }
 
   .instrument-stage {
-    min-height: 330px;
+    min-height: 350px;
   }
 
   .rack-wrap {
@@ -1067,7 +1067,7 @@ h1 {
   }
 
   .rack {
-    min-height: 320px;
+    min-height: 340px;
     border-radius: var(--radius-group);
   }
 
@@ -1083,7 +1083,7 @@ h1 {
   }
 
   .note-lane-naturals {
-    top: 112px;
+    top: 132px;
   }
 
   .note-lane {

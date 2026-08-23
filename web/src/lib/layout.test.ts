@@ -70,28 +70,39 @@ describe("rack depth geometry", () => {
     );
   });
 
-  it.each<BarKind>(["natural", "accidental"])(
-    "centers the %s row so its top and bottom form a symmetric trapezoid",
-    (kind) => {
-      const geometries = row(kind).map((entry) =>
+  it.each<[BarKind, 0 | 1]>([
+    ["natural", 0],
+    ["accidental", 1],
+  ])(
+    "runs the %s row's anchored rail straight and doubles the other's slope",
+    (kind, anchor) => {
+      const entries = row(kind);
+      const geometries = entries.map((entry) =>
         computeBarGeometry(entry, kind),
       );
+      const opposite = anchor === 0 ? 1 : 0;
+
+      const anchored = geometries.map(({ mountCenterYs }) =>
+        mountCenterYs[anchor].toFixed(6),
+      );
+      expect(new Set(anchored).size).toBe(1);
 
       for (let index = 1; index < geometries.length; index += 1) {
-        expect(geometries[index].top).toBeGreaterThan(
-          geometries[index - 1].top,
-        );
-        expect(geometries[index].baseline).toBeLessThan(
-          geometries[index - 1].baseline,
-        );
+        const previous = geometries[index - 1].mountCenterYs[opposite];
+        const current = geometries[index].mountCenterYs[opposite];
+        if (anchor === 0) {
+          expect(current).toBeLessThan(previous);
+        } else {
+          expect(current).toBeGreaterThan(previous);
+        }
       }
 
-      const first = geometries[0];
-      const last = geometries.at(-1)!;
-      expect(last.top - first.top).toBeCloseTo(first.baseline - last.baseline);
-      expect(
-        new Set(geometries.map(({ top, baseline }) => top + baseline)).size,
-      ).toBe(1);
+      const lengthDrop = entries[0].length - entries.at(-1)!.length;
+      const railDrop = Math.abs(
+        geometries.at(-1)!.mountCenterYs[opposite] -
+          geometries[0].mountCenterYs[opposite],
+      );
+      expect(railDrop).toBeCloseTo((1 - 2 * BAR_NODE_RATIO) * lengthDrop);
     },
   );
 

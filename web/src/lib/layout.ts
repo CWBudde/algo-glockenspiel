@@ -19,6 +19,17 @@ const BAR_WIDTH_PX: Readonly<Record<BarKind, number>> = {
   accidental: 42,
 };
 
+/**
+ * The mount whose support rail runs straight across a row. Anchoring the
+ * accidental row on its lower mount and the natural row on its upper one keeps
+ * the gap between the two lanes constant instead of widening towards the
+ * treble.
+ */
+const BAR_ANCHOR_MOUNT: Readonly<Record<BarKind, 0 | 1>> = {
+  natural: 0,
+  accidental: 1,
+};
+
 const BAR_LANE_HEIGHT_PX: Readonly<Record<BarKind, number>> = {
   natural: 190,
   accidental: 142,
@@ -165,27 +176,46 @@ export function computeNoteLayout(): NoteLayout {
  * Draw geometry shared by the bar and the support behind its mount.
  *
  * Length still follows pitch, but width is a material property rather than an
- * accidental consequence of the SVG aspect ratio. Every bar is centered on
- * the same horizontal axis, so the top and bottom edges converge by equal
- * amounts and the complete row describes a symmetric trapezoid.
+ * accidental consequence of the SVG aspect ratio. A row hangs from one of its
+ * two node-point mounts -- `BAR_ANCHOR_MOUNT` -- so that support rail stays
+ * dead straight and the opposite one carries the row's whole convergence.
  */
 export function computeBarGeometry(
   entry: BarEntry,
   kind: BarKind,
 ): BarGeometry {
-  const centerY = BAR_LANE_HEIGHT_PX[kind] / 2;
-  const top = centerY - entry.length / 2;
-  const baseline = centerY + entry.length / 2;
+  const anchor = BAR_ANCHOR_MOUNT[kind];
+  const top = anchorMountY(kind) - entry.length * mountRatio(anchor);
+  const baseline = top + entry.length;
 
   return {
     width: BAR_WIDTH_PX[kind],
     top,
     baseline,
     mountCenterYs: [
-      top + entry.length * BAR_NODE_RATIO,
-      top + entry.length * (1 - BAR_NODE_RATIO),
+      top + entry.length * mountRatio(0),
+      top + entry.length * mountRatio(1),
     ],
   };
+}
+
+/** Distance of a mount from the bar's top edge, as a fraction of its length. */
+function mountRatio(mount: 0 | 1): number {
+  return mount === 0 ? BAR_NODE_RATIO : 1 - BAR_NODE_RATIO;
+}
+
+/**
+ * The lane pixel the row's anchored rail runs along. It is taken from the
+ * longest bar of the row, which keeps the bass end of the row where it has
+ * always been and every shorter bar inside the lane.
+ */
+function anchorMountY(kind: BarKind): number {
+  const longest =
+    kind === "natural"
+      ? naturalLength(FIRST_NOTE)
+      : accidentalLength(FIRST_NOTE);
+
+  return longest * mountRatio(BAR_ANCHOR_MOUNT[kind]);
 }
 
 /** Two coherent supports passing behind both node-point holes in a row. */
