@@ -610,3 +610,71 @@ func TestMayflyTuningCanNameTheVariant(t *testing.T) {
 		t.Fatalf("an explicit variant must win over the document: got %q", resolved.Variant)
 	}
 }
+
+// TestMayflyConvergenceStopsEarly is the first test to exercise Result
+// .Converged. The wrapper has always read TerminationTargetCost and
+// TerminationStagnation back out of the library, but never set
+// Config.Convergence, so neither reason could ever fire and Converged was
+// permanently false.
+func TestMayflyConvergenceStopsEarly(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	initial := []float64{5, 5}
+	objective := func(x []float64) float64 { return square(x[0]-1.25) + square(x[1]+2.5) }
+
+	run := func(t *testing.T, tuning *MayflyTuning) *Result {
+		t.Helper()
+
+		result, err := (&MayflyOptimizer{
+			Variant: "desma", Population: 8, Seed: 1, MaxWorkers: 1, Tuning: tuning,
+		}).Optimize(context.Background(), objective, initial, bounds, OptimizeOptions{
+			MaxIterations: 400,
+		})
+		if err != nil {
+			t.Fatalf("Optimize failed: %v", err)
+		}
+
+		return result
+	}
+
+	t.Run("without a convergence block the budget is spent", func(t *testing.T) {
+		result := run(t, nil)
+		if result.Converged {
+			t.Fatal("an unconfigured run must not claim convergence")
+		}
+
+		if result.StopReason != string(mayfly.TerminationMaxIterations) {
+			t.Fatalf("unexpected stop reason: %q", result.StopReason)
+		}
+	})
+
+	t.Run("target cost stops the run", func(t *testing.T) {
+		target := 1e-6
+		result := run(t, &MayflyTuning{Convergence: &MayflyConvergence{TargetCost: &target}})
+
+		if !result.Converged || result.StopReason != string(mayfly.TerminationTargetCost) {
+			t.Fatalf("expected a target-cost stop, got converged=%v reason=%q",
+				result.Converged, result.StopReason)
+		}
+
+		if result.Iterations >= 400 {
+			t.Fatalf("expected the run to stop early, used %d iterations", result.Iterations)
+		}
+	})
+
+	t.Run("stagnation stops the run", func(t *testing.T) {
+		window, minIters := 5, 1
+		result := run(t, &MayflyTuning{Convergence: &MayflyConvergence{
+			StagnationIterations: &window,
+			MinIterations:        &minIters,
+		}})
+
+		if !result.Converged || result.StopReason != string(mayfly.TerminationStagnation) {
+			t.Fatalf("expected a stagnation stop, got converged=%v reason=%q",
+				result.Converged, result.StopReason)
+		}
+
+		if result.Iterations >= 400 {
+			t.Fatalf("expected the run to stop early, used %d iterations", result.Iterations)
+		}
+	})
+}

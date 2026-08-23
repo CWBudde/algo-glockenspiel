@@ -60,6 +60,12 @@ type ResolvedMayfly struct {
 	Preset string
 	// Seed is the value the run's generator was constructed from, never zero.
 	Seed int64
+	// Rounds is how many consecutive searches the schedule runs, warm and cold
+	// together. One is a single search, which is the default.
+	Rounds int
+	// IterationsPerRound is the budget of the longest round. Rounds differ by
+	// at most one iteration, because the remainder goes to the earliest ones.
+	IterationsPerRound int
 }
 
 // Optimize runs Mayfly in a normalized [0,1] search space and maps candidates back into bounds.
@@ -99,10 +105,19 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 		return nil, err
 	}
 
-	cfg, err := o.buildConfig(resolved, len(initial), maxInt(1, opts.MaxIterations))
+	// The schedule splits the caller's total budget into consecutive searches.
+	// The config is validated against the shortest of them, because that is the
+	// round a convergence window actually has to fit inside.
+	schedule := scheduleFor(o.Tuning)
+	budgets := schedule.plan(maxInt(1, opts.MaxIterations))
+
+	cfg, err := o.buildConfig(resolved, len(initial), schedule.shortestRound(maxInt(1, opts.MaxIterations)))
 	if err != nil {
 		return nil, err
 	}
+
+	resolved.Rounds = len(budgets)
+	resolved.IterationsPerRound = budgets[0]
 
 	if o.OnResolve != nil {
 		o.OnResolve(resolved)
@@ -125,18 +140,52 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 	tracker.seedBaseline(initial)
 	cfg.ObjectiveFunc = tracker.evaluate
 
-	res, runErr := mayfly.OptimizeContext(
-		runCtx, cfg,
-		// Without this the preset or resumed checkpoint is thrown away and both
-		// populations start uniformly at random.
-		mayfly.WithInitialPopulation([][]float64{seed}, [][]float64{seed}),
-		mayfly.WithProgressObserver(tracker.observe),
-	)
-	if runErr != nil {
-		return tracker.abortedResult(ctx, runCtx, runErr)
+	var last *mayfly.Result
+
+	for round, budget := range budgets {
+		// One deadline covers the whole schedule, so a round that would start
+		// after it has passed simply does not.
+		if runCtx.Err() != nil {
+			break
+		}
+
+		// Each round anneals over its own length: several variants derive their
+		// schedule from MaxIterations, so a round must be told how long it is
+		// rather than how long the whole run is.
+		cfg.MaxIterations = budget
+
+		options := []mayfly.RunOption{mayfly.WithProgressObserver(tracker.observe)}
+
+		// A cold round starts from a uniformly random population on purpose --
+		// that is what makes it independent of the basin the warm rounds are
+		// in. Warm rounds carry the incumbent: the first round carries the
+		// caller's starting point, without which the preset or the resumed
+		// checkpoint would be thrown away, and every later one carries the best
+		// found so far.
+		if schedule.warm(round) {
+			warmSeed := seed
+			if round > 0 {
+				warmSeed, err = tracker.normalizedBest()
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			options = append(options, mayfly.WithInitialPopulation(
+				[][]float64{warmSeed}, [][]float64{warmSeed}))
+		}
+
+		res, runErr := mayfly.OptimizeContext(runCtx, cfg, options...)
+		if runErr != nil {
+			return tracker.abortedResult(ctx, runCtx, runErr)
+		}
+
+		tracker.finishRound(res)
+
+		last = res
 	}
 
-	return tracker.result(res), nil
+	return tracker.result(last), nil
 }
 
 // defaultMayflyVariant is what a run uses when neither a variant nor a preset
@@ -244,7 +293,11 @@ func (o *MayflyOptimizer) Validate(maxIterations int) error {
 		return err
 	}
 
-	_, err = o.buildConfig(resolved, 1, maxInt(1, maxIterations))
+	// Validate against the shortest round for the same reason the run does: a
+	// convergence window has to fit inside a round, not inside the whole
+	// budget, so checking against the total would accept a window that can
+	// never fire.
+	_, err = o.buildConfig(resolved, 1, scheduleFor(o.Tuning).shortestRound(maxInt(1, maxIterations)))
 
 	return err
 }
@@ -313,6 +366,10 @@ func newMayflyConfig(resolved ResolvedMayfly, pop, dims, iters int, tuning *Mayf
 	// asks for them: {"nc": 20, "nm": 1} at a population of ten.
 
 	if err := tuning.Apply(cfg, variant); err != nil {
+		return nil, err
+	}
+
+	if err := validateConvergenceWindow(cfg, iters); err != nil {
 		return nil, err
 	}
 
@@ -385,6 +442,39 @@ func sortedMayflyPresets() []string {
 	return names
 }
 
+// validateConvergenceWindow rejects a stagnation window that cannot be reached.
+//
+// The window is counted within a single round, so one at least as wide as the
+// round is not a conservative setting: it can never fire, and the run silently
+// spends its whole budget while the caller believes early stopping is armed.
+// algo-piano shipped exactly that for a while -- its audit records the flag as
+// a measured non-effect, because its rounds were always too short.
+//
+// Upstream also rejects a minimum above the cap, but its message names
+// max_iterations, which is the round's budget here rather than the run's. The
+// difference is the whole point of the schedule, so it is worth saying.
+func validateConvergenceWindow(cfg *mayfly.Config, iters int) error {
+	if cfg.Convergence == nil {
+		return nil
+	}
+
+	if window := cfg.Convergence.StagnationIterations; window >= iters {
+		return fmt.Errorf(
+			"convergence stagnation_iterations %d can never fire inside a round of %d iterations: "+
+				"lower it, raise the iteration budget, or use fewer rounds",
+			window, iters)
+	}
+
+	if minimum := cfg.Convergence.MinIterations; minimum > iters {
+		return fmt.Errorf(
+			"convergence min_iterations %d exceeds the %d iterations of a round: "+
+				"lower it, raise the iteration budget, or use fewer rounds",
+			minimum, iters)
+	}
+
+	return nil
+}
+
 // validateMayflyConfig rejects configurations up front.
 //
 // Upstream's ValidateConfig owns every range in mayfly.Config -- the shared
@@ -421,6 +511,13 @@ type mayflyTracker struct {
 	evals      int
 	iterations int
 	reports    int
+
+	// completedIterations and libraryEvals accumulate what earlier rounds
+	// already spent. mayfly numbers each round's iterations from one and counts
+	// each round's evaluations from zero, so without these a scheduled run
+	// would report the last round's figures as if they were the whole run's.
+	completedIterations int
+	libraryEvals        int
 }
 
 func newMayflyTracker(objective ObjectiveFunc, bounds Bounds, start time.Time, opts OptimizeOptions) *mayflyTracker {
@@ -478,7 +575,7 @@ func (t *mayflyTracker) evaluate(pos []float64) float64 {
 func (t *mayflyTracker) observe(progress mayfly.Progress) {
 	t.mu.Lock()
 
-	t.iterations = progress.Iteration
+	t.iterations = t.completedIterations + progress.Iteration
 
 	if t.opts.Report == nil || t.opts.ReportEvery <= 0 || progress.Iteration%t.opts.ReportEvery != 0 {
 		t.mu.Unlock()
@@ -489,7 +586,7 @@ func (t *mayflyTracker) observe(progress mayfly.Progress) {
 	t.reports++
 	update := Progress{
 		Iteration:           t.reports,
-		OptimizerIterations: progress.Iteration,
+		OptimizerIterations: t.iterations,
 		CurrentCost:         progress.Best.Cost,
 		BestCost:            t.bestCost,
 		BestParams:          append([]float64(nil), t.bestParams...),
@@ -502,6 +599,31 @@ func (t *mayflyTracker) observe(progress mayfly.Progress) {
 	t.opts.Report(update)
 }
 
+// finishRound folds one completed round's totals into the run's, so the next
+// round's per-round numbering continues where this one stopped.
+func (t *mayflyTracker) finishRound(res *mayfly.Result) {
+	if res == nil {
+		return
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.completedIterations += res.IterationCount
+	t.libraryEvals += res.FuncEvalCount
+	t.iterations = t.completedIterations
+}
+
+// normalizedBest is the running best expressed in the unit cube mayfly
+// searches, ready to seed the next warm round.
+func (t *mayflyTracker) normalizedBest() ([]float64, error) {
+	t.mu.Lock()
+	best := append([]float64(nil), t.bestParams...)
+	t.mu.Unlock()
+
+	return t.bounds.Normalize(best)
+}
+
 func (t *mayflyTracker) result(res *mayfly.Result) *Result {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -511,19 +633,21 @@ func (t *mayflyTracker) result(res *mayfly.Result) *Result {
 	reason := "unknown"
 	converged := false
 
+	// The totals are the run's, not the last round's: a scheduled run spans
+	// several searches and the caller asked for one budget, not several.
+	if t.libraryEvals > evals {
+		evals = t.libraryEvals
+	}
+
 	if res != nil {
-		iterations = res.IterationCount
 		reason = string(res.TerminationReason)
 
 		// A metaheuristic never proves convergence; the only honest signal is
 		// that the run stopped for a convergence criterion instead of
-		// exhausting its iteration budget.
+		// exhausting its iteration budget. With a schedule this describes the
+		// final round, which is the one that decided when the run ended.
 		converged = res.TerminationReason == mayfly.TerminationTargetCost ||
 			res.TerminationReason == mayfly.TerminationStagnation
-
-		if res.FuncEvalCount > evals {
-			evals = res.FuncEvalCount
-		}
 	}
 
 	return &Result{
