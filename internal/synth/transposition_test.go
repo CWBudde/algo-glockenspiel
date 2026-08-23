@@ -209,10 +209,11 @@ func TestSearchBoundIsUnchanged(t *testing.T) {
 		t.Fatalf("optimizer decay bound = %g ms, want 500", model.DecayMsSearchMax)
 	}
 
-	if got := model.DefaultParamBounds.DecayMs[1]; got != model.DecayMsSearchMax {
-		t.Fatalf("DefaultParamBounds.DecayMs upper = %g, want the search bound %g",
-			got, model.DecayMsSearchMax)
-	}
+	// The other half of this guard -- that the optimizer's search box actually
+	// takes DecayMsSearchMax rather than the validation ceiling -- lives in
+	// TestDefaultBoundsUseTheAuthoringCeiling over in internal/optimizer, which
+	// is where the bounds moved when model stopped carrying them. It cannot be
+	// asserted here: internal/optimizer imports this package.
 }
 
 // presetAtBaseNote builds a preset fitted at baseNote whose first mode sits

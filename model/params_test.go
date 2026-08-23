@@ -88,13 +88,6 @@ func TestValidateBarParamsRejectsNaN(t *testing.T) {
 	assertFieldError(t, err, "input_mix")
 }
 
-func TestBarParamsValidateMethod(t *testing.T) {
-	params := validTestParams()
-	if err := params.Validate(); err != nil {
-		t.Fatalf("expected Validate method to pass, got error: %v", err)
-	}
-}
-
 func validTestParams() BarParams {
 	return BarParams{
 		InputMix:        0.472,

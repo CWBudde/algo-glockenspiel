@@ -802,10 +802,16 @@ Goal: this repo builds cleanly from a fresh clone.
 
 Acceptance criteria:
 
-- [ ] The types the plugin needs are reachable from outside the module.
-- [ ] No `replace` directive; `go mod tidy` is a no-op.
-- [ ] CI checks module tidiness again.
-- [ ] The split-out repo builds against a published version of this module.
+- [x] The types the plugin needs are reachable from outside the module. Reachable in the
+      sense that matters, which is nameable: `Bar.BankOscillators` returned an
+      `internal/oscbank.Oscillator`, which compiles inside this module and cannot be spelled
+      outside it. See 6.1.
+- [x] No `replace` directive; `go mod tidy` is a no-op.
+- [x] CI checks module tidiness again.
+- [x] The split-out repo builds against a published version of this module. Verified from the
+      other side: `algo-glockenspiel-vst3`'s `go.mod` requires
+      `github.com/cwbudde/algo-glockenspiel v0.1.0` with no `replace` and no `v0.0.0`
+      placeholder.
 
 ### Phase 6.1: Get the public surface right
 
@@ -826,9 +832,49 @@ Goal: a public model package shaped around the runtime-configurable bank, not ar
       `numModes = 4`/`numChebyshevGains = 4` in `plugin/vst3/params.go:11-12`, which the same
       commit also split apart because the two counts are unrelated and a single-mode bar used
       to lose Chebyshev gains 2-4.
-- [ ] Audit the rest of the exported surface against the bank. The plugin uses `Bar`, `NewBar`,
-      `BarParams`, `ModeParams`, `ChebyshevParams` and the twelve `*Min`/`*Max` range constants;
-      each has to make sense for a variable mode count.
+- [x] Audit the rest of the exported surface against the bank. Done, and the bullet's own
+      premise turned out to be the stale part twice over.
+
+      **Nothing exported assumed four modes.** `BarParams.Modes` is a slice whose doc already
+      said the count is runtime configuration, `Bar.UpdateParams` sizes the oscillator slice
+      from `len(params.Modes)`, `ValidateBarParams` bounds it with `MaxModes = 512`, and
+      `ParamBounds` was per-dimension. The only literal `4` left in the package is unexported
+      `chebyshevFastGains` (`model/cheby.go:6`), which is the AVX2 shaper's fast path and has
+      nothing to do with modes. And there is no set of twelve `*Min`/`*Max` constants: there
+      are thirteen range constants, and **no `DecayMsMax`** — 5.1 split it into
+      `DecayMsSearchMax` and `DecayMsValidationMax`, so a consumer written against the name in
+      this bullet does not compile. That is now the one thing the package doc leads with.
+
+      **The real defect was a type leak.** `Bar.BankOscillators` returned
+      `[]oscbank.Oscillator` from `internal/oscbank` (`model/bar.go:201`). Go's internal rule
+      means an external consumer cannot name that type: the method was callable, but its result
+      could not be stored, passed or ranged into a typed variable, so the plugin could never
+      have driven a voice-major bank. Fixed with `type Oscillator = oscbank.Oscillator`, an
+      alias rather than a defined type — an alias re-exports the identity, so
+      `internal/synth/realtime.go` still hands the slice straight to `oscbank.Bank.SetVoice`
+      and the accessor keeps the zero-copy contract it exists for. A defined type would have
+      put a conversion, and therefore an allocation, on the note-on path.
+
+      **What the surface lost.** `BarParams.Validate` (a forwarder to `ValidateBarParams`,
+      which is what all eight production callers and the plugin use); `ModeParams.CopyInto` and
+      `ChebyshevParams.CopyInto`, unexported to `copyInto` because they are documented as an
+      allocation optimization for the pooled-voice path and only `BarParams.CopyInto` calls
+      them; and `ParamBounds`/`DefaultParamBounds`, which existed only to seed the
+      differently-shaped `optimizer.ParamBounds` and are now built there from the model's range
+      constants directly, deleting the duplicated concept. `Clone` stays on all three params
+      types despite having no caller — it is a public idiom where `CopyInto` is an audio-path
+      mechanism. Nothing the plugin uses was touched; its usage was read out of the sibling
+      repository rather than guessed.
+
+      **What keeps it closed.** `model/api_surface_test.go` parses the package and fails on any
+      exported signature, field or result naming an `internal/...` type, allowing exported type
+      aliases as the deliberate re-export. It cannot be an API-usage test: same-module code may
+      import `internal/`, which is exactly why the leak survived this long. Confirmed to fail on
+      the original `BankOscillators` signature and pass on the alias.
+
+      Verified end to end by building `algo-glockenspiel-vst3` against this working tree through
+      a temporary `replace`, untagged and `-tags=vst3go`, plus a probe file declaring
+      `var _ []model.Oscillator` — the assignment the old signature made impossible.
 
 ### Phase 6.2: Repair the plugin and cover it in CI
 
@@ -859,7 +905,7 @@ Goal: the `replace` directive and the plugin leave together.
       `model.TransposeToNote` delegation and the preset-drift test all crossed before the
       deletion. `plugin/` is gone with its only package; `web/README.md` now points at the
       mockup in the other repository.
-- [ ] Reconcile the module path and tag a version. The module was
+- [x] Reconcile the module path and tag a version. The module was
       `github.com/cwbudde/glockenspiel` while the repository is `CWBudde/algo-glockenspiel`, so
       `go get` could not resolve it, and there are no tags at all. Until both are fixed the
       split-out repository cannot drop its `replace` or its `v0.0.0` placeholder require, which
@@ -872,6 +918,13 @@ Goal: the `replace` directive and the plugin leave together.
       the `algo-` name the other repositories share. Done: `go.mod` and the import in 51 files
       on this branch. The path half of this bullet is closed; what is left is a `git tag`, which
       no pull request can carry.
+
+      The tag has since been cut, so this bullet is closed: `v0.1.0` sits on `622c75f`, the
+      module-rename merge, and is pushed. The other side has already moved onto it —
+      `algo-glockenspiel-vst3`'s `go.mod` reads
+      `require github.com/cwbudde/algo-glockenspiel v0.1.0` with no `replace` directive and no
+      `v0.0.0` placeholder, which is this phase's fourth acceptance criterion measured where it
+      is actually observable.
 
       What that costs, so it is not a surprise: the plugin repository's imports move with it, in
       the same commit that drops its `replace` directive. And anything that already depends on
@@ -984,7 +1037,16 @@ Goal: document what is undocumented, retire what is finished.
 
 ## Resume Point
 
-Phases 0, 1, 2 and 3 are closed. Phases 4, 5, 6 and 7 are open.
+Phases 0, 1, 2, 3, 4 and 6 are closed. Phases 5 and 7 are open.
+
+**Phase 6 is closed.** 6.1's audit found its own premise stale — nothing exported assumed four
+modes, and the "twelve `*Min`/`*Max` constants" it named are thirteen with no `DecayMsMax` —
+while the defect it was meant to catch was a type leak: `Bar.BankOscillators` returned an
+`internal/oscbank.Oscillator` that no external consumer could name. `model/api_surface_test.go`
+now fails on any exported signature naming an internal type, which is the only way to catch
+that from inside a module whose own code may import `internal/`. What is left of Phase 5 is two
+unmeasured acceptance criteria — first paint and the Lighthouse number — and of Phase 7, the
+`out/` scratch directory.
 
 **Phase 2 is closed.** 2.1, 2.2, 2.3 and 2.4 are all done. The dead assembly is gone, every
 layout an `.s` file assumes is pinned at compile time, the numeric contract is written down

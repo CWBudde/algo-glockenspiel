@@ -14,18 +14,35 @@ const (
 	// MaxHarmonics bounds the partials one mode may carry.
 	MaxHarmonics = 64
 
+	// InputMixMin and InputMixMax bound BarParams.InputMix, the amount of dry
+	// filtered excitation mixed in alongside the oscillator bank's output.
+	// Enforced by ValidateBarParams.
 	InputMixMin = 0.0
 	InputMixMax = 2.0
 
+	// FilterFrequencyMinHz and FilterFrequencyMaxHz bound
+	// BarParams.FilterFrequency, the cutoff of the lowpass the excitation
+	// passes through before it reaches the bank. Enforced by ValidateBarParams.
 	FilterFrequencyMinHz = 20.0
 	FilterFrequencyMaxHz = 20000.0
 
+	// AmplitudeMin and AmplitudeMax bound ModeParams.Amplitude. The range is
+	// signed because a mode may enter in antiphase with its neighbours, which
+	// is part of how a fit shapes the attack. Enforced by ValidateBarParams.
 	AmplitudeMin = -2.0
 	AmplitudeMax = 2.0
 
+	// FrequencyMinHz and FrequencyMaxHz bound ModeParams.Frequency and
+	// BarParams.BaseFrequency. The ceiling sits above any audible rate on
+	// purpose: a mode above Nyquist is a wasted oscillator rather than an
+	// invalid one, and refusing it would make a preset's validity depend on the
+	// sample rate it happens to be rendered at. Enforced by ValidateBarParams.
 	FrequencyMinHz = 0.01
 	FrequencyMaxHz = 50000.0
 
+	// DecayMsMin is the shortest decay a mode may carry. See
+	// DecayMsValidationMax and DecayMsSearchMax for the two ceilings, and the
+	// package overview for why there are two.
 	DecayMsMin = 0.1
 
 	// DecayMsValidationMax is the hard ceiling ValidateBarParams enforces: the
@@ -76,29 +93,13 @@ const (
 	// generous for a struck metal bar's individual mode.
 	DecayMsSearchMax = 500.0
 
+	// HarmonicGainMin and HarmonicGainMax bound both sets of harmonic gains --
+	// ModeParams.Harmonics, the partials riding on one mode, and
+	// ChebyshevParams.HarmonicGains, the waveshaper's terms. Enforced by
+	// ValidateBarParams.
 	HarmonicGainMin = 0.0
 	HarmonicGainMax = 2.0
 )
-
-// ParamBounds contains optimization parameter bounds.
-type ParamBounds struct {
-	InputMix      [2]float64 // [0.0, 2.0]
-	FilterFreq    [2]float64 // [20.0, 20000.0] Hz, log scale
-	Amplitude     [2]float64 // [-2.0, 2.0]
-	FrequencyMult [2]float64 // [0.5, 10.0] * base_frequency
-	DecayMs       [2]float64 // [0.1, 500.0] milliseconds, the authoring range
-	HarmonicGain  [2]float64 // [0.0, 2.0] per harmonic
-}
-
-// DefaultParamBounds are the bounds used for optimization.
-var DefaultParamBounds = ParamBounds{
-	InputMix:      [2]float64{InputMixMin, InputMixMax},
-	FilterFreq:    [2]float64{FilterFrequencyMinHz, FilterFrequencyMaxHz},
-	Amplitude:     [2]float64{AmplitudeMin, AmplitudeMax},
-	FrequencyMult: [2]float64{0.5, 10.0},
-	DecayMs:       [2]float64{DecayMsMin, DecayMsSearchMax},
-	HarmonicGain:  [2]float64{HarmonicGainMin, HarmonicGainMax},
-}
 
 // ModeParams describes one resonant mode.
 //
@@ -122,9 +123,9 @@ func (m ModeParams) Clone() ModeParams {
 	return m
 }
 
-// CopyInto deep-copies the mode into dst, reusing dst's harmonics slice when
+// copyInto deep-copies the mode into dst, reusing dst's harmonics slice when
 // its capacity allows. See [BarParams.CopyInto] for why this exists.
-func (m *ModeParams) CopyInto(dst *ModeParams) {
+func (m *ModeParams) copyInto(dst *ModeParams) {
 	if m == dst {
 		return
 	}
@@ -174,9 +175,9 @@ func (c ChebyshevParams) Clone() ChebyshevParams {
 	return c
 }
 
-// CopyInto deep-copies the Chebyshev parameters into dst, reusing dst's gain
+// copyInto deep-copies the Chebyshev parameters into dst, reusing dst's gain
 // slice when its capacity allows.
-func (c *ChebyshevParams) CopyInto(dst *ChebyshevParams) {
+func (c *ChebyshevParams) copyInto(dst *ChebyshevParams) {
 	if c == dst {
 		return
 	}
@@ -214,9 +215,9 @@ func (p BarParams) Clone() BarParams {
 // CopyInto deep-copies p into dst, reusing dst's slices wherever their capacity
 // already suffices and only allocating when it does not.
 //
-// This exists so that a Bar which is retuned rather than rebuilt — the pooled
-// voice case, where a note-on must not allocate — can absorb a new parameter
-// set without touching the allocator. A plain Clone cannot serve that role: it
+// This exists so that a Bar which is retuned rather than rebuilt — a voice
+// taken from a pool, where a note-on must not allocate — can absorb a new
+// parameter set without touching the allocator. A plain Clone cannot serve that role: it
 // allocates the Modes slice, every non-empty Harmonics slice and the Chebyshev
 // gains on every single call, however little the shape actually changed.
 //
@@ -256,11 +257,11 @@ func (p *BarParams) CopyInto(dst *BarParams) {
 		}
 
 		for i := range p.Modes {
-			p.Modes[i].CopyInto(&dst.Modes[i])
+			p.Modes[i].copyInto(&dst.Modes[i])
 		}
 	}
 
-	p.Chebyshev.CopyInto(&dst.Chebyshev)
+	p.Chebyshev.copyInto(&dst.Chebyshev)
 }
 
 // copyFloat64s copies src into dst, reusing dst's backing array when it is
@@ -302,11 +303,6 @@ func sharesBacking[T any](dst, src []T) bool {
 	}
 
 	return &dst[:cap(dst)][0] == &src[:cap(src)][0]
-}
-
-// Validate checks whether BarParams are well-formed and in supported ranges.
-func (p *BarParams) Validate() error {
-	return ValidateBarParams(p)
 }
 
 // ValidateBarParams validates bar model parameters.
