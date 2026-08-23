@@ -86,6 +86,29 @@ func Preset(presetID string) (*preset.Preset, error) {
 		presetID = DefaultID
 	}
 
+	data, err := Document(presetID)
+	if err != nil {
+		return nil, err
+	}
+
+	return preset.Decode(data, "embedded preset "+presetID)
+}
+
+// Document returns the raw JSON of the embedded preset with the given id.
+//
+// It is Preset without the decode, for the callers that want the document
+// itself rather than what it means: the code generator that mirrors the
+// presets into the browser bundle hands them on as the starting preset of a
+// fit, which is parsed at the far end by the same decoder. Handing on a
+// re-encoding of a decoded preset instead would let a document lose anything
+// the decoder does not carry.
+//
+// An empty id is the default, exactly as in Preset.
+func Document(presetID string) ([]byte, error) {
+	if presetID == "" {
+		presetID = DefaultID
+	}
+
 	// The id becomes a path element, so it has to be a bare filename stem. Both
 	// checks matter: path.Base would silently accept "../../etc/passwd" by
 	// turning it into "passwd", and embed.FS would then answer for a preset the
@@ -104,7 +127,7 @@ func Preset(presetID string) (*preset.Preset, error) {
 		return nil, fmt.Errorf("unknown preset %q, have %s", presetID, strings.Join(known, ", "))
 	}
 
-	return preset.Decode(data, "embedded preset "+presetID)
+	return data, nil
 }
 
 // List describes every embedded preset, in id order.

@@ -20,6 +20,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -89,15 +90,32 @@ export interface SoundPreset {
   readonly label: string;
   /** The MIDI note the preset was authored at. */
   readonly note: number;
+  /**
+   * The document itself, compacted.
+   *
+   * It travels with the listing because a built-in is also a place a fit can
+   * start from, and both fit backends take that starting point as a document
+   * rather than as a name: the HTTP API reads a preset file part and the WASM
+   * module takes preset bytes. Neither can be handed an id.
+   */
+  readonly document: string;
 }
 
 export const SOUND_PRESETS: readonly SoundPreset[] = [
 `)
 
 	for _, entry := range listed {
-		b.WriteString("  { id: " + quote(entry.ID) +
-			", label: " + quote(entry.Name) +
-			", note: " + strconv.Itoa(entry.Note) + " },\n")
+		document, err := compact(entry.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		b.WriteString("  {\n")
+		b.WriteString("    id: " + quote(entry.ID) + ",\n")
+		b.WriteString("    label: " + quote(entry.Name) + ",\n")
+		b.WriteString("    note: " + strconv.Itoa(entry.Note) + ",\n")
+		b.WriteString("    document:\n      " + quoteDocument(document) + ",\n")
+		b.WriteString("  },\n")
 	}
 
 	b.WriteString("] as const;\n\n")
@@ -111,6 +129,35 @@ export const DEFAULT_SOUND_PRESET_ID = ` + quote(assets.DefaultID) + `;
 `)
 
 	return []byte(b.String()), nil
+}
+
+// compact reads an embedded preset and strips the whitespace its file carries.
+//
+// The document is mirrored verbatim apart from that: it is the fit's starting
+// point, and re-encoding a decoded preset would silently drop anything the
+// decoder does not model.
+func compact(presetID string) (string, error) {
+	data, err := assets.Document(presetID)
+	if err != nil {
+		return "", err
+	}
+
+	var buffer bytes.Buffer
+
+	if err := json.Compact(&buffer, data); err != nil {
+		return "", fmt.Errorf("compact preset %q: %w", presetID, err)
+	}
+
+	return buffer.String(), nil
+}
+
+// quoteDocument emits a preset document as a TypeScript string literal.
+//
+// Single quotes, unlike quote's rule: a JSON document is full of double quotes
+// and has none of its own single ones, so this is the form prettier keeps -- it
+// picks whichever quote needs fewer escapes.
+func quoteDocument(value string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, "'", `\'`).Replace(value) + "'"
 }
 
 // quote emits a TypeScript string literal the way prettier would, so the

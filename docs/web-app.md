@@ -118,6 +118,13 @@ empty exactly when someone first looks at it -- and empty in the Playwright
 baselines. An unknown id is still refused in Go, so the generated list is a
 convenience rather than the authority.
 
+Each entry carries the document itself, compacted, alongside its id and label.
+That is for the Optimize tab rather than the deck: a built-in is also a place a
+fit can start from, and neither fit backend can be handed an id -- the HTTP API
+reads a `preset` file part and the WASM module takes preset bytes. The document
+is mirrored verbatim apart from the whitespace, never re-encoded from a decoded
+preset, so nothing the decoder does not model can be lost on the way through.
+
 ### Sounds that do not exist at build time
 
 `addPreset(id, document)` is how an optimizer result becomes playable. Everything
@@ -358,8 +365,17 @@ Both produce the `FitSnapshot` shape consumed by the chart, status and audition.
    catch-all, so a static host falls through to its normal 404 —
    `useWasmFitWorker` lazily starts the browser backend and the form stays
    available.
-2. **Start.** `FitForm` builds one body containing the reference WAV, an optional
-   starting preset, optional bounds, and every scalar. The native backend posts
+2. **Start.** `FitForm` builds one body containing the reference WAV, the
+   starting preset, optional bounds, and every scalar. The starting preset is
+   one select: the built-in sounds, and a final entry that opens a file dialog.
+   The choice is state, not the file input's contents -- a file input cannot be
+   set back to "a built-in" by a click on a menu entry, and a dialog can be
+   dismissed, which has to leave the previous choice exactly where it was. It
+   does: the select is controlled and the entry only moves once a file has
+   actually arrived. A built-in is sent as its own document, the default
+   included, so there is one path through the request builder rather than a
+   special case resting on the two ends agreeing about what an omitted preset
+   falls back to. The native backend posts
    it to `POST api/fit/start`; the browser backend transfers its file parts to
    the worker and serializes the scalars. Each scalar is held client-side to the
    server's range, because discovering that `note` was 200 after moving a 16 MiB
@@ -420,6 +436,16 @@ in place and counts the samples it has recorded, and `CostChart` folds in only
 what it has not seen yet and coalesces the redraws into one per animation frame.
 Rebuilding either the array or the datasets per event would make drawing the
 curve quadratic in the number of samples.
+
+The range control is the exception to that folding. A run flattens out early and
+then spends its remaining iterations moving in a range the full-height axis
+cannot show, so the chart offers the whole curve or the last 10, 100 or 1000
+optimizer iterations -- counted in iterations rather than in samples, so a window
+means the same stretch of a fit whatever `reportEvery` it was started with. A
+window is rebuilt from its first sample on every event, because it moves with the
+newest one: what leaves it on the left has to go as surely as what arrives on the
+right has to be drawn. That costs the window, not the history, and the axes then
+scale to what is in it, which is the point of asking for one.
 
 The curve has been watched filling live from the stream, at `reportEvery: 1`,
 with the coalescing the server documents visible in the gap between the sample

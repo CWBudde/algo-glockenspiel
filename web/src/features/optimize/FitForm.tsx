@@ -13,6 +13,10 @@ import {
   type MayflyTuningField,
 } from "../../api/mayflyTuning.generated";
 import {
+  DEFAULT_SOUND_PRESET_ID,
+  SOUND_PRESETS,
+} from "../../api/presets.generated";
+import {
   BOUNDS_KEYS,
   DEFAULT_FIT_REQUEST,
   DEFAULT_PARAM_BOUNDS,
@@ -548,12 +552,52 @@ export function buildMayflyTuningDocument(
   return { document, count };
 }
 
+/**
+ * The starting-preset choice that is not a built-in sound.
+ *
+ * It is a sentinel in the same select rather than a second control because it
+ * is the same decision: what the fit starts from. No preset can be called this
+ * -- an id is a filename stem -- so the two cannot collide.
+ */
+const PRESET_FROM_FILE = "__file__";
+
+/** The `preset` part a choice sends, or null when there is nothing to send. */
+function presetPart(
+  choice: string,
+  file: File | null,
+): { blob: Blob; name: string } | null {
+  if (choice === PRESET_FROM_FILE) {
+    return file === null ? null : { blob: file, name: file.name };
+  }
+
+  const builtin = SOUND_PRESETS.find((entry) => entry.id === choice);
+
+  if (builtin === undefined) {
+    return null;
+  }
+
+  return {
+    blob: new Blob([builtin.document], { type: "application/json" }),
+    name: `${builtin.id}.json`,
+  };
+}
+
 export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
   const ids = useId();
   const fieldId = (name: string) => `${ids}-${name}`;
 
   const referenceRef = useRef<HTMLInputElement>(null);
   const presetRef = useRef<HTMLInputElement>(null);
+
+  // What the fit starts from: a built-in sound's id, or PRESET_FROM_FILE with
+  // the file beside it. The file input behind them is never the source of
+  // truth, because it cannot be cleared back to a built-in by a click on a
+  // menu entry -- and because the dialog can be dismissed, which has to leave
+  // the choice exactly as it was.
+  const [presetChoice, setPresetChoice] = useState<string>(
+    DEFAULT_SOUND_PRESET_ID,
+  );
+  const [presetFile, setPresetFile] = useState<File | null>(null);
 
   const [scalars, setScalars] = useState<ScalarFields>(INITIAL_SCALARS);
   const [metric, setMetric] = useState<MetricName>(DEFAULT_FIT_REQUEST.metric);
@@ -588,6 +632,20 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
       : snapshot.state === "running"
         ? `Fit ${snapshot.jobId} running`
         : `Fit ${snapshot.jobId} ${snapshot.state}`;
+
+  const openPresetDialog = () => {
+    const input = presetRef.current;
+
+    if (input === null) {
+      return;
+    }
+
+    // Cleared first so that picking the same file again is still a change: the
+    // input compares against what it already holds, and "Choose another file"
+    // resolving to nothing would look like the dialog had been dismissed.
+    input.value = "";
+    input.click();
+  };
 
   const setScalar = (name: keyof ScalarFields, value: string) => {
     setScalars((previous) => ({ ...previous, [name]: value }));
@@ -877,10 +935,15 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
     // reference is non-null here: an absent one is a field error above.
     form.append("reference", reference as File);
 
-    const preset = presetRef.current?.files?.[0] ?? null;
+    // A built-in is sent as its own document rather than as its name: the
+    // server reads `preset` with FormFile and the WASM module takes preset
+    // bytes, so neither end can resolve an id. The default is sent like any
+    // other, which keeps one path through here rather than a special case that
+    // relies on the two ends agreeing about what "omitted" falls back to.
+    const preset = presetPart(presetChoice, presetFile);
 
     if (preset !== null) {
-      form.append("preset", preset);
+      form.append("preset", preset.blob, preset.name);
     }
 
     if (useBounds && boundsCount > 0) {
@@ -1179,15 +1242,83 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
         </div>
 
         <div className="fit-field">
-          <label htmlFor={fieldId("preset")}>Starting preset (optional)</label>
+          <label htmlFor={fieldId("preset")}>Starting preset</label>
+          <select
+            id={fieldId("preset")}
+            onChange={(event) => {
+              if (event.target.value !== PRESET_FROM_FILE) {
+                setPresetChoice(event.target.value);
+
+                return;
+              }
+
+              // The choice is not moved here. A dialog can be dismissed, and
+              // the select is controlled, so leaving the state alone is what
+              // puts the previous entry back on screen when it is; the choice
+              // moves to the file in the change handler below, which only runs
+              // when a file was actually picked.
+              openPresetDialog();
+            }}
+            value={presetChoice}
+          >
+            {SOUND_PRESETS.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.label}
+              </option>
+            ))}
+            <option value={PRESET_FROM_FILE}>
+              {presetFile === null
+                ? "Load from file…"
+                : `File: ${presetFile.name}`}
+            </option>
+          </select>
+
+          {/*
+           * The real input, and nothing but the dialog behind it: what has been
+           * chosen is shown by the select above, which can also say "a built-in
+           * sound", something a file input has no way to display. `hidden`
+           * rather than the visually-hidden treatment the chart's summary gets,
+           * because this one is not for reading either -- it is a control with
+           * no role left to play once the select speaks for it, and a hidden
+           * input still opens its dialog when it is clicked.
+           */}
           <input
             accept=".json,application/json"
-            id={fieldId("preset")}
-            name="preset"
+            hidden
+            onChange={(event) => {
+              const chosen = event.target.files?.[0] ?? null;
+
+              // A dismissed dialog either fires nothing at all or fires with an
+              // empty list, and both mean the same thing here: the choice was
+              // never moved off what it was, so putting the previous entry back
+              // is a matter of leaving it alone.
+              if (chosen === null) {
+                return;
+              }
+
+              setPresetFile(chosen);
+              setPresetChoice(PRESET_FROM_FILE);
+            }}
             ref={presetRef}
             type="file"
           />
-          <p className="fit-hint">Uses the built-in preset when omitted.</p>
+
+          <p className="fit-hint">
+            {presetChoice === PRESET_FROM_FILE ? (
+              <>
+                Fitting starts from this document.{" "}
+                <button
+                  className="fit-inline-button"
+                  onClick={openPresetDialog}
+                  type="button"
+                >
+                  Choose another file
+                </button>
+              </>
+            ) : (
+              "Fitting starts from the chosen built-in sound, or from a preset JSON document of your own."
+            )}
+          </p>
         </div>
       </fieldset>
 

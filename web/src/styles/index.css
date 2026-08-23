@@ -1298,6 +1298,7 @@ h1 {
  */
 .tab:focus-visible,
 .theme-option input:focus-visible + label,
+.cost-chart-range-option input:focus-visible + label,
 .bar:focus-visible,
 .piano-key:focus-visible,
 .dial-input:focus-visible + .dial-face,
@@ -1307,6 +1308,7 @@ h1 {
 .fit-field select:focus-visible,
 .fit-check input:focus-visible,
 .fit-advanced summary:focus-visible,
+.fit-inline-button:focus-visible,
 .fit-button:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
@@ -1520,6 +1522,20 @@ h1 {
   color: var(--charcoal-muted);
   font-size: var(--type-sm);
   line-height: 1.4;
+}
+
+/*
+ * A button that reads as part of the sentence around it: the file dialog is
+ * opened from inside the hint, where the file it would replace is named.
+ */
+.fit-inline-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--copper-accent);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
 }
 
 .fit-field-error,
@@ -1742,6 +1758,70 @@ h1 {
 
 .fit-chart-waiting {
   min-height: 280px;
+}
+
+.cost-chart-range {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  margin: 0 0 var(--space-sm);
+  padding: 0;
+  border: 0;
+}
+
+.cost-chart-range legend {
+  padding: 0;
+  float: left;
+  color: var(--charcoal-muted);
+  font-size: 0.76rem;
+  letter-spacing: var(--tracking-label);
+  line-height: 24px;
+  text-transform: uppercase;
+}
+
+/*
+ * A floated legend leaves the flex row to the options, so the label sits on
+ * the same line as them without being a flex item itself: a legend is not a
+ * reliable one across browsers.
+ */
+.cost-chart-range legend + * {
+  margin-left: var(--space-sm);
+}
+
+.cost-chart-range-option {
+  position: relative;
+  display: flex;
+}
+
+/* Transparent rather than hidden, for the reasons given at `.theme-option input`. */
+.cost-chart-range-option input {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.cost-chart-range-option label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-button);
+  background: var(--panel-fill-strong);
+  color: var(--charcoal-muted);
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.cost-chart-range-option input:checked + label {
+  border-color: var(--copper-accent);
+  color: var(--charcoal);
 }
 
 .cost-chart-canvas {

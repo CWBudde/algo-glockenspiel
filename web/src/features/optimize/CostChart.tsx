@@ -11,7 +11,7 @@ import {
   type ChartOptions,
   type Point,
 } from "chart.js";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Line } from "react-chartjs-2";
 
 import { useResolvedTheme, type ResolvedTheme } from "../../lib/theme";
@@ -124,6 +124,38 @@ function extend(
   }
 }
 
+/**
+ * The views of the curve the reader can choose between.
+ *
+ * A null span is the whole run. The rest are counted in optimizer iterations
+ * rather than in samples, so the window means the same stretch of the fit
+ * whatever `reportEvery` the job was started with.
+ */
+const RANGES: { span: number | null; label: string }[] = [
+  { span: null, label: "All" },
+  { span: 1000, label: "Last 1000" },
+  { span: 100, label: "Last 100" },
+  { span: 10, label: "Last 10" },
+];
+
+/**
+ * The index of the first sample at or after `iteration`.
+ *
+ * The scan walks back from the end rather than forward from the start, so its
+ * cost is the window's rather than the history's: a run reporting every
+ * iteration reaches a hundred thousand samples, and a windowed view only ever
+ * redraws the tail of them.
+ */
+function firstIndexFrom(points: CostPoint[], iteration: number): number {
+  let index = points.length;
+
+  while (index > 0 && points[index - 1].iteration >= iteration) {
+    index -= 1;
+  }
+
+  return index;
+}
+
 /** The same guard `FitStatus` applies, so a broken reading is never announced. */
 function formatCost(cost: number): string {
   if (!Number.isFinite(cost)) {
@@ -144,6 +176,11 @@ function formatCost(cost: number): string {
  */
 export function CostChart({ points, revision }: CostChartProps) {
   const chartRef = useRef<Chart<"line", Point[]> | null>(null);
+
+  // How much of the curve is drawn. A long run flattens out early and spends
+  // the rest of its iterations moving in a range the full-height axis cannot
+  // show, so the tail is worth being able to look at on its own.
+  const [span, setSpan] = useState<number | null>(null);
 
   const prefersReducedMotion = useMemo(
     () =>
@@ -267,25 +304,45 @@ export function CostChart({ points, revision }: CostChartProps) {
     }
 
     const [best, current] = chart.data.datasets;
+    const last = points[points.length - 1];
     let from = foldedRef.current;
 
-    if (from > points.length) {
-      // A new job hands us a shorter array: the previous run's line goes.
-      from = 0;
-    } else if (from > 0) {
-      // The last sample may have been overwritten in place rather than
-      // appended, so it is re-read rather than trusted.
-      from -= 1;
-    }
-
-    if (from === 0) {
+    if (span !== null) {
+      // A window is redrawn from its first sample every time, because the
+      // window moves with the newest one: what leaves it at the left has to go
+      // as surely as what arrives at the right has to be added. The work is
+      // bounded by the window rather than by the run's length, and nothing is
+      // carried over, so `foldedRef` is left saying that the chart holds
+      // nothing -- a switch back to the whole curve then refolds it.
+      from =
+        last === undefined
+          ? 0
+          : firstIndexFrom(points, last.iteration - span + 1);
       best.data = [];
       current.data = [];
-    }
 
-    extend(best.data, points, from, (p) => p.best);
-    extend(current.data, points, from, (p) => p.current);
-    foldedRef.current = points.length;
+      extend(best.data, points, from, (p) => p.best);
+      extend(current.data, points, from, (p) => p.current);
+      foldedRef.current = 0;
+    } else {
+      if (from > points.length) {
+        // A new job hands us a shorter array: the previous run's line goes.
+        from = 0;
+      } else if (from > 0) {
+        // The last sample may have been overwritten in place rather than
+        // appended, so it is re-read rather than trusted.
+        from -= 1;
+      }
+
+      if (from === 0) {
+        best.data = [];
+        current.data = [];
+      }
+
+      extend(best.data, points, from, (p) => p.best);
+      extend(current.data, points, from, (p) => p.current);
+      foldedRef.current = points.length;
+    }
 
     // A burst at reportEvery: 1 arrives faster than the screen refreshes, and
     // every redraw walks the whole line. Collapsing the pending redraws into
@@ -295,7 +352,7 @@ export function CostChart({ points, revision }: CostChartProps) {
       frameRef.current = null;
       chart.update("none");
     });
-  }, [points, revision]);
+  }, [points, revision, span]);
 
   // Only on unmount: cancelling the pending frame between events would keep
   // rescheduling a redraw that never happens while samples keep arriving.
@@ -309,16 +366,50 @@ export function CostChart({ points, revision }: CostChartProps) {
     [],
   );
 
-  const last = points[points.length - 1];
+  const latest = points[points.length - 1];
+  const windowNote =
+    span === null
+      ? ""
+      : ` Showing the last ${String(span)} optimizer iterations.`;
   const summary =
-    last === undefined
+    latest === undefined
       ? "No cost samples yet."
       : `Cost curve over ${String(points.length)} samples. ` +
-        `At ${String(last.iteration)} optimizer iterations the best cost is ` +
-        `${formatCost(last.best)} and the current cost is ${formatCost(last.current)}.`;
+        `At ${String(latest.iteration)} optimizer iterations the best cost is ` +
+        `${formatCost(latest.best)} and the current cost is ${formatCost(latest.current)}.` +
+        windowNote;
 
   return (
     <div className="cost-chart">
+      {/*
+       * Real radio inputs behind their labels, as in `ThemeSwitch`: four
+       * mutually exclusive views of one curve is what a radio group is, and
+       * the native control brings the arrow-key traversal, the roving tab stop
+       * and the announced "2 of 4" with it.
+       */}
+      <fieldset className="cost-chart-range">
+        <legend>Range</legend>
+
+        {RANGES.map((range) => {
+          const id = `cost-range-${range.span === null ? "all" : String(range.span)}`;
+
+          return (
+            <div key={id} className="cost-chart-range-option">
+              <input
+                type="radio"
+                id={id}
+                name="cost-range"
+                checked={span === range.span}
+                onChange={() => {
+                  setSpan(range.span);
+                }}
+              />
+              <label htmlFor={id}>{range.label}</label>
+            </div>
+          );
+        })}
+      </fieldset>
+
       <div className="cost-chart-canvas">
         <Line
           ref={chartRef}
