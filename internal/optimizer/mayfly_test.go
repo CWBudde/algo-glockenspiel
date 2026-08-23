@@ -3,6 +3,8 @@ package optimizer
 import (
 	"context"
 	"math"
+	"reflect"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,7 +16,7 @@ import (
 )
 
 func TestMayflyConfigRejectsUnsupportedVariant(t *testing.T) {
-	if _, err := newMayflyConfig("nope", 10, 3, 5); err == nil {
+	if _, err := newMayflyConfig(ResolvedMayfly{Variant: "nope"}, 10, 3, 5, nil); err == nil {
 		t.Fatal("expected unsupported variant to fail")
 	}
 }
@@ -470,5 +472,141 @@ func TestMayflyUnknownVariantListsTheAlternativesInOrder(t *testing.T) {
 
 	if !strings.Contains(first, "aoblmoa, desma, eobbma, gsasma, ma, mpma, olce") {
 		t.Fatalf("expected a sorted variant list, got %q", first)
+	}
+}
+
+// TestTuningZeroValueIsTodaysBehaviour is the invariant the whole tuning
+// surface rests on: a run that asks for nothing must be configured exactly as
+// it was before the document existed.
+//
+// It compares configurations rather than outcomes deliberately. Comparing two
+// fits would be slow, would depend on the objective, and would fail for
+// reasons that have nothing to do with the document.
+func TestTuningZeroValueIsTodaysBehaviour(t *testing.T) {
+	variants := mayfly.ListVariants()
+	sort.Strings(variants)
+
+	for _, variant := range variants {
+		t.Run(variant, func(t *testing.T) {
+			resolved := ResolvedMayfly{Variant: variant}
+
+			absent, err := newMayflyConfig(resolved, 10, 3, 50, nil)
+			if err != nil {
+				t.Fatalf("newMayflyConfig with no document failed: %v", err)
+			}
+
+			empty, err := newMayflyConfig(resolved, 10, 3, 50, &MayflyTuning{})
+			if err != nil {
+				t.Fatalf("newMayflyConfig with an empty document failed: %v", err)
+			}
+
+			// ObjectiveFunc and Rand are not set at this point, and neither is
+			// comparable anyway.
+			if !reflect.DeepEqual(absent, empty) {
+				t.Fatalf("an empty tuning document changed the configuration:\n absent=%+v\n  empty=%+v", absent, empty)
+			}
+		})
+	}
+}
+
+// TestMayflyTuningOverridesTheVariantDefault checks the precedence the ordering
+// in newMayflyConfig promises: the document is applied last and wins.
+func TestMayflyTuningOverridesTheVariantDefault(t *testing.T) {
+	rate := 0.5
+	tuning := &MayflyTuning{CoolingRate: &rate}
+
+	cfg, err := newMayflyConfig(ResolvedMayfly{Variant: "gsasma"}, 10, 3, 50, tuning)
+	if err != nil {
+		t.Fatalf("newMayflyConfig failed: %v", err)
+	}
+
+	if cfg.CoolingRate != rate {
+		t.Fatalf("tuning did not win: got %v want %v", cfg.CoolingRate, rate)
+	}
+
+	// A knob belonging to another dialect is refused rather than silently
+	// written, because mayfly ignores the fields of variants it is not running.
+	elite := 3
+	if _, err := newMayflyConfig(ResolvedMayfly{Variant: "gsasma"}, 10, 3, 50,
+		&MayflyTuning{EliteCount: &elite}); err == nil {
+		t.Fatal("expected a DESMA knob to be refused under GSASMA")
+	}
+}
+
+// TestMayflyPresetSelectsADialect covers the preset path, including the two
+// things about it that surprise: it chooses a dialect, so it cannot be combined
+// with an explicit variant; and it does not choose the size of the run.
+func TestMayflyPresetSelectsADialect(t *testing.T) {
+	t.Run("a preset picks the dialect and its knobs", func(t *testing.T) {
+		resolved, err := (&MayflyOptimizer{Preset: "highly_multimodal"}).resolve()
+		if err != nil {
+			t.Fatalf("resolve failed: %v", err)
+		}
+
+		cfg, err := newMayflyConfig(resolved, 10, 3, 50, nil)
+		if err != nil {
+			t.Fatalf("newMayflyConfig failed: %v", err)
+		}
+
+		if !cfg.UseOLCE {
+			t.Fatal("expected highly_multimodal to select OLCE")
+		}
+	})
+
+	t.Run("the run's budget wins over the preset's", func(t *testing.T) {
+		resolved, err := (&MayflyOptimizer{Preset: "high_dimensional"}).resolve()
+		if err != nil {
+			t.Fatalf("resolve failed: %v", err)
+		}
+
+		cfg, err := newMayflyConfig(resolved, 10, 3, 50, nil)
+		if err != nil {
+			t.Fatalf("newMayflyConfig failed: %v", err)
+		}
+
+		if cfg.MaxIterations != 50 || cfg.NPop != 10 {
+			t.Fatalf("preset overrode the run's budget: iters=%d pop=%d", cfg.MaxIterations, cfg.NPop)
+		}
+	})
+
+	t.Run("a preset and a variant together are refused", func(t *testing.T) {
+		if _, err := (&MayflyOptimizer{Preset: "multimodal", Variant: "gsasma"}).resolve(); err == nil {
+			t.Fatal("expected the combination to be refused")
+		}
+	})
+
+	t.Run("an unknown preset lists the alternatives in order", func(t *testing.T) {
+		err := (&MayflyOptimizer{Preset: "nope"}).Validate(50)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+
+		if !strings.Contains(err.Error(), "deceptive, fast_convergence") {
+			t.Fatalf("expected a sorted preset list, got %q", err)
+		}
+	})
+}
+
+// TestMayflyTuningCanNameTheVariant covers a document standing on its own, and
+// the rule that an explicitly configured variant still wins over it.
+func TestMayflyTuningCanNameTheVariant(t *testing.T) {
+	named := "mpma"
+
+	resolved, err := (&MayflyOptimizer{Tuning: &MayflyTuning{Variant: &named}}).resolve()
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+
+	if resolved.Variant != "mpma" {
+		t.Fatalf("document variant ignored: got %q", resolved.Variant)
+	}
+
+	resolved, err = (&MayflyOptimizer{Variant: "gsasma", Tuning: &MayflyTuning{Variant: &named}}).resolve()
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+
+	if resolved.Variant != "gsasma" {
+		t.Fatalf("an explicit variant must win over the document: got %q", resolved.Variant)
 	}
 }

@@ -24,6 +24,16 @@ type MayflyOptimizer struct {
 	// rather than "be unreproducible": see resolveSeed.
 	Seed int64
 
+	// Preset names one of mayfly's ConfigPresets, which picks a dialect and a
+	// starting set of knobs together. Empty selects none. It is mutually
+	// exclusive with an explicit Variant, because a preset already chose one.
+	Preset string
+
+	// Tuning overrides individual knobs on top of whatever the variant factory
+	// or the preset produced. Nil applies nothing, which is what keeps an
+	// untuned run identical to one configured before tuning existed.
+	Tuning *MayflyTuning
+
 	// MaxWorkers bounds parallel objective evaluation. Zero selects
 	// runtime.NumCPU(); one disables parallelism entirely. Parallel evaluation
 	// is safe because ObjectiveFunction.Objective hands out per-goroutine
@@ -43,9 +53,11 @@ type MayflyOptimizer struct {
 // has been resolved. The CLI prints it and records the seed in the checkpoint,
 // and the HTTP and WASM front ends echo it in their progress snapshots.
 type ResolvedMayfly struct {
-	// Variant is the dialect the run uses, after defaulting and alias
-	// resolution.
+	// Variant is the dialect the run uses, after defaulting, alias resolution
+	// and any preset.
 	Variant string
+	// Preset is the mayfly ConfigPreset the run started from, or empty.
+	Preset string
 	// Seed is the value the run's generator was constructed from, never zero.
 	Seed int64
 }
@@ -82,7 +94,10 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 
 	// Resolve every "choose one for me" input before the config is built, so
 	// the run and the report cannot disagree about what it used.
-	resolved := ResolvedMayfly{Variant: o.variant(), Seed: o.resolveSeed()}
+	resolved, err := o.resolve()
+	if err != nil {
+		return nil, err
+	}
 
 	cfg, err := o.buildConfig(resolved, len(initial), maxInt(1, opts.MaxIterations))
 	if err != nil {
@@ -124,14 +139,10 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 	return tracker.result(res), nil
 }
 
-func (o *MayflyOptimizer) variant() string {
-	v := strings.ToLower(strings.TrimSpace(o.Variant))
-	if v == "" {
-		return "desma"
-	}
-
-	return v
-}
+// defaultMayflyVariant is what a run uses when neither a variant nor a preset
+// was named. It is DESMA for historical reasons, and changing it would move
+// every default fit.
+const defaultMayflyVariant = "desma"
 
 func (o *MayflyOptimizer) population() int {
 	if o.Population >= 2 {
@@ -155,8 +166,46 @@ func (o *MayflyOptimizer) resolveSeed() int64 {
 	return time.Now().UnixNano()
 }
 
+// resolve settles the variant, the preset and the seed.
+//
+// The tuning document may name a variant or a preset so that a single file
+// describes a whole run, but an explicitly configured one wins: the front ends
+// set those fields only when the caller asked for them by name, so a struct
+// value is always a deliberate choice and a document value is a default.
+func (o *MayflyOptimizer) resolve() (ResolvedMayfly, error) {
+	resolved := ResolvedMayfly{
+		Variant: strings.ToLower(strings.TrimSpace(o.Variant)),
+		Preset:  strings.ToLower(strings.TrimSpace(o.Preset)),
+		Seed:    o.resolveSeed(),
+	}
+
+	if t := o.Tuning; t != nil {
+		if resolved.Variant == "" && t.Variant != nil {
+			resolved.Variant = strings.ToLower(strings.TrimSpace(*t.Variant))
+		}
+
+		if resolved.Preset == "" && t.Preset != nil {
+			resolved.Preset = strings.ToLower(strings.TrimSpace(*t.Preset))
+		}
+	}
+
+	// A preset picks a dialect of its own, so honouring both would apply half
+	// of each and match neither.
+	if resolved.Preset != "" && resolved.Variant != "" {
+		return ResolvedMayfly{}, fmt.Errorf(
+			"mayfly preset %q already selects a variant, so it cannot be combined with variant %q",
+			resolved.Preset, resolved.Variant)
+	}
+
+	if resolved.Preset == "" && resolved.Variant == "" {
+		resolved.Variant = defaultMayflyVariant
+	}
+
+	return resolved, nil
+}
+
 func (o *MayflyOptimizer) buildConfig(resolved ResolvedMayfly, dims, iters int) (*mayfly.Config, error) {
-	cfg, err := newMayflyConfig(resolved.Variant, o.population(), dims, iters)
+	cfg, err := newMayflyConfig(resolved, o.population(), dims, iters, o.Tuning)
 	if err != nil {
 		return nil, err
 	}
@@ -190,9 +239,12 @@ func (o *MayflyOptimizer) buildConfig(resolved ResolvedMayfly, dims, iters int) 
 // callers that need this answer know the budget but not yet the encoded
 // parameter count.
 func (o *MayflyOptimizer) Validate(maxIterations int) error {
-	resolved := ResolvedMayfly{Variant: o.variant(), Seed: o.resolveSeed()}
+	resolved, err := o.resolve()
+	if err != nil {
+		return err
+	}
 
-	_, err := o.buildConfig(resolved, 1, maxInt(1, maxIterations))
+	_, err = o.buildConfig(resolved, 1, maxInt(1, maxIterations))
 
 	return err
 }
@@ -216,13 +268,26 @@ func resolveVariant(name string) (mayfly.AlgorithmVariant, error) {
 	return selected, nil
 }
 
-func newMayflyConfig(variant string, pop, dims, iters int) (*mayfly.Config, error) {
-	selected, err := resolveVariant(variant)
+// newMayflyConfig builds the configuration for one run.
+//
+// The order matters and is the whole contract of the tuning surface:
+//
+//  1. the base, from a preset or from the variant factory;
+//  2. the problem shape, which describes the search space and the budget
+//     rather than the search, and so is not tunable at all;
+//  3. the scalar settings the caller passed as fields;
+//  4. the tuning document, last, so one sentence describes precedence: a
+//     written key wins over everything above it.
+//
+// Step 2 lands after step 1, so a preset's own MaxIterations and population --
+// fast_convergence sets 300 iterations, high_dimensional a population of 40 --
+// are replaced by the run's budget and --mayfly-pop. A preset selects a dialect
+// and its knobs here, not the size of the run.
+func newMayflyConfig(resolved ResolvedMayfly, pop, dims, iters int, tuning *MayflyTuning) (*mayfly.Config, error) {
+	cfg, variant, err := baseMayflyConfig(resolved)
 	if err != nil {
 		return nil, err
 	}
-
-	cfg := selected.GetConfig()
 
 	cfg.ProblemSize = dims
 	cfg.LowerBound = 0.0
@@ -247,11 +312,77 @@ func newMayflyConfig(variant string, pop, dims, iters int) (*mayfly.Config, erro
 	// only below a population of ten. A run that wants the old numbers back
 	// asks for them: {"nc": 20, "nm": 1} at a population of ten.
 
+	if err := tuning.Apply(cfg, variant); err != nil {
+		return nil, err
+	}
+
 	if err := validateMayflyConfig(cfg); err != nil {
 		return nil, err
 	}
 
 	return cfg, nil
+}
+
+// baseMayflyConfig produces the starting configuration and the canonical short
+// name of the dialect it selected. The name is what decides which of the
+// document's per-variant knobs are in scope, so it has to come from whatever
+// actually chose the dialect rather than from the caller's spelling of it.
+func baseMayflyConfig(resolved ResolvedMayfly) (*mayfly.Config, string, error) {
+	if resolved.Preset != "" {
+		cfg, err := mayfly.NewPresetConfig(mayfly.ConfigPreset(resolved.Preset))
+		if err != nil {
+			return nil, "", fmt.Errorf("%w, want one of %s", err, strings.Join(sortedMayflyPresets(), ", "))
+		}
+
+		return cfg, variantNameForConfig(cfg), nil
+	}
+
+	selected, err := resolveVariant(resolved.Variant)
+	if err != nil {
+		return nil, "", err
+	}
+
+	cfg := selected.GetConfig()
+
+	return cfg, variantNameForConfig(cfg), nil
+}
+
+// variantNameForConfig reads back the dialect a config selected. Mayfly encodes
+// the choice as one Use* flag rather than a name, and a preset never reports
+// which dialect it picked, so this is the only way to learn it.
+func variantNameForConfig(cfg *mayfly.Config) string {
+	switch {
+	case cfg.UseDESMA:
+		return "desma"
+	case cfg.UseOLCE:
+		return "olce"
+	case cfg.UseEOBBMA:
+		return "eobbma"
+	case cfg.UseGSASMA:
+		return "gsasma"
+	case cfg.UseMPMA:
+		return "mpma"
+	case cfg.UseAOBLMOA:
+		return "aoblmoa"
+	default:
+		return "ma"
+	}
+}
+
+// sortedMayflyPresets names the presets a run may select. ListPresets returns a
+// map, so the order it iterates in is not stable and an error message built
+// straight from it would differ between runs.
+func sortedMayflyPresets() []string {
+	presets := mayfly.ListPresets()
+
+	names := make([]string, 0, len(presets))
+	for name := range presets {
+		names = append(names, string(name))
+	}
+
+	sort.Strings(names)
+
+	return names
 }
 
 // validateMayflyConfig rejects configurations up front.
