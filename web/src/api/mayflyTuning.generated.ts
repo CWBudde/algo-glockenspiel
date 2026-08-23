@@ -164,7 +164,7 @@ export const MAYFLY_TUNING_FIELDS: readonly MayflyTuningField[] = [
     kind: "enum",
     variant: "",
     options: ["tournament", "rank"],
-    help: "How crossover pairs parents: \"rank\" mates the k-th best of each sex, \"tournament\" draws tournament_size candidates and mates the fittest.",
+    help: 'How crossover pairs parents: "rank" mates the k-th best of each sex, "tournament" draws tournament_size candidates and mates the fittest.',
   },
   {
     key: "tournament_size",
@@ -172,7 +172,7 @@ export const MAYFLY_TUNING_FIELDS: readonly MayflyTuningField[] = [
     kind: "int",
     variant: "",
     min: 0,
-    help: "Candidates drawn per tournament. Used only when selection is \"tournament\".",
+    help: 'Candidates drawn per tournament. Used only when selection is "tournament".',
   },
   {
     key: "vel_max",
@@ -390,7 +390,7 @@ export const MAYFLY_TUNING_FIELDS: readonly MayflyTuningField[] = [
     label: "Target cost",
     kind: "float",
     variant: "",
-    help: "Stop once the best cost reaches this value. Omitting the key disables the target, which is why zero is a usable target rather than \"off\".",
+    help: 'Stop once the best cost reaches this value. Omitting the key disables the target, which is why zero is a usable target rather than "off".',
   },
   {
     key: "min_improvement",

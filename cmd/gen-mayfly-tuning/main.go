@@ -26,6 +26,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 )
@@ -180,7 +181,16 @@ export function mayflyTuningFieldsFor(
 	return []byte(b.String())
 }
 
+// quote emits a TypeScript string literal the way prettier would, so the
+// generated file is already formatted and needs no ignore rule anywhere. Its
+// rule is to prefer double quotes and switch to single ones only when that
+// means fewer escapes -- a help text quoting a knob name is the case that
+// matters here.
 func quote(value string) string {
+	if strings.Contains(value, `"`) && !strings.Contains(value, "'") {
+		return "'" + strings.ReplaceAll(value, `\`, `\\`) + "'"
+	}
+
 	return strconv.Quote(value)
 }
 
@@ -246,19 +256,64 @@ See [optimizer.md](optimizer.md) for how the document fits into a run.
 			continue
 		}
 
-		b.WriteString("## " + section.title + "\n\n")
-		b.WriteString("| Key | Type | Range | Description |\n")
-		b.WriteString("| --- | --- | --- | --- |\n")
-
+		table := [][]string{{"Key", "Type", "Range", "Description"}}
 		for _, field := range rows {
-			b.WriteString("| `" + field.Key + "` | " + field.Kind + " | " +
-				markdownRange(field) + " | " + escapePipes(field.Help) + " |\n")
+			table = append(table, []string{
+				"`" + field.Key + "`", field.Kind,
+				markdownRange(field), escapePipes(field.Help),
+			})
 		}
 
+		b.WriteString("## " + section.title + "\n\n")
+		b.WriteString(renderTable(table))
 		b.WriteString("\n")
 	}
 
-	return []byte(b.String())
+	// The blank line after the last table is one section separator too many at
+	// the end of a file, and prettier trims it.
+	return []byte(strings.TrimRight(b.String(), "\n") + "\n")
+}
+
+// renderTable pads every column to its widest cell, which is what prettier does
+// to a markdown table. Generating it already padded keeps this file outside any
+// ignore list: one formatter, and `just fmt` cannot undo the generator.
+//
+// Widths are counted in runes rather than bytes so a non-ASCII cell does not
+// pad short.
+func renderTable(rows [][]string) string {
+	widths := make([]int, len(rows[0]))
+
+	for _, row := range rows {
+		for i, cell := range row {
+			if n := utf8.RuneCountInString(cell); n > widths[i] {
+				widths[i] = n
+			}
+		}
+	}
+
+	var b strings.Builder
+
+	writeRow := func(row []string) {
+		for i, cell := range row {
+			b.WriteString("| " + cell + strings.Repeat(" ", widths[i]-utf8.RuneCountInString(cell)) + " ")
+		}
+
+		b.WriteString("|\n")
+	}
+
+	writeRow(rows[0])
+
+	for _, width := range widths {
+		b.WriteString("| " + strings.Repeat("-", width) + " ")
+	}
+
+	b.WriteString("|\n")
+
+	for _, row := range rows[1:] {
+		writeRow(row)
+	}
+
+	return b.String()
 }
 
 // markdownRange renders a field's constraint the way the validator applies it.
