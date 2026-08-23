@@ -31,3 +31,6 @@ jobs:
 
   test-web:
     uses: ./.github/workflows/test-web.yaml
+
+  test-generated:
+    uses: ./.github/workflows/test-generated.yaml

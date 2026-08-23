@@ -1,0 +1,29 @@
+name: test-generated
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test-generated:
+    name: test-generated
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Go-Version
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The Mayfly tuning knob table lives once, in Go. The browser needs it to
+      # render only the knobs the selected dialect owns, and neither serving it
+      # from the API nor exporting it from WASM works: the API is absent on
+      # Pages, and the WASM module loads after the form renders. So it is
+      # generated, and this job fails if the checked-in mirror has drifted.
+      - name: Verify the generated Mayfly tuning table
+        run: go run ./cmd/gen-mayfly-tuning --check
