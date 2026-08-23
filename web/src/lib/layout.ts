@@ -15,8 +15,8 @@ export const BAR_NODE_RATIO = 0.224;
 export type BarKind = "natural" | "accidental";
 
 const BAR_WIDTH_PX: Readonly<Record<BarKind, number>> = {
-  natural: 32,
-  accidental: 32,
+  natural: 42,
+  accidental: 42,
 };
 
 const BAR_LANE_HEIGHT_PX: Readonly<Record<BarKind, number>> = {

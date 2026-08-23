@@ -792,11 +792,6 @@ h1 {
     radial-gradient(circle, #343536 0 20%, #a59273 23% 62%, #2c2824 65% 100%);
 }
 
-.bar:hover {
-  transform: translateX(-50%) translateY(-2px) scale(1.008);
-  filter: drop-shadow(0 7px 7px rgba(47, 36, 27, 0.22));
-}
-
 .bar.is-active {
   transform: translateX(-50%) translateY(-1px) scale(1.004);
   filter: drop-shadow(0 6px 7px rgba(47, 36, 27, 0.22)) brightness(1.1)

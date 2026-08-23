@@ -63,10 +63,10 @@ describe("rack depth geometry", () => {
       (entry) => computeBarGeometry(entry, "accidental").width,
     );
 
-    expect(new Set(naturalWidths)).toEqual(new Set([32]));
-    expect(new Set(accidentalWidths)).toEqual(new Set([32]));
+    expect(new Set(naturalWidths)).toEqual(new Set([42]));
+    expect(new Set(accidentalWidths)).toEqual(new Set([42]));
     expect(new Set([...naturalWidths, ...accidentalWidths])).toEqual(
-      new Set([32]),
+      new Set([42]),
     );
   });
 
