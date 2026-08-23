@@ -191,10 +191,10 @@ func newVoiceSlots(s *Synthesizer, maxVoices, frames int) []realtimeVoice {
 // further allocations and 654 KB, and it does not move construction time out of
 // the noise of the calibration it sits next to (38.7..41.3 ms before,
 // 39.1..42.8 ms after, three runs each). Both are paid once at startup.
-func NewRealtimeEngine(s *Synthesizer) *RealtimeEngine {
+func NewRealtimeEngine(synthesizer *Synthesizer) *RealtimeEngine {
 	engine := &RealtimeEngine{
-		synth:        s,
-		voices:       newVoiceSlots(s, defaultRealtimeMaxVoices, defaultRealtimeBlockFrames),
+		synth:        synthesizer,
+		voices:       newVoiceSlots(synthesizer, defaultRealtimeMaxVoices, defaultRealtimeBlockFrames),
 		mixBuffer:    make([]float32, defaultRealtimeBlockFrames*2),
 		masterGain:   0.7,
 		noteDuration: defaultVoiceDuration,
@@ -207,23 +207,31 @@ func NewRealtimeEngine(s *Synthesizer) *RealtimeEngine {
 		laneVoice:      make([]int32, defaultRealtimeMaxVoices),
 		interleavedIn:  make([]float32, defaultRealtimeBlockFrames*oscbank.LaneWidth),
 		interleavedOut: make([]float32, defaultRealtimeBlockFrames*oscbank.LaneWidth),
-		noteTrims:      calibrateNoteTrims(s),
+		noteTrims:      calibrateNoteTrims(synthesizer),
 		trimsFirst:     KeyboardFirstNote,
+		reverb:         newEngineReverb(synthesizer.sampleRate),
 	}
 
-	engine.banks = newVoiceBanks(s, len(engine.laneUsed))
-
-	// A reverb the sample rate is refused for leaves the engine dry rather than
-	// unbuilt. The constructor has nowhere to return an error to -- the same
-	// reason a voice that cannot be built leaves its slot empty -- and an
-	// instrument that plays without its room is a far better answer than one
-	// that does not play at all. The rate has already survived NewSynthesizer
-	// by the time it gets here, so this is a guard rather than a path.
-	if r, err := newStereoReverb(s.sampleRate, DefaultReverbParams()); err == nil {
-		engine.reverb = r
-	}
+	engine.banks = newVoiceBanks(synthesizer, len(engine.laneUsed))
 
 	return engine
+}
+
+// newEngineReverb builds the output bus reverb, or nil.
+//
+// A rate the reverb refuses leaves the engine dry rather than unbuilt. The
+// constructor has nowhere to return an error to -- the same reason a voice that
+// cannot be built leaves its slot empty -- and an instrument that plays without
+// its room is a far better answer than one that does not play at all. The rate
+// has already survived NewSynthesizer by the time it gets here, so this is a
+// guard rather than a path.
+func newEngineReverb(sampleRate int) *stereoReverb {
+	r, err := newStereoReverb(sampleRate, DefaultReverbParams())
+	if err != nil {
+		return nil
+	}
+
+	return r
 }
 
 // noLane is the lane index of a slot that is not sounding.

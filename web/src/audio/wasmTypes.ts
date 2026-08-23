@@ -29,6 +29,14 @@ export interface GlockenspielAudioWasm {
    * the sound it already had.
    */
   setPreset(presetId: string): string | undefined;
+  /**
+   * Sets how much of the output goes through the engine's room, 0..1.
+   *
+   * Unlike setPreset this rebuilds nothing and never interrupts the render, so
+   * it is safe to call as fast as a dial produces values. The engine glides the
+   * change in over a few milliseconds rather than applying it between blocks.
+   */
+  setReverb(mix: number): void;
   /** Renders one block and returns a pointer into the Go heap, or 0. */
   processBlock(frames: number): number;
 }
@@ -89,7 +97,8 @@ export function hasAudioExports(api: unknown): api is GlockenspielAudioWasm {
     typeof candidate.noteOn === "function" &&
     typeof candidate.processBlock === "function" &&
     typeof candidate.setMasterGain === "function" &&
-    typeof candidate.setPreset === "function"
+    typeof candidate.setPreset === "function" &&
+    typeof candidate.setReverb === "function"
   );
 }
 

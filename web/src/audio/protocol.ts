@@ -62,6 +62,17 @@ export type EngineCommand =
       type: "setPreset";
       presetId: string;
     }
+  | {
+      /**
+       * How much of the output goes through the engine's room, 0..1.
+       *
+       * It is a plain live setter, unlike setPreset: nothing is rebuilt, the
+       * render never stops, and the consumer therefore needs no warning that a
+       * gap is coming.
+       */
+      type: "setReverb";
+      mix: number;
+    }
   /** Drop the consumer and rebuild the pool, so a restart begins from a known state. */
   | { type: "stop" };
 

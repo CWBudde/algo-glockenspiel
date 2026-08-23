@@ -12,6 +12,9 @@ export interface ControlDeckProps {
   /** Strike velocity, 1..127, the MIDI range the engine takes. */
   velocity: number;
   onVelocityChange: (velocity: number) => void;
+  /** Reverb mix as a percentage, 0..100; the engine takes 0..1. */
+  reverb: number;
+  onReverbChange: (reverb: number) => void;
   status: string;
   statusIsError: boolean;
 }
@@ -35,6 +38,8 @@ export function ControlDeck({
   onPresetChange,
   velocity,
   onVelocityChange,
+  reverb,
+  onReverbChange,
   status,
   statusIsError,
 }: ControlDeckProps) {
@@ -76,6 +81,17 @@ export function ControlDeck({
         max={127}
         onChange={onVelocityChange}
         format={(value) => String(value)}
+        small
+      />
+
+      <Dial
+        id="reverb"
+        label="Reverb"
+        value={reverb}
+        min={0}
+        max={100}
+        onChange={onReverbChange}
+        format={(value) => `${value}%`}
         small
       />
 

@@ -16,12 +16,25 @@ function gainFromPercent(percent: number): number {
   return Math.min(1, Math.max(0.1, percent / 100));
 }
 
+/**
+ * Where the Reverb dial starts.
+ *
+ * Not zero. The engine's own default is dry, so every Go test and every offline
+ * render is unchanged by the feature existing, and the room is something the
+ * web app opts into. But a control that ships at the bottom of its range is a
+ * feature nobody finds, and a glockenspiel is the kind of bright, fast-decaying
+ * source a room flatters rather than blurs. A fifth of the way up is audible
+ * without being the point.
+ */
+const DEFAULT_REVERB_PERCENT = 20;
+
 export function App() {
   const [route, setRoute] = useState<Route>(() =>
     parseRoute(window.location.hash),
   );
   const [gainPercent, setGainPercent] = useState(70);
   const [presetId, setPresetId] = useState(DEFAULT_SOUND_PRESET_ID);
+  const [reverbPercent, setReverbPercent] = useState(DEFAULT_REVERB_PERCENT);
   const theme = useTheme();
 
   useEffect(() => {
@@ -49,6 +62,14 @@ export function App() {
     engine.client?.setPreset(presetId);
   }, [engine.client, presetId]);
 
+  // The room is pushed the same way and for the same reason, but without the
+  // preset's caveats: it costs no rebuild, so it can be sent on every step of a
+  // drag, and the module holds it across a preset swap so it does not have to
+  // be replayed here.
+  useEffect(() => {
+    engine.client?.setReverb(reverbPercent / 100);
+  }, [engine.client, reverbPercent]);
+
   const fitApi = useApiAvailable(route === "optimize");
   const wasmFit = useWasmFitWorker(
     route === "optimize" && fitApi.availability === "unavailable",
@@ -70,6 +91,8 @@ export function App() {
           onGainChange={setGainPercent}
           presetId={presetId}
           onPresetChange={setPresetId}
+          reverb={reverbPercent}
+          onReverbChange={setReverbPercent}
         />
       ) : (
         <OptimizePage api={fitApi} wasm={wasmFit} />

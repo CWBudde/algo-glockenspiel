@@ -54,6 +54,11 @@ var engines = map[string]*synth.RealtimeEngine{}
 // no setMasterGain has ever been sent still lands on the engine default.
 var globalMasterGain = float32(-1)
 
+// globalReverbMix remembers the reverb the page last asked for, for the same
+// reason globalMasterGain does: a rebuilt engine starts dry, and nothing on the
+// page knows the room went away, so nothing would put it back.
+var globalReverbMix = float32(-1)
+
 // globalSampleRate is what init was given, kept so setPreset can rebuild at the
 // same rate rather than making the page repeat itself.
 var globalSampleRate int
@@ -66,6 +71,7 @@ func main() {
 	api.Set("noteOn", js.FuncOf(wasmNoteOn))
 	api.Set("setMasterGain", js.FuncOf(wasmSetMasterGain))
 	api.Set("setPreset", js.FuncOf(wasmSetPreset))
+	api.Set("setReverb", js.FuncOf(wasmSetReverb))
 	api.Set("processBlock", js.FuncOf(wasmProcessBlock))
 
 	// The js.Func values above are never released, and no Go reference to them
@@ -190,6 +196,10 @@ func buildEngine(id string) interface{} {
 		engine.SetMasterGain(globalMasterGain)
 	}
 
+	if globalReverbMix >= 0 {
+		engine.SetReverbMix(globalReverbMix)
+	}
+
 	globalEngine = engine
 
 	return nil
@@ -211,6 +221,28 @@ func wasmSetMasterGain(_ js.Value, args []js.Value) interface{} {
 
 	globalMasterGain = float32(args[0].Float())
 	globalEngine.SetMasterGain(globalMasterGain)
+
+	return nil
+}
+
+// wasmSetReverb sets how much of the output goes through the room.
+//
+// Unlike setPreset this does not rebuild anything and does not interrupt the
+// render, so the worker has no gap to declare to the transport: the engine
+// keeps answering processBlock throughout, and the change glides in over the
+// next few milliseconds rather than landing between two blocks.
+func wasmSetReverb(_ js.Value, args []js.Value) interface{} {
+	if len(args) < 1 {
+		return nil
+	}
+
+	globalReverbMix = float32(args[0].Float())
+
+	if globalEngine == nil {
+		return nil
+	}
+
+	globalEngine.SetReverbMix(globalReverbMix)
 
 	return nil
 }

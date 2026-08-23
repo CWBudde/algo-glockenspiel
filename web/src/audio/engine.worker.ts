@@ -283,6 +283,14 @@ scope.onmessage = (event: MessageEvent<EngineCommand>) => {
       api?.setMasterGain(command.gain);
       break;
 
+    case "setReverb":
+      // No TransportPause and no pump(): nothing is rebuilt, so the render loop
+      // never goes quiet and there is no deliberate gap to declare. The module
+      // remembers the value across an engine rebuild the same way it remembers
+      // the master gain, so a swap does not silently drop the room.
+      api?.setReverb(command.mix);
+      break;
+
     case "setPreset": {
       presetId = command.presetId;
 

@@ -64,7 +64,7 @@ sends including the ones no component reads yet.
 
 Each Go module publishes exactly one global, `glockenspielWasm`, inside the
 worker that owns it. `cmd/glockenspiel-wasm` supplies `init`, `noteOn`,
-`setMasterGain`, `setPreset` and `processBlock`; `cmd/glockenspiel-fit-wasm`
+`setMasterGain`, `setPreset`, `setReverb` and `processBlock`; `cmd/glockenspiel-fit-wasm`
 supplies `fitStart`, `fitCancel`, `fitPreset` and `fitRender`. The workers have
 separate global scopes, and one namespace per module makes ownership visible at
 a glance.
@@ -117,6 +117,54 @@ static host has no service to ask, so a picker fed from the engine would be
 empty exactly when someone first looks at it -- and empty in the Playwright
 baselines. An unknown id is still refused in Go, so the generated list is a
 convenience rather than the authority.
+
+### The room
+
+The **Reverb** dial is the counter-example to everything the section above says
+about changing the sound, and it is worth reading as a pair with it. It is a
+live setter -- `setReverb` on the module, `SetReverbMix` on the engine -- and it
+rebuilds nothing. It has to be. A preset change is a thing someone does once
+from a menu and can afford a 165 ms calibration sweep; a dial is a thing someone
+drags, and it produces a value per pointer move. Paying a rebuild per step would
+stutter the transport for the length of the gesture. So there is no
+`TransportPause` on this path, no `pump()`, and no gap for the consumer to be
+warned about: the render loop never stops.
+
+The effect is `FDNReverb` from `algo-dsp`, not the Freeverb sitting next to it in
+the same package. The Freeverb's comb and allpass lengths are hardcoded sample
+counts calibrated for 44.1 kHz and it has no `SetSampleRate`, so at the 48 kHz an
+`AudioContext` frequently runs at it would render a room about 9% smaller and
+brighter than the one it was tuned to be. `FDNReverb` takes the rate in its
+constructor and rescales its reference delays to it. That correctness is not
+free: measured on the same machine, a 128-frame stereo block costs **3.0 us dry
+and 58.8 us wet**, because the network evaluates eight sines and eight Hermite
+interpolations per sample per channel. In absolute terms it is about 2% of
+real time for a 2.67 ms block, which the worker can afford; as a ratio it is the
+reason the dial resting at zero is an exact bypass that does not run the networks
+at all.
+
+There are two networks, one per channel, deliberately detuned from each other by
+a few milliseconds of pre-delay and a little modulation rate. A note in the
+middle of the keyboard is panned to the middle, so its channels are identical,
+and one shared network would return a mono tail pinned to the centre of an image
+the keyboard pan exists to spread out.
+
+The blend is done outside the networks -- they run wet-only, and the engine adds
+their output with a gain that moves per sample. Their own mix law applies one
+gain to a whole block, which is a step in the output every time the dial moves,
+and the loudest such step is a click the size of the tail. Ramping over 30 ms
+makes the whole range a glide. The consequence to know about is that a block can
+be non-silent with no voices in it at all: the tail outlives retirement by
+design, so anything that infers "nothing is playing" from `ActiveVoices` would
+cut it off.
+
+The dial is web-side state and is not part of any preset. The engine's own
+default is dry, so the CLI, the reference WAVs and the Go tests are unchanged by
+the feature existing, and the schema, the `model` package and the VST3 plugin
+were not touched. The page starts it at 20%. What the module does hold is the
+last value it was given, in `globalReverbMix`, replayed onto a rebuilt engine
+beside the master gain -- for the same reason: nothing on the page knows the
+room went away when the sound changed, so nothing would put it back.
 
 ### The ready handshake
 

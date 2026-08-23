@@ -339,6 +339,17 @@ Goal: fast first paint, usable by keyboard, and no controls that lie.
 - [x] Fix the `<h1>`, which still read "Algo Glockenspiel VST3" on a page that is not a VST3.
       It reads "Algo Glockenspiel".
 
+- [x] Give the deck a Reverb dial. `internal/synth` grew a stereo bus reverb around
+      `algo-dsp`'s `FDNReverb` -- two detuned networks, run wet-only, blended by the engine
+      with a per-sample ramp so the dial glides rather than clicks -- and
+      `cmd/glockenspiel-wasm` grew `setReverb` beside `setMasterGain`, replayed onto a
+      rebuilt engine the same way. It is a live setter, not a preset field: a preset change
+      costs a 165 ms calibration sweep and a dial produces a value per pointer move, so a
+      rebuild per step would stutter the transport for the length of the gesture. The engine
+      default is dry, which is why nothing else in the repository changed sound; the page
+      starts the dial at 20%. Measured cost of a 128-frame stereo block: 3.0 us dry against
+      58.8 us wet, and a closed dial is an exact bypass that does not run the networks.
+
 ### Phase 5.5: Visual and responsive redesign
 
 Goal: keep the warmth of a physical wooden instrument while replacing the repeated faux-wood,

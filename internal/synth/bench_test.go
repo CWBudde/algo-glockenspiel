@@ -228,3 +228,63 @@ func benchSynthesizer(b *testing.B, harmonics int) *Synthesizer {
 
 	return synthesizer
 }
+
+// BenchmarkProcessBlockReverb is the cost of the bus reverb, measured against
+// the same block with it closed.
+//
+// It is worth a number rather than an assumption. The engine renders on the
+// browser worker that also feeds the transport, against a queue four 128-frame
+// blocks deep -- about 11.6 ms at 44.1 kHz -- and the reverb adds sixteen
+// modulated delay lines with fractional reads to every block. The dry variant
+// is the baseline the wet one is read against; the difference between them is
+// what the dial costs.
+func BenchmarkProcessBlockReverb(b *testing.B) {
+	p, err := preset.Load(filepath.FromSlash("../../assets/presets/default.json"))
+	if err != nil {
+		b.Fatalf("load default preset: %v", err)
+	}
+
+	synthesizer, err := NewSynthesizer(p, 48000)
+	if err != nil {
+		b.Fatalf("NewSynthesizer failed: %v", err)
+	}
+
+	const (
+		blockFrames = 128
+		note        = 72
+		velocity    = 100
+	)
+
+	for _, mix := range []float32{0, 0.5} {
+		name := "dry"
+		if mix > 0 {
+			name = "wet"
+		}
+
+		b.Run(name, func(b *testing.B) {
+			engine := NewRealtimeEngine(synthesizer)
+			engine.SetReverbMix(mix)
+			engine.NoteOn(note, velocity)
+			engine.ProcessBlock(blockFrames)
+
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				// The note is restruck often enough that the bank is always
+				// sounding, so the measurement is of a busy block rather than
+				// of a tail on its own.
+				if i%64 == 0 {
+					engine.NoteOn(note, velocity)
+				}
+
+				_ = engine.ProcessBlock(blockFrames)
+			}
+
+			elapsed := b.Elapsed().Seconds()
+			if elapsed > 0 {
+				b.ReportMetric(float64(blockFrames*b.N)/elapsed, "frames/s")
+			}
+		})
+	}
+}

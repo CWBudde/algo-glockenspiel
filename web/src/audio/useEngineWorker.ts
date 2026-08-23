@@ -18,6 +18,8 @@ export interface EngineClient {
    * is rebuilt around the new bar rather than retuned underneath the old one.
    */
   setPreset(presetId: string): void;
+  /** Sets how much of the output goes through the engine's room, 0..1. */
+  setReverb(mix: number): void;
   /**
    * Prepares the engine for a sample rate and starts it rendering into `port`,
    * which is transferred to the worker. Resolves once the engine reports that
@@ -106,6 +108,9 @@ export function useEngineWorker(): EngineWorker {
       },
       setPreset(presetId) {
         send({ type: "setPreset", presetId });
+      },
+      setReverb(mix) {
+        send({ type: "setReverb", mix });
       },
       start(sampleRate, port) {
         return new Promise<void>((resolve, reject) => {

@@ -433,7 +433,7 @@ h1 {
 
 .control-deck {
   display: grid;
-  grid-template-columns: minmax(0, auto) auto auto minmax(240px, 1fr);
+  grid-template-columns: minmax(0, auto) auto auto auto minmax(240px, 1fr);
   align-items: center;
   gap: var(--space-4xl);
   padding: var(--space-lg) var(--space-4xl);
@@ -957,8 +957,13 @@ h1 {
     border-radius: var(--radius-group);
   }
 
+  /*
+   * Three columns rather than two, so the three dials sit in one row under the
+   * picker instead of leaving one of them alone on a row of its own. The
+   * picker and the status panel span the whole width either way.
+   */
   .control-deck {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: var(--space-xs);
     padding: var(--space-xs);
   }

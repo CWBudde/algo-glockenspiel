@@ -466,7 +466,7 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
         return { height: box.height, width: box.width };
       }),
     );
-  expect(compactTargets).toHaveLength(2);
+  expect(compactTargets).toHaveLength(3);
   expect(
     compactTargets.every(({ height, width }) => height >= 44 && width >= 44),
   ).toBe(true);
@@ -965,6 +965,7 @@ test("performance deck keeps native controls and live engine status", async ({
   const deck = page.getByRole("region", { name: "Performance controls" });
   const volume = deck.getByRole("slider", { name: "Volume" });
   const velocity = deck.getByRole("slider", { name: "Velocity" });
+  const reverb = deck.getByRole("slider", { name: "Reverb" });
   const status = deck.locator(".status-panel");
 
   await expect(deck).toBeVisible();
@@ -976,6 +977,10 @@ test("performance deck keeps native controls and live engine status", async ({
   await expect(velocity).toHaveAttribute("min", "1");
   await expect(velocity).toHaveAttribute("max", "127");
   await expect(velocity).toHaveValue("96");
+  await expect(reverb).toHaveAttribute("type", "range");
+  await expect(reverb).toHaveAttribute("min", "0");
+  await expect(reverb).toHaveAttribute("max", "100");
+  await expect(reverb).toHaveValue("20");
 
   await volume.focus();
   await volume.press("ArrowUp");
@@ -996,6 +1001,15 @@ test("performance deck keeps native controls and live engine status", async ({
   await velocity.fill("110");
   await expect(velocity).toHaveValue("110");
   await expect(deck.locator('output[for="velocity"]')).toHaveText("110");
+
+  // The reverb reads as a percentage like the volume does, and it is the one
+  // dial whose range reaches zero: a closed control is an exact bypass in the
+  // engine, so the bottom of this range has to be reachable.
+  await reverb.fill("0");
+  await expect(reverb).toHaveValue("0");
+  await expect(deck.locator('output[for="reverb"]')).toHaveText("0%");
+  await reverb.fill("45");
+  await expect(deck.locator('output[for="reverb"]')).toHaveText("45%");
 
   // The wood species is decor, not a performance control, and stays absent.
   // The sound is a performance control and is present -- the two assertions sit
@@ -1085,10 +1099,12 @@ test("performance dials share aged brass without changing their controls", async
   const faces = deck.locator(".dial-face");
   const volume = deck.getByRole("slider", { name: "Volume" });
   const velocity = deck.getByRole("slider", { name: "Velocity" });
+  const reverb = deck.getByRole("slider", { name: "Reverb" });
 
-  await expect(faces).toHaveCount(2);
+  await expect(faces).toHaveCount(3);
   await expect(faces.nth(0)).toHaveClass(/\bdial-face-aged-brass\b/);
   await expect(faces.nth(1)).toHaveClass(/\bdial-face-aged-brass\b/);
+  await expect(faces.nth(2)).toHaveClass(/\bdial-face-aged-brass\b/);
 
   const materials = await faces.evaluateAll((elements) =>
     elements.map((element) => {
@@ -1147,6 +1163,15 @@ test("performance dials share aged brass without changing their controls", async
   await expect(velocity).not.toHaveValue("96");
   await expect(deck.locator('output[for="velocity"]')).toHaveText(
     await velocity.inputValue(),
+  );
+
+  // The third face is driven the same way as the second, so the pointer
+  // gesture is asserted on the dial that was added last rather than only on
+  // the two that were there when this test was written.
+  await faces.nth(2).click({ position: { x: 33, y: 5 } });
+  await expect(reverb).not.toHaveValue("20");
+  await expect(deck.locator('output[for="reverb"]')).toHaveText(
+    `${await reverb.inputValue()}%`,
   );
 });
 

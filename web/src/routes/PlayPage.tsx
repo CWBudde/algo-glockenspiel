@@ -39,6 +39,9 @@ export interface PlayPageProps {
   /** The built-in sound the engine plays, held in App so it survives a tab switch. */
   presetId: string;
   onPresetChange: (presetId: string) => void;
+  /** Reverb mix as a percentage; the engine takes 0..1. */
+  reverb: number;
+  onReverbChange: (reverb: number) => void;
 }
 
 export function PlayPage({
@@ -48,6 +51,8 @@ export function PlayPage({
   onGainChange,
   presetId,
   onPresetChange,
+  reverb,
+  onReverbChange,
 }: PlayPageProps) {
   const [velocity, setVelocity] = useState(96);
   const { activeNotes, activate } = useNoteActivation();
@@ -152,6 +157,8 @@ export function PlayPage({
         onPresetChange={onPresetChange}
         velocity={velocity}
         onVelocityChange={setVelocity}
+        reverb={reverb}
+        onReverbChange={onReverbChange}
         status={status}
         statusIsError={statusIsError}
       />
