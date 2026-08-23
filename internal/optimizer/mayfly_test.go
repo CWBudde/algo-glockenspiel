@@ -16,7 +16,7 @@ import (
 )
 
 func TestMayflyConfigRejectsUnsupportedVariant(t *testing.T) {
-	if _, err := newMayflyConfig(ResolvedMayfly{Variant: "nope"}, 10, 3, 5, nil); err == nil {
+	if _, err := newMayflyConfig(ResolvedMayfly{Variant: "nope"}, 10, 3, 5, nil, nil); err == nil {
 		t.Fatal("expected unsupported variant to fail")
 	}
 }
@@ -490,12 +490,12 @@ func TestTuningZeroValueIsTodaysBehaviour(t *testing.T) {
 		t.Run(variant, func(t *testing.T) {
 			resolved := ResolvedMayfly{Variant: variant}
 
-			absent, err := newMayflyConfig(resolved, 10, 3, 50, nil)
+			absent, err := newMayflyConfig(resolved, 10, 3, 50, nil, nil)
 			if err != nil {
 				t.Fatalf("newMayflyConfig with no document failed: %v", err)
 			}
 
-			empty, err := newMayflyConfig(resolved, 10, 3, 50, &MayflyTuning{})
+			empty, err := newMayflyConfig(resolved, 10, 3, 50, &MayflyTuning{}, nil)
 			if err != nil {
 				t.Fatalf("newMayflyConfig with an empty document failed: %v", err)
 			}
@@ -515,7 +515,7 @@ func TestMayflyTuningOverridesTheVariantDefault(t *testing.T) {
 	rate := 0.5
 	tuning := &MayflyTuning{CoolingRate: &rate}
 
-	cfg, err := newMayflyConfig(ResolvedMayfly{Variant: "gsasma"}, 10, 3, 50, tuning)
+	cfg, err := newMayflyConfig(ResolvedMayfly{Variant: "gsasma"}, 10, 3, 50, tuning, nil)
 	if err != nil {
 		t.Fatalf("newMayflyConfig failed: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestMayflyTuningOverridesTheVariantDefault(t *testing.T) {
 	// written, because mayfly ignores the fields of variants it is not running.
 	elite := 3
 	if _, err := newMayflyConfig(ResolvedMayfly{Variant: "gsasma"}, 10, 3, 50,
-		&MayflyTuning{EliteCount: &elite}); err == nil {
+		&MayflyTuning{EliteCount: &elite}, nil); err == nil {
 		t.Fatal("expected a DESMA knob to be refused under GSASMA")
 	}
 }
@@ -543,7 +543,7 @@ func TestMayflyPresetSelectsADialect(t *testing.T) {
 			t.Fatalf("resolve failed: %v", err)
 		}
 
-		cfg, err := newMayflyConfig(resolved, 10, 3, 50, nil)
+		cfg, err := newMayflyConfig(resolved, 10, 3, 50, nil, nil)
 		if err != nil {
 			t.Fatalf("newMayflyConfig failed: %v", err)
 		}
@@ -559,7 +559,7 @@ func TestMayflyPresetSelectsADialect(t *testing.T) {
 			t.Fatalf("resolve failed: %v", err)
 		}
 
-		cfg, err := newMayflyConfig(resolved, 10, 3, 50, nil)
+		cfg, err := newMayflyConfig(resolved, 10, 3, 50, nil, nil)
 		if err != nil {
 			t.Fatalf("newMayflyConfig failed: %v", err)
 		}

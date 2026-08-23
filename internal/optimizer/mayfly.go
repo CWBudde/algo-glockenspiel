@@ -60,6 +60,14 @@ type ResolvedMayfly struct {
 	Preset string
 	// Seed is the value the run's generator was constructed from, never zero.
 	Seed int64
+	// Recommendation is why an automatically chosen dialect was chosen, and is
+	// empty unless the variant was "auto".
+	Recommendation string
+	// Confidence is how sure the selector was, in [0,1].
+	Confidence float64
+	// ClassifyEvaluations is what measuring the landscape cost. Those
+	// evaluations are included in the run's total.
+	ClassifyEvaluations int
 	// Rounds is how many consecutive searches the schedule runs, warm and cold
 	// together. One is a single search, which is the default.
 	Rounds int
@@ -105,24 +113,6 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 		return nil, err
 	}
 
-	// The schedule splits the caller's total budget into consecutive searches.
-	// The config is validated against the shortest of them, because that is the
-	// round a convergence window actually has to fit inside.
-	schedule := scheduleFor(o.Tuning)
-	budgets := schedule.plan(maxInt(1, opts.MaxIterations))
-
-	cfg, err := o.buildConfig(resolved, len(initial), schedule.shortestRound(maxInt(1, opts.MaxIterations)))
-	if err != nil {
-		return nil, err
-	}
-
-	resolved.Rounds = len(budgets)
-	resolved.IterationsPerRound = budgets[0]
-
-	if o.OnResolve != nil {
-		o.OnResolve(resolved)
-	}
-
 	// The time budget is expressed as a derived context so that mayfly stops
 	// the run itself. The previous approach - returning bestCost+1 from the
 	// objective past the deadline - fed a moving, fabricated cost back into
@@ -136,8 +126,43 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 		defer cancel()
 	}
 
+	// The tracker is created before the configuration because choosing a
+	// dialect automatically evaluates the objective, and those evaluations have
+	// to be counted like any other.
 	tracker := newMayflyTracker(objective, bounds, start, opts)
 	tracker.seedBaseline(initial)
+
+	var characteristics *mayfly.ProblemCharacteristics
+
+	if resolved.Variant == mayflyAutoVariant {
+		measured, recommendation, spent := classifyMayfly(
+			runCtx, tracker, len(initial), o.classifyEvaluations(), opts.TimeBudget)
+
+		characteristics = &measured
+		resolved.Variant = strings.ToLower(recommendation.Variant.Name())
+		resolved.Recommendation = recommendation.Reasoning
+		resolved.Confidence = recommendation.Confidence
+		resolved.ClassifyEvaluations = spent
+	}
+
+	// The schedule splits the caller's total budget into consecutive searches.
+	// The config is validated against the shortest of them, because that is the
+	// round a convergence window actually has to fit inside.
+	schedule := scheduleFor(o.Tuning)
+	budgets := schedule.plan(maxInt(1, opts.MaxIterations))
+
+	cfg, err := o.buildConfig(resolved, len(initial), schedule.shortestRound(maxInt(1, opts.MaxIterations)), characteristics)
+	if err != nil {
+		return nil, err
+	}
+
+	resolved.Rounds = len(budgets)
+	resolved.IterationsPerRound = budgets[0]
+
+	if o.OnResolve != nil {
+		o.OnResolve(resolved)
+	}
+
 	cfg.ObjectiveFunc = tracker.evaluate
 
 	var last *mayfly.Result
@@ -192,6 +217,16 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 // was named. It is DESMA for historical reasons, and changing it would move
 // every default fit.
 const defaultMayflyVariant = "desma"
+
+// classifyEvaluations is the cap the tuning document set on automatic dialect
+// selection, or zero to use the default.
+func (o *MayflyOptimizer) classifyEvaluations() int {
+	if o.Tuning == nil || o.Tuning.Schedule == nil || o.Tuning.Schedule.ClassifyEvals == nil {
+		return 0
+	}
+
+	return *o.Tuning.Schedule.ClassifyEvals
+}
 
 func (o *MayflyOptimizer) population() int {
 	if o.Population >= 2 {
@@ -253,8 +288,12 @@ func (o *MayflyOptimizer) resolve() (ResolvedMayfly, error) {
 	return resolved, nil
 }
 
-func (o *MayflyOptimizer) buildConfig(resolved ResolvedMayfly, dims, iters int) (*mayfly.Config, error) {
-	cfg, err := newMayflyConfig(resolved, o.population(), dims, iters, o.Tuning)
+func (o *MayflyOptimizer) buildConfig(
+	resolved ResolvedMayfly,
+	dims, iters int,
+	characteristics *mayfly.ProblemCharacteristics,
+) (*mayfly.Config, error) {
+	cfg, err := newMayflyConfig(resolved, o.population(), dims, iters, o.Tuning, characteristics)
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +336,14 @@ func (o *MayflyOptimizer) Validate(maxIterations int) error {
 	// convergence window has to fit inside a round, not inside the whole
 	// budget, so checking against the total would accept a window that can
 	// never fire.
-	_, err = o.buildConfig(resolved, 1, scheduleFor(o.Tuning).shortestRound(maxInt(1, maxIterations)))
+	// A request for "auto" is accepted without measuring anything: the dialect
+	// is chosen from the objective, which does not exist yet. Every setting
+	// that is not the dialect is still checked, against the default dialect.
+	if resolved.Variant == mayflyAutoVariant {
+		resolved.Variant = defaultMayflyVariant
+	}
+
+	_, err = o.buildConfig(resolved, 1, scheduleFor(o.Tuning).shortestRound(maxInt(1, maxIterations)), nil)
 
 	return err
 }
@@ -336,10 +382,23 @@ func resolveVariant(name string) (mayfly.AlgorithmVariant, error) {
 // fast_convergence sets 300 iterations, high_dimensional a population of 40 --
 // are replaced by the run's budget and --mayfly-pop. A preset selects a dialect
 // and its knobs here, not the size of the run.
-func newMayflyConfig(resolved ResolvedMayfly, pop, dims, iters int, tuning *MayflyTuning) (*mayfly.Config, error) {
+func newMayflyConfig(
+	resolved ResolvedMayfly,
+	pop, dims, iters int,
+	tuning *MayflyTuning,
+	characteristics *mayfly.ProblemCharacteristics,
+) (*mayfly.Config, error) {
 	cfg, variant, err := baseMayflyConfig(resolved)
 	if err != nil {
 		return nil, err
+	}
+
+	// Auto-tuning runs here, between the base and the problem shape, so its
+	// per-dialect adjustments land while its population and iteration
+	// adjustments are overwritten by the run's own budget below. Those two are
+	// not the library's to choose: the caller asked for a budget.
+	if characteristics != nil {
+		mayfly.AutoTuneConfig(cfg, *characteristics)
 	}
 
 	cfg.ProblemSize = dims
