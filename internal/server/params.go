@@ -129,7 +129,7 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 	// dialect named twice, and it prefers the field over the document -- so the
 	// default variant, which the client never asked for, must not be what
 	// refuses or overrides either of them.
-	case settings.MayflyPreset != "" || namesMayflyDialect(tuning):
+	case settings.MayflyPreset != "" || tuning.NamesDialect():
 		settings.MayflyVariant = ""
 	}
 
@@ -141,12 +141,6 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 	}
 
 	return settings, nil
-}
-
-// namesMayflyDialect reports whether a tuning document chooses the dialect
-// itself, either directly or through a preset.
-func namesMayflyDialect(tuning *optimizer.MayflyTuning) bool {
-	return tuning != nil && (tuning.Variant != nil || tuning.Preset != nil)
 }
 
 // formInt reads an optional integer form field and holds it to an inclusive

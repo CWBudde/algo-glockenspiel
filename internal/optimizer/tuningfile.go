@@ -135,6 +135,19 @@ type MayflyTuning struct {
 	Schedule    *MayflySchedule    `json:"schedule,omitempty"`
 }
 
+// NamesDialect reports whether the document chooses the dialect itself, either
+// directly or through a preset.
+//
+// The front ends need this because their variant setting carries a default the
+// caller never asked for. Passing that default on would make the engine either
+// ignore a document's own variant or refuse its preset as a dialect named
+// twice, so a document that describes a whole run would silently run another
+// algorithm. It is a method on the tuning rather than a copy in each front end
+// for the reason the document lives in this package at all.
+func (t *MayflyTuning) NamesDialect() bool {
+	return t != nil && (t.Variant != nil || t.Preset != nil)
+}
+
 // MayflyTuningField describes one knob: what it is called in JSON, what a human
 // should be told about it, and what values mayfly will accept.
 //

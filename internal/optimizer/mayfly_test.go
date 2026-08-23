@@ -679,6 +679,62 @@ func TestMayflyConvergenceStopsEarly(t *testing.T) {
 	})
 }
 
+// TestMayflyTargetCostEndsTheWholeSchedule pins that a scheduled run stops at
+// the target rather than working through the rest of its round plan. Without
+// the break the later rounds spend audio renders on a question already
+// answered, and a cold restart can finish on maximum_iterations -- reporting
+// the run as unconverged after it had converged.
+//
+// The assertion is an equality rather than a threshold: a four-round schedule
+// that meets the target in its first round must cost exactly what that round
+// costs on its own. Both runs share a seed, and the first round of the plan is
+// the same 100-iteration search either way.
+func TestMayflyTargetCostEndsTheWholeSchedule(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	target := 1e-6
+
+	run := func(t *testing.T, epochs, restarts, budget int) (int, *Result) {
+		t.Helper()
+
+		evaluations := 0
+
+		result, err := (&MayflyOptimizer{
+			Variant: "desma", Population: 8, Seed: 1, MaxWorkers: 1,
+			Tuning: &MayflyTuning{
+				Convergence: &MayflyConvergence{TargetCost: &target},
+				Schedule:    &MayflySchedule{Epochs: &epochs, Restarts: &restarts},
+			},
+		}).Optimize(context.Background(), func(x []float64) float64 {
+			evaluations++
+
+			return square(x[0]-1.25) + square(x[1]+2.5)
+		}, []float64{5, 5}, bounds, OptimizeOptions{MaxIterations: budget})
+		if err != nil {
+			t.Fatalf("Optimize failed: %v", err)
+		}
+
+		return evaluations, result
+	}
+
+	firstRoundOnly, single := run(t, 1, 0, 100)
+	scheduled, result := run(t, 2, 2, 400)
+
+	if !result.Converged || result.StopReason != string(mayfly.TerminationTargetCost) {
+		t.Fatalf("expected the schedule to end on the target cost, got converged=%v reason=%q",
+			result.Converged, result.StopReason)
+	}
+
+	if scheduled != firstRoundOnly {
+		t.Fatalf("a met target must end the schedule: the four-round run spent %d evaluations, its first round alone %d",
+			scheduled, firstRoundOnly)
+	}
+
+	if result.Iterations != single.Iterations {
+		t.Fatalf("expected %d iterations, the first round's own count, got %d",
+			single.Iterations, result.Iterations)
+	}
+}
+
 // TestMayflyPresetReportsTheDialectItChose closes a reporting gap: a preset
 // selects a dialect without naming one, so the resolved report was blank and
 // the caller could not see what had run.

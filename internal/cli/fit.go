@@ -372,7 +372,7 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		selectedOptimizer = &optimizer.SimpleOptimizer{}
 	case "mayfly":
 		selectedOptimizer = &optimizer.MayflyOptimizer{
-			Variant:    mayflyVariantFor(options),
+			Variant:    mayflyVariantFor(cmd, options, tuning),
 			Preset:     options.mayflyPreset,
 			Population: options.mayflyPop,
 			Seed:       options.mayflySeed,
@@ -648,12 +648,19 @@ func validateMayflyOptions(cmd *cobra.Command, options fitOptions) error {
 
 // mayflyVariantFor picks the variant the optimizer is configured with.
 //
-// A preset selects a dialect of its own, and the variant flag always carries a
-// default, so passing both through would make every --mayfly-preset run look
-// like the conflict validateMayflyOptions rejects. An explicitly written
-// variant never reaches here alongside a preset.
-func mayflyVariantFor(options fitOptions) string {
-	if options.mayflyPreset != "" {
+// --mayfly-variant always carries a default, and the engine refuses a dialect
+// named twice while preferring its Variant field over the tuning document. So
+// passing the default on would make every --mayfly-preset run look like the
+// conflict validateMayflyOptions rejects, and would silently override a
+// document that named its own dialect -- running desma while the file said
+// gsasma. A default nobody wrote must not decide either, so it yields to a
+// preset and to a document that chooses for itself.
+func mayflyVariantFor(cmd *cobra.Command, options fitOptions, tuning *optimizer.MayflyTuning) string {
+	if flagChanged(cmd, "mayfly-variant") {
+		return options.mayflyVariant
+	}
+
+	if options.mayflyPreset != "" || tuning.NamesDialect() {
 		return ""
 	}
 

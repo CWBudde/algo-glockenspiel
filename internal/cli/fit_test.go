@@ -1045,6 +1045,51 @@ func TestRunFitAppliesMayflyTuningDocument(t *testing.T) {
 	}
 }
 
+// TestRunFitTuningDocumentChoosesTheDialect covers a document that describes a
+// whole run rather than only its knobs. --mayfly-variant always carries a
+// default, and the engine prefers its Variant field over the document and
+// refuses a dialect named twice -- so passing that unwritten default on ran
+// desma while the file said gsasma, and turned a document naming a preset into
+// a variant/preset conflict.
+func TestRunFitTuningDocumentChoosesTheDialect(t *testing.T) {
+	for _, row := range []struct {
+		name     string
+		document string
+		expect   string
+	}{
+		{"variant", `{"variant": "gsasma"}`, "variant=gsasma"},
+		{"preset", `{"preset": "highly_multimodal"}`, "preset=highly_multimodal"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			dir := t.TempDir()
+			referencePath, _, _ := writeFitReference(t, dir)
+
+			tuningPath := writeTuningFile(t, dir, "tuning.json", row.document)
+
+			cmd := &cobra.Command{}
+
+			var out bytes.Buffer
+
+			cmd.SetOut(&out)
+			cmd.SetErr(io.Discard)
+
+			// The flag default stands, as it does for any caller who did not
+			// write --mayfly-variant.
+			options := mayflyFitOptions(referencePath, filepath.Join(dir, "fitted.json"), filepath.Join(dir, "work"))
+			options.mayflyVariant = "desma"
+			options.mayflyTuningPath = tuningPath
+
+			if err := runFit(cmd, options); err != nil {
+				t.Fatalf("runFit failed: %v", err)
+			}
+
+			if text := out.String(); !strings.Contains(text, row.expect) {
+				t.Fatalf("expected the document to choose the dialect (%s), got %q", row.expect, text)
+			}
+		})
+	}
+}
+
 func TestRunFitTuningDocumentWinsOverFlags(t *testing.T) {
 	dir := t.TempDir()
 	referencePath, _, _ := writeFitReference(t, dir)

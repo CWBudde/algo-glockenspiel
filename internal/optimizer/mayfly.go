@@ -214,6 +214,16 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 		tracker.finishRound(res)
 
 		last = res
+
+		// The target cost is the whole run's goal, not the round's: once it is
+		// met, further rounds only spend audio renders on a question already
+		// answered, and a cold restart could end on maximum_iterations and
+		// report the run as unconverged after it had converged. Stagnation is
+		// deliberately not a reason to stop -- escaping a stagnated basin is
+		// exactly what the next round is for.
+		if res.TerminationReason == mayfly.TerminationTargetCost {
+			break
+		}
 	}
 
 	return tracker.result(last), nil

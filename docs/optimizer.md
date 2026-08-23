@@ -45,6 +45,7 @@ legacy-reference regression test.
 `internal/wavio` is the single loader for the CLI, the server and the tests; there were three
 copies before, which is how the defect survived in all of them at once. The float fixture is
 documented in `testdata/reference/README.md`.
+
 ## Tuning the Mayfly search
 
 Mayfly ships seven algorithm dialects behind one configuration struct, and a
@@ -89,6 +90,13 @@ scalar flags, so precedence is one sentence: a written key wins. The scalar
 flags are themselves only a shorthand — each front end turns its flags into a
 tuning document and overlays the caller's file on top — so there is exactly one
 place a knob is written.
+
+A document may also name `variant` or `preset`, so that one file describes a
+whole run rather than only its knobs. Those are not tunable knobs and `Apply`
+never writes them; they are read when the caller did not choose a dialect
+itself. `--mayfly-variant` carries a default nobody wrote, so an unwritten flag
+yields to a document that chooses — but an explicitly written one still wins,
+and naming a dialect twice is an error rather than a silent preference.
 
 `nc` is the one key where "omitted" and "zero" genuinely differ. `-1` derives
 the offspring count from `nc_ratio`, `0` means no crossover at all, and omitting
@@ -156,6 +164,13 @@ never proves convergence, so the only claim made is the honest one: the run
 stopped for a convergence criterion instead of exhausting its iterations.
 `stopReason` can therefore now read `target_cost` or `stagnation` as well as
 `maximum_iterations`.
+
+A met `target_cost` ends the whole schedule, not just the round that reached it:
+the target is the run's goal, so the remaining rounds would only spend renders
+on a question already answered, and a cold restart could finish on
+`maximum_iterations` and report the run as unconverged after it had converged.
+Stagnation deliberately does not end the schedule — escaping a stagnated basin
+is exactly what the next round is for.
 
 A stagnation window is counted **within a round**, so one at least as wide as a
 round is rejected rather than accepted. That is not a hypothetical: `algo-piano`
