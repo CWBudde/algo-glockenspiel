@@ -1303,12 +1303,16 @@ test("Optimize reopens Advanced when one of its fields is invalid", async ({
   await summary.click();
   const optimizer = form.getByLabel("Optimizer", { exact: true });
   await optimizer.selectOption("mayfly");
-  await form.getByLabel("Population").fill("37");
-  await form.getByLabel("Seed").fill("42");
+  // Exact, because the tuning editor also offers "Male population" and
+  // "Female population" knobs that a substring match would collide with.
+  await form.getByLabel("Population", { exact: true }).fill("37");
+  await form.getByLabel("Seed", { exact: true }).fill("42");
   await optimizer.selectOption("simple");
   await optimizer.selectOption("mayfly");
-  await expect(form.getByLabel("Population")).toHaveValue("37");
-  await expect(form.getByLabel("Seed")).toHaveValue("42");
+  await expect(form.getByLabel("Population", { exact: true })).toHaveValue(
+    "37",
+  );
+  await expect(form.getByLabel("Seed", { exact: true })).toHaveValue("42");
   await form.getByLabel("Report every").fill("100001");
   await form.getByLabel("Reference recording (WAV)").setInputFiles({
     name: "reference.wav",

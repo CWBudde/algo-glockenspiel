@@ -369,6 +369,30 @@ export function tuningErrorKey(key: string): string {
   return `tuning-${key}`;
 }
 
+/**
+ * Knobs the form already offers as a field of their own, and which the knob
+ * editor therefore leaves out.
+ *
+ * These are the settings algo-piano's optimizer audit found to matter most --
+ * round length above all, then early stopping -- so they are promoted out of
+ * the long alphabetical list and given plain names near the top. Rendering them
+ * in both places would put two identically labelled inputs on one form, and no
+ * amount of documented precedence makes that readable.
+ *
+ * The CLI keeps both spellings, because there the shorthand saves writing a
+ * file at all. A form field is a form field either way, so there is nothing to
+ * save here.
+ */
+const PROMOTED_TUNING_KEYS = new Set([
+  "epochs",
+  "restarts",
+  "stagnation_iterations",
+  "target_cost",
+  "nc",
+  "nc_ratio",
+  "selection",
+]);
+
 /** Holds a knob to the range the generated table carries for it. */
 function tuningRangeError(
   field: MayflyTuningField,
@@ -591,7 +615,10 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
   const mayflyPreset = scalars.mayflyPreset.trim();
   const tuningVariant = mayflyPreset === "" ? mayflyVariant : "auto";
   const tuningFields = useMemo(
-    () => mayflyTuningFieldsFor(tuningVariant),
+    () =>
+      mayflyTuningFieldsFor(tuningVariant).filter(
+        (field) => !PROMOTED_TUNING_KEYS.has(field.key),
+      ),
     [tuningVariant],
   );
 
@@ -1631,6 +1658,12 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
                     document, and a knob that is left out keeps whatever the
                     dialect or the preset already chose. An untouched editor
                     sends no document at all.
+                  </p>
+
+                  <p className="fit-hint">
+                    The settings above are not repeated here. Male and female
+                    population are, because they override Population and may
+                    differ from each other; a knob set here wins.
                   </p>
 
                   {/*
