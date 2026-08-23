@@ -230,8 +230,22 @@ func newMayflyConfig(variant string, pop, dims, iters int) (*mayfly.Config, erro
 	cfg.MaxIterations = iters
 	cfg.NPop = pop
 	cfg.NPopF = pop
-	cfg.NC = 2 * pop
-	cfg.NM = maxInt(1, int(math.Round(0.05*float64(pop))))
+
+	// NC and NM are deliberately left alone. This used to force NC = 2*pop and
+	// NM = 5% of pop, which predate mayfly v0.5.0 giving NC a default of NCAuto
+	// with an NCRatio of 1.0.
+	//
+	// NC = 2*pop sits exactly on the limit validateOffspring enforces -- it
+	// means every male mates every iteration -- and so doubled the offspring
+	// evaluations of an iteration against the library's own considered choice,
+	// which is the value the whole 0.5.x behaviour was tuned against. The
+	// sibling algo-piano project measured the cost of an iteration at roughly
+	// 47.7 evaluations at a population of ten, and found that at a fixed
+	// evaluation budget cheaper iterations win.
+	//
+	// NM differed from mayfly's own 5% rule only in rounding up to one, and
+	// only below a population of ten. A run that wants the old numbers back
+	// asks for them: {"nc": 20, "nm": 1} at a population of ten.
 
 	if err := validateMayflyConfig(cfg); err != nil {
 		return nil, err
