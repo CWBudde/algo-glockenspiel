@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cwbudde/algo-glockenspiel/internal/browserfit"
+	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/cwbudde/algo-glockenspiel/internal/synth"
 	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
@@ -18,25 +19,7 @@ import (
 func TestBrowserFitRunsFromMemoryAndProducesArtifacts(t *testing.T) {
 	t.Parallel()
 
-	templateData, err := os.ReadFile(filepath.FromSlash("../../testdata/presets/minimal.json"))
-	if err != nil {
-		t.Fatalf("read template: %v", err)
-	}
-
-	template, err := preset.Decode(templateData, "test template")
-	if err != nil {
-		t.Fatalf("decode template: %v", err)
-	}
-
-	engine, err := synth.NewSynthesizer(template, 44100)
-	if err != nil {
-		t.Fatalf("build reference synthesizer: %v", err)
-	}
-
-	referenceData, err := wavio.MarshalMono(44100, engine.RenderNote(69, 100, 0.02))
-	if err != nil {
-		t.Fatalf("encode reference: %v", err)
-	}
+	templateData, referenceData := testReference(t)
 
 	prepared, err := browserfit.New(defaultRequest(), referenceData, templateData, nil)
 	if err != nil {
@@ -90,6 +73,10 @@ func TestDecodeRequestRejectsUnknownAndTrailingFields(t *testing.T) {
 	for _, document := range []string{
 		`{"note":69,"typo":true}`,
 		`{"note":69} {"note":70}`,
+		// The nested row is the one that justifies carrying the tuning document
+		// inline: DisallowUnknownFields reaches into it, so a misspelled knob is
+		// rejected here exactly as the standalone document parser rejects it.
+		`{"mayflyTuning":{"coolingrate":0.9}}`,
 	} {
 		if _, err := browserfit.DecodeRequest([]byte(document)); err == nil {
 			t.Fatalf("DecodeRequest(%q) succeeded, want error", document)
@@ -125,6 +112,27 @@ func TestBrowserFitValidatesBrowserControlledSettingsFirst(t *testing.T) {
 				request.Optimizer = "unknown"
 			},
 			message: `unsupported optimizer "unknown"`,
+		},
+		{
+			name: "epochs",
+			mutate: func(request *browserfit.Request) {
+				request.MayflyEpochs = 1001
+			},
+			message: "mayflyEpochs must be in [1,1000]",
+		},
+		{
+			name: "restarts",
+			mutate: func(request *browserfit.Request) {
+				request.MayflyRestarts = -1
+			},
+			message: "mayflyRestarts must be in [0,1000]",
+		},
+		{
+			name: "stagnation",
+			mutate: func(request *browserfit.Request) {
+				request.MayflyStagnation = -1
+			},
+			message: "mayflyStagnation must be in [0,",
 		},
 		{
 			name: "seed",
@@ -164,5 +172,123 @@ func defaultRequest() browserfit.Request {
 		MayflyVariant:    "desma",
 		MayflyPopulation: 10,
 		MayflySeed:       "1",
+		MayflyPreset:     "",
+		MayflyEpochs:     1,
+		MayflyRestarts:   0,
+		MayflyStagnation: 0,
+		MayflyTargetCost: nil,
+		MayflyNC:         nil,
+		MayflyNCRatio:    nil,
+		MayflySelection:  "",
+		MayflyTuning:     nil,
 	}
+}
+
+func TestBrowserFitRunsWithInlineMayflyTuning(t *testing.T) {
+	t.Parallel()
+
+	templateData, referenceData := testReference(t)
+
+	document := `{
+		"note":69,"velocity":100,"optimizer":"mayfly","metric":"rms",
+		"maxIterations":8,"timeBudget":"5s","reportEvery":1,
+		"align":false,"normalizeGain":false,
+		"mayflyVariant":"desma","mayflyPopulation":4,"mayflySeed":"7",
+		"mayflyEpochs":1,
+		"mayflyTuning":{"npop":6,"convergence":{"stagnation_iterations":3}}
+	}`
+
+	request, err := browserfit.DecodeRequest([]byte(document))
+	if err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+
+	if request.MayflyTuning == nil || request.MayflyTuning.NPop == nil || *request.MayflyTuning.NPop != 6 {
+		t.Fatalf("inline tuning = %+v, want npop 6", request.MayflyTuning)
+	}
+
+	prepared, err := browserfit.New(request, referenceData, templateData, nil)
+	if err != nil {
+		t.Fatalf("prepare browser fit: %v", err)
+	}
+
+	var resolved optimizer.ResolvedMayfly
+
+	prepared.OnMayflyResolve(func(report optimizer.ResolvedMayfly) { resolved = report })
+
+	result, err := prepared.Run(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("run browser fit: %v", err)
+	}
+
+	if result.Evaluations == 0 {
+		t.Fatal("fit reported no objective evaluations")
+	}
+
+	if resolved.Variant != "desma" || resolved.Seed != 7 {
+		t.Fatalf("resolved = %+v, want variant desma and seed 7", resolved)
+	}
+}
+
+func TestDecodeRequestDistinguishesMayflyNCStates(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		document string
+		want     *int
+	}{
+		{name: "absent", document: `{"note":69}`, want: nil},
+		{name: "zero", document: `{"note":69,"mayflyNc":0}`, want: intPointer(0)},
+		{name: "auto", document: `{"note":69,"mayflyNc":-1}`, want: intPointer(-1)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			request, err := browserfit.DecodeRequest([]byte(test.document))
+			if err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+
+			switch {
+			case test.want == nil && request.MayflyNC != nil:
+				t.Fatalf("mayflyNc = %d, want absent", *request.MayflyNC)
+			case test.want != nil && request.MayflyNC == nil:
+				t.Fatalf("mayflyNc absent, want %d", *test.want)
+			case test.want != nil && *request.MayflyNC != *test.want:
+				t.Fatalf("mayflyNc = %d, want %d", *request.MayflyNC, *test.want)
+			}
+		})
+	}
+}
+
+func intPointer(value int) *int { return &value }
+
+// testReference renders the minimal preset so a fit has something to match.
+func testReference(t *testing.T) (templateData, referenceData []byte) {
+	t.Helper()
+
+	templateData, err := os.ReadFile(filepath.FromSlash("../../testdata/presets/minimal.json"))
+	if err != nil {
+		t.Fatalf("read template: %v", err)
+	}
+
+	template, err := preset.Decode(templateData, "test template")
+	if err != nil {
+		t.Fatalf("decode template: %v", err)
+	}
+
+	engine, err := synth.NewSynthesizer(template, 44100)
+	if err != nil {
+		t.Fatalf("build reference synthesizer: %v", err)
+	}
+
+	referenceData, err = wavio.MarshalMono(44100, engine.RenderNote(69, 100, 0.02))
+	if err != nil {
+		t.Fatalf("encode reference: %v", err)
+	}
+
+	return templateData, referenceData
 }
