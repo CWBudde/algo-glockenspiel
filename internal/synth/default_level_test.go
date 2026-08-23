@@ -5,25 +5,32 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cwbudde/algo-glockenspiel/assets"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 )
 
-// wantDefaultPresetPeakDBFS pins the shipped preset's output level.
+// wantDefaultPresetPeakDBFS pins every shipped preset's output level.
 //
-// The preset used to render at a peak of about 6.174, roughly +15.8 dBFS. That
-// is not a taste question: a 16-bit render of it clips beyond recognition, and
-// any fit against a normalized recording has to travel some 16 dB of pure gain
-// before the modal structure it is supposed to be fitting matters at all. The
-// amplitudes were divided by 8.72 to land here, and this test exists so the
-// level cannot drift back unnoticed -- an edit to the modes that changes the
-// peak by more than a fraction of a dB has to say so.
+// The default preset used to render at a peak of about 6.174, roughly +15.8
+// dBFS. That is not a taste question: a 16-bit render of it clips beyond
+// recognition, and any fit against a normalized recording has to travel some
+// 16 dB of pure gain before the modal structure it is supposed to be fitting
+// matters at all. The amplitudes were divided by 8.72 to land here, and this
+// test exists so the level cannot drift back unnoticed -- an edit to the modes
+// that changes the peak by more than a fraction of a dB has to say so.
+//
+// It is a headroom rule, not a loudness rule, and the two are not the same
+// thing: a preset fitted to a bar with a tall strike transient reaches this
+// peak at a lower RMS than one fitted to a bar without. Matching the peaks is
+// what keeps a render from clipping at a sample rate the author did not pick;
+// what a preset then sounds like next to another one is a property of the bar.
 const (
 	wantDefaultPresetPeakDBFS    = -3.0
 	defaultPresetPeakToleranceDB = 0.25
 )
 
-// TestDefaultPresetRendersNearMinusThreeDBFS renders the shipped preset at its
-// own note and asserts the peak.
+// TestBuiltinPresetsRenderNearMinusThreeDBFS renders every embedded preset at
+// its own note and asserts the peak.
 //
 // It renders at 44.1 kHz, the rate the rest of the preset fixtures use. The
 // peak is mildly rate-dependent -- the strike is a single-sample impulse, so a
@@ -31,38 +38,36 @@ const (
 // out at about -2.3 dBFS -- which is why the tolerance guards a level rather
 // than an exact sample value, and why the target sits at -3 rather than at 0:
 // there has to be headroom for the rate the caller actually picks.
-func TestDefaultPresetRendersNearMinusThreeDBFS(t *testing.T) {
-	p, err := preset.Load(filepath.FromSlash("../../assets/presets/default.json"))
+//
+// It reads the embedded set rather than the directory, because the embedded set
+// is what ships and what the browser plays.
+func TestBuiltinPresetsRenderNearMinusThreeDBFS(t *testing.T) {
+	ids, err := assets.IDs()
 	if err != nil {
-		t.Fatalf("load default preset: %v", err)
+		t.Fatalf("assets.IDs: %v", err)
 	}
 
-	synthesizer, err := NewSynthesizer(p, 44100)
-	if err != nil {
-		t.Fatalf("NewSynthesizer: %v", err)
-	}
-
-	rendered := synthesizer.RenderNote(p.Note, 100, 1.0)
-	if len(rendered) == 0 {
-		t.Fatal("default preset rendered nothing")
-	}
-
-	peak := 0.0
-
-	for _, sample := range rendered {
-		if abs := math.Abs(float64(sample)); abs > peak {
-			peak = abs
+	for _, id := range ids {
+		p, err := assets.Preset(id)
+		if err != nil {
+			t.Fatalf("load preset %q: %v", id, err)
 		}
-	}
 
-	if peak <= 0 {
-		t.Fatal("default preset rendered silence")
-	}
+		synthesizer, err := NewSynthesizer(p, 44100)
+		if err != nil {
+			t.Fatalf("NewSynthesizer(%q): %v", id, err)
+		}
 
-	peakDBFS := 20 * math.Log10(peak)
-	if math.Abs(peakDBFS-wantDefaultPresetPeakDBFS) > defaultPresetPeakToleranceDB {
-		t.Fatalf("default preset peak = %.6f (%+.3f dBFS), want %+.1f dBFS within %.2f dB",
-			peak, peakDBFS, wantDefaultPresetPeakDBFS, defaultPresetPeakToleranceDB)
+		peak := peakOf(synthesizer.RenderNote(p.Note, 100, 1.0))
+		if peak <= 0 {
+			t.Fatalf("preset %q rendered silence at its own note", id)
+		}
+
+		peakDBFS := 20 * math.Log10(peak)
+		if math.Abs(peakDBFS-wantDefaultPresetPeakDBFS) > defaultPresetPeakToleranceDB {
+			t.Fatalf("preset %q peak = %.6f (%+.3f dBFS), want %+.1f dBFS within %.2f dB",
+				id, peak, peakDBFS, wantDefaultPresetPeakDBFS, defaultPresetPeakToleranceDB)
+		}
 	}
 }
 
