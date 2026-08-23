@@ -678,3 +678,30 @@ func TestMayflyConvergenceStopsEarly(t *testing.T) {
 		}
 	})
 }
+
+// TestMayflyPresetReportsTheDialectItChose closes a reporting gap: a preset
+// selects a dialect without naming one, so the resolved report was blank and
+// the caller could not see what had run.
+func TestMayflyPresetReportsTheDialectItChose(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+
+	var resolved ResolvedMayfly
+
+	_, err := (&MayflyOptimizer{
+		Preset: "highly_multimodal", Population: 6, Seed: 1, MaxWorkers: 1,
+		OnResolve: func(r ResolvedMayfly) { resolved = r },
+	}).Optimize(context.Background(), func(x []float64) float64 {
+		return square(x[0]-1.25) + square(x[1]+2.5)
+	}, []float64{5, 5}, bounds, OptimizeOptions{MaxIterations: 10})
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if resolved.Preset != "highly_multimodal" {
+		t.Fatalf("preset not reported: %q", resolved.Preset)
+	}
+
+	if resolved.Variant != "olce" {
+		t.Fatalf("expected the preset's dialect to be reported, got %q", resolved.Variant)
+	}
+}

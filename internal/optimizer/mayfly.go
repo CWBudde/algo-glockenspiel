@@ -157,6 +157,10 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 		return nil, err
 	}
 
+	// A preset chooses the dialect without naming it, so read it back off the
+	// configuration rather than leaving the report blank. This is idempotent for
+	// the paths that did name one.
+	resolved.Variant = variantNameForConfig(cfg)
 	resolved.Rounds = len(budgets)
 	resolved.IterationsPerRound = budgets[0]
 
