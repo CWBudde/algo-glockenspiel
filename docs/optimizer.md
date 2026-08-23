@@ -133,7 +133,7 @@ single search exactly.
 Which is worth reaching for is a measured question rather than a matter of
 taste. `algo-piano`'s optimizer audit found round length to be the dominant
 setting and warm starting the second-largest effect, while restarting cost more
-than it bought at typical budgets, and larger populations were *worse* at a
+than it bought at typical budgets, and larger populations were _worse_ at a
 fixed evaluation budget. Warm rounds are therefore the default shape and cold
 ones are opt-in.
 
