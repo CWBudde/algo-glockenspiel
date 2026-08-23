@@ -338,6 +338,33 @@ func (e *RealtimeEngine) trimForNote(note int) float32 {
 	return e.noteTrims[index]
 }
 
+// Silence retires every sounding voice at once, leaving the engine ready to
+// play but with nothing ringing.
+//
+// It is not a note-off and there is no release: the voices are abandoned where
+// they are. That is the point. It exists for the one thing that legitimately
+// cuts a note off mid-decay -- swapping the sound out from under the player --
+// and for the engine on the other side of that swap, which is the subtler half.
+// An engine that stops being processed stops retiring voices, because
+// retirement happens in ProcessBlock, so an engine kept for reuse comes back
+// holding whatever was ringing when it was set aside and resumes it as if no
+// time had passed. Silencing on the way in is what makes such an engine safe to
+// keep.
+//
+// It runs where a note-on runs -- the caller's audio thread -- and does the
+// same work retirement already does per block, so it allocates nothing and
+// takes no lock.
+func (e *RealtimeEngine) Silence() {
+	for i := range e.voices {
+		e.releaseLane(&e.voices[i])
+	}
+
+	// Truncating rather than clearing is what keeps the slots reusable: every
+	// slot past the length still carries the buffer and the warmed voice it was
+	// built with, and claimSlot re-slices into them rather than building more.
+	e.voices = e.voices[:0]
+}
+
 // SetMasterGain updates engine output gain.
 func (e *RealtimeEngine) SetMasterGain(gain float32) {
 	if gain < minRealtimeGain {

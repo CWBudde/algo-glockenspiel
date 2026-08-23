@@ -77,6 +77,24 @@ export interface RenderedBlock {
   buffer: Float32Array;
 }
 
+/**
+ * Worker -> consumer, warning that the producer is about to go quiet on
+ * purpose.
+ *
+ * Rebuilding the engine for a new sound takes far longer than the queue is
+ * deep, so the consumer runs dry. That silence is deliberate and must not be
+ * counted as a dropout: the counter is permanent and is shown in the deck, so
+ * without this a change of sound would leave the page reporting a fault that
+ * never happened. The queue re-primes itself on the next block, so there is no
+ * matching resume.
+ */
+export interface TransportPause {
+  type: "pause";
+}
+
+/** Everything the worker sends down the render channel. */
+export type TransportMessage = RenderedBlock | TransportPause;
+
 /** Consumer -> worker, the same buffer travelling back to be filled again. */
 export interface RecycledBuffer {
   type: "recycle";

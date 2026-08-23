@@ -132,4 +132,27 @@ describe("BlockQueue", () => {
     expect(queue.depth).toBe(0);
     expect(queue.underruns).toBe(0);
   });
+
+  it("stops counting dropouts after unprime, and starts again on the next block", () => {
+    const queue = new BlockQueue();
+    queue.push(interleaved(4, 1));
+
+    const [left, right] = output(4);
+    queue.fill(left, right, 4, () => undefined);
+    queue.fill(left, right, 4, () => undefined);
+    expect(queue.underruns).toBe(1);
+
+    // The producer is about to rebuild the engine, which outlasts the queue by
+    // more than an order of magnitude. That silence is deliberate.
+    queue.unprime();
+    queue.fill(left, right, 4, () => undefined);
+    queue.fill(left, right, 4, () => undefined);
+    expect(queue.underruns).toBe(1);
+
+    // Once it delivers again, a dry queue is a fault once more.
+    queue.push(interleaved(4, 9));
+    queue.fill(left, right, 4, () => undefined);
+    queue.fill(left, right, 4, () => undefined);
+    expect(queue.underruns).toBe(2);
+  });
 });

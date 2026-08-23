@@ -71,14 +71,36 @@ a glance.
 
 ### Changing the sound
 
-`setPreset` rebuilds the engine around another embedded preset rather than
-retuning the one that exists. `RealtimeEngine` has no preset API, and giving it
-one would mean reconfiguring oscillator banks underneath a running audio
-callback for a change someone made once, by hand, in a menu. A rebuild costs a
-level-calibration sweep -- 61 short renders -- and cannot leave a half-swapped
-bar behind. Notes ringing at that moment stop, which is what a patch change does
-on any sampler. The master gain is replayed onto the new engine in Go, because
-nothing on the page knows the volume changed and nothing would put it back.
+`setPreset` swaps in another engine rather than retuning the one that exists.
+`RealtimeEngine` has no preset API, and giving it one would mean reconfiguring
+oscillator banks underneath a running audio callback for a change someone made
+once, by hand, in a menu. Notes ringing at that moment stop, which is what a
+patch change does on any sampler. The master gain is replayed onto the new
+engine in Go, because nothing on the page knows the volume changed and nothing
+would put it back.
+
+Building an engine is expensive, and expensive on the wrong thread.
+`NewRealtimeEngine` measures the preset once per playable note to build its level
+trims: 44 ms natively for the shipped preset, and **165 to 190 ms measured in
+the browser**. The transport carries four 128-frame buffers, about 11.6 ms at
+44.1 kHz, so a rebuild on the worker that also feeds that transport outlasts the
+queue by more than an order of magnitude. Two things follow.
+
+**The engines are cached, one per preset id.** A sound is calibrated the first
+time it is chosen and never again: measured, the first swap costs 156 ms and
+every later one 0.2 ms. A cached engine is `Silence`d on the way back in,
+because retirement only happens in `ProcessBlock` and an engine nothing has been
+processing comes back holding whatever was ringing when it was set aside.
+
+**The transport is told the gap is deliberate.** Before the swap the worker
+posts a `pause` down the render channel and the consumer calls
+`BlockQueue.unprime`, which puts the queue back in the state it starts in, where
+silence is not yet a dropout -- the same reasoning `primed` already carried for
+the silence before the engine has ever delivered. The next block re-primes it,
+so there is no resume to send. Without it a first swap records **72 dropouts**
+in the deck's status line, permanently, for a fault that never happened; with it,
+none. Both consumers implement it: the worklet and the `ScriptProcessorNode`
+fallback.
 
 The choice reaches the module twice over, which is deliberate. `init` takes the
 preset id as an optional second argument and `setPreset` takes it on its own,

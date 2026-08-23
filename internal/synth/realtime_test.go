@@ -109,3 +109,47 @@ func blockStats(block []float32) (peak, rms float64) {
 
 	return peak, math.Sqrt(sum / float64(len(block)))
 }
+
+// TestSilenceRetiresEveryVoiceAndLeavesTheEngineUsable is the property a cached
+// engine depends on: an engine set aside mid-note must not resume that note
+// when it is picked up again, and it must still be able to play.
+func TestSilenceRetiresEveryVoiceAndLeavesTheEngineUsable(t *testing.T) {
+	engine := newTestEngine(t)
+
+	for _, note := range []int{60, 64, 67} {
+		engine.NoteOn(note, 100)
+	}
+
+	engine.ProcessBlock(defaultRealtimeBlockFrames)
+
+	if got := engine.ActiveVoices(); got != 3 {
+		t.Fatalf("active voices = %d before Silence, want 3", got)
+	}
+
+	engine.Silence()
+
+	if got := engine.ActiveVoices(); got != 0 {
+		t.Fatalf("active voices = %d after Silence, want 0", got)
+	}
+
+	// Silence abandons the notes rather than releasing them, so the very next
+	// block has to be digital silence. A tail here would be the stale note a
+	// reused engine must not resume.
+	if peak := peakOf(engine.ProcessBlock(defaultRealtimeBlockFrames)); peak != 0 {
+		t.Fatalf("peak = %g after Silence, want exact silence", peak)
+	}
+
+	engine.NoteOn(60, 100)
+
+	if got := engine.ActiveVoices(); got != 1 {
+		t.Fatalf("active voices = %d after a note-on, want 1", got)
+	}
+
+	if got := engine.DroppedNoteOns(); got != 0 {
+		t.Fatalf("dropped note-ons = %d, want 0: Silence left a slot unusable", got)
+	}
+
+	if peak := peakOf(engine.ProcessBlock(defaultRealtimeBlockFrames)); peak < silenceThreshold {
+		t.Fatalf("peak = %g after a note-on, want audio", peak)
+	}
+}

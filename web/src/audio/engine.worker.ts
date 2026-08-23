@@ -16,6 +16,7 @@ import type {
   EngineEvent,
   RecycledBuffer,
   RenderedBlock,
+  TransportPause,
 } from "./protocol";
 import { loadWasm } from "./loadWasm";
 import { hasAudioExports, type GlockenspielAudioWasm } from "./wasmTypes";
@@ -293,10 +294,25 @@ scope.onmessage = (event: MessageEvent<EngineCommand>) => {
         break;
       }
 
+      // Building an engine for a sound that has not been chosen before takes
+      // 165-190 ms in the browser, against a queue four blocks deep -- about
+      // 11.6 ms at 44.1 kHz. The consumer therefore runs dry, and it has to be
+      // told that the silence is deliberate or it will record more than a
+      // dozen dropouts for a fault that never happened. Sent unconditionally,
+      // because whether this particular swap is the cheap cached one is a fact
+      // on the Go side and not worth a round trip to learn.
+      const pause: TransportPause = { type: "pause" };
+      consumer?.postMessage(pause);
+
       const presetError = api.setPreset(presetId);
       if (typeof presetError === "string" && presetError.length > 0) {
         post({ type: "error", message: presetError });
       }
+
+      // The queue is empty and every buffer is back here, so nothing restarts
+      // the render loop on its own: the recycle messages that normally ask for
+      // the next block have all been delivered already.
+      pump();
 
       break;
     }

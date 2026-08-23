@@ -9,7 +9,7 @@ import (
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 )
 
-// wantDefaultPresetPeakDBFS pins every shipped preset's output level.
+// wantBuiltinPresetPeakDBFS pins every shipped preset's output level.
 //
 // The default preset used to render at a peak of about 6.174, roughly +15.8
 // dBFS. That is not a taste question: a 16-bit render of it clips beyond
@@ -25,8 +25,8 @@ import (
 // what keeps a render from clipping at a sample rate the author did not pick;
 // what a preset then sounds like next to another one is a property of the bar.
 const (
-	wantDefaultPresetPeakDBFS    = -3.0
-	defaultPresetPeakToleranceDB = 0.25
+	wantBuiltinPresetPeakDBFS    = -3.0
+	builtinPresetPeakToleranceDB = 0.25
 )
 
 // TestBuiltinPresetsRenderNearMinusThreeDBFS renders every embedded preset at
@@ -64,9 +64,9 @@ func TestBuiltinPresetsRenderNearMinusThreeDBFS(t *testing.T) {
 		}
 
 		peakDBFS := 20 * math.Log10(peak)
-		if math.Abs(peakDBFS-wantDefaultPresetPeakDBFS) > defaultPresetPeakToleranceDB {
+		if math.Abs(peakDBFS-wantBuiltinPresetPeakDBFS) > builtinPresetPeakToleranceDB {
 			t.Fatalf("preset %q peak = %.6f (%+.3f dBFS), want %+.1f dBFS within %.2f dB",
-				id, peak, peakDBFS, wantDefaultPresetPeakDBFS, defaultPresetPeakToleranceDB)
+				id, peak, peakDBFS, wantBuiltinPresetPeakDBFS, builtinPresetPeakToleranceDB)
 		}
 	}
 }

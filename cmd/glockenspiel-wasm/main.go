@@ -30,6 +30,19 @@ const (
 
 var globalEngine *synth.RealtimeEngine
 
+// engines caches one engine per preset id.
+//
+// Building one is not cheap: NewRealtimeEngine measures the preset once per
+// playable note to build its level trims, which is 44 ms natively for the
+// shipped preset and **165 to 190 ms measured in the browser**. The audio
+// transport carries four 128-frame buffers, about 11.6 ms at 44.1 kHz, so a
+// rebuild on the worker that also feeds that transport outlasts the queue by
+// more than an order of magnitude. Paying it once per preset instead of once
+// per swap turns a stall on every change of sound into a stall the first time
+// each sound is chosen -- which is also the only time the transport has to be
+// told to expect the gap.
+var engines = map[string]*synth.RealtimeEngine{}
+
 // globalMasterGain remembers the gain the page last asked for.
 //
 // Switching presets builds a new engine, and a new engine starts at its own
@@ -145,17 +158,34 @@ func wasmSetPreset(_ js.Value, args []js.Value) interface{} {
 // instrument that still plays its old sound, not a null engine that swallows
 // every later noteOn.
 func buildEngine(id string) interface{} {
+	// Resolved before it is used as a cache key, so "" and "default" cannot
+	// occupy two entries holding two engines for one sound.
+	if id == "" {
+		id = embeddedassets.DefaultID
+	}
+
 	p, err := embeddedassets.Preset(id)
 	if err != nil {
 		return err.Error()
 	}
 
-	s, err := synth.NewSynthesizer(p, globalSampleRate)
-	if err != nil {
-		return err.Error()
+	engine, cached := engines[id]
+	if !cached {
+		s, buildErr := synth.NewSynthesizer(p, globalSampleRate)
+		if buildErr != nil {
+			return buildErr.Error()
+		}
+
+		engine = synth.NewRealtimeEngine(s)
+		engines[id] = engine
 	}
 
-	engine := synth.NewRealtimeEngine(s)
+	// A cached engine comes back holding whatever was ringing when it was set
+	// aside, because retirement only happens in ProcessBlock and nothing has
+	// been processing it. Silencing on the way in is what keeps a swap from
+	// resuming a note the player cut off minutes ago.
+	engine.Silence()
+
 	if globalMasterGain >= 0 {
 		engine.SetMasterGain(globalMasterGain)
 	}

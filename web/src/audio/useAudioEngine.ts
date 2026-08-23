@@ -7,7 +7,7 @@ import {
   type ConsumePort,
   type RecycledBuffer,
   type RenderStats,
-  type RenderedBlock,
+  type TransportMessage,
 } from "./protocol";
 import { messageOf, type EngineClient } from "./useEngineWorker";
 
@@ -265,7 +265,13 @@ function buildFallback(
 ): ScriptProcessorNode {
   const queue = new BlockQueue();
 
-  port.onmessage = (event: MessageEvent<RenderedBlock>) => {
+  port.onmessage = (event: MessageEvent<TransportMessage>) => {
+    if (event.data.type === "pause") {
+      queue.unprime();
+
+      return;
+    }
+
     queue.push(event.data.buffer);
   };
   port.start();
