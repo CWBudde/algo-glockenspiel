@@ -121,6 +121,12 @@ type RealtimeEngine struct {
 	noteTrims  []float32
 	trimsFirst int
 
+	// reverb is the output bus effect, and the one thing in the engine that
+	// keeps producing sound after every voice has retired. It is nil only if
+	// the sample rate was rejected, which NewRealtimeEngine cannot report, so
+	// every use of it is guarded.
+	reverb *stereoReverb
+
 	// droppedNoteOns and lastDroppedNote are the diagnostic for a note-on the
 	// engine could not turn into a voice. See NoteOn for why the engine counts
 	// rather than reports, and why these are atomics.
@@ -206,6 +212,16 @@ func NewRealtimeEngine(s *Synthesizer) *RealtimeEngine {
 	}
 
 	engine.banks = newVoiceBanks(s, len(engine.laneUsed))
+
+	// A reverb the sample rate is refused for leaves the engine dry rather than
+	// unbuilt. The constructor has nowhere to return an error to -- the same
+	// reason a voice that cannot be built leaves its slot empty -- and an
+	// instrument that plays without its room is a far better answer than one
+	// that does not play at all. The rate has already survived NewSynthesizer
+	// by the time it gets here, so this is a guard rather than a path.
+	if r, err := newStereoReverb(s.sampleRate, DefaultReverbParams()); err == nil {
+		engine.reverb = r
+	}
 
 	return engine
 }
@@ -363,6 +379,14 @@ func (e *RealtimeEngine) Silence() {
 	// slot past the length still carries the buffer and the warmed voice it was
 	// built with, and claimSlot re-slices into them rather than building more.
 	e.voices = e.voices[:0]
+
+	// The room goes with the notes. It is the same argument the paragraph above
+	// makes for the voices: an engine set aside mid-tail and brought back later
+	// would otherwise resume a room the player left minutes ago, and a tail
+	// outliving the sound that caused it is the audible half of that.
+	if e.reverb != nil {
+		e.reverb.reset()
+	}
 }
 
 // SetMasterGain updates engine output gain.
@@ -376,6 +400,31 @@ func (e *RealtimeEngine) SetMasterGain(gain float32) {
 	}
 
 	e.masterGain = gain
+}
+
+// SetReverbMix updates how much of the output goes through the room, from 0
+// for a dry instrument to 1 for the most the engine offers.
+//
+// It is a live setter rather than a preset field on purpose. Changing a preset
+// rebuilds the engine, which costs a per-note calibration sweep -- 165 to 190
+// ms measured in the browser, against an audio queue about 11.6 ms deep -- and
+// that is a price a dial someone drags cannot pay once per step. Nothing here
+// reconfigures a delay line; it moves the target of a per-sample ramp.
+func (e *RealtimeEngine) SetReverbMix(mix float32) {
+	if e.reverb == nil {
+		return
+	}
+
+	e.reverb.setMix(float64(mix))
+}
+
+// ReverbMix reports the mix the engine is set to, 0 if it has no reverb.
+func (e *RealtimeEngine) ReverbMix() float32 {
+	if e.reverb == nil {
+		return 0
+	}
+
+	return float32(e.reverb.mix())
 }
 
 // NoteOn retriggers the requested bar.
@@ -670,6 +719,18 @@ func (e *RealtimeEngine) ProcessBlock(frames int) []float32 {
 	}
 
 	e.retireVoices()
+
+	// The reverb runs after the voices and before the clip: it is a bus effect,
+	// so it sees the finished mix, and the clip stays the last thing that
+	// touches the buffer so it still bounds everything that leaves the engine.
+	//
+	// It is also why a block can be non-silent with no voices in it at all.
+	// Retirement above is about the oscillators; the tail outlives them by
+	// design, and anything downstream that infers "nothing is playing" from
+	// ActiveVoices would cut it off.
+	if e.reverb != nil {
+		e.reverb.process(buf)
+	}
 
 	for i := range buf {
 		buf[i] = hardClip(buf[i])

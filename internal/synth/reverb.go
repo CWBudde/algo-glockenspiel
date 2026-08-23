@@ -46,8 +46,17 @@ func DefaultReverbParams() ReverbParams {
 const (
 	// maxWetGain is the wet gain a fully open mix control asks for. The dry
 	// path stays at unity, so this is how much reverb is added at the top of
-	// the range rather than how much dry is left.
+	// the range rather than how much dry is traded away for it.
 	maxWetGain = 0.75
+
+	// wetRampSeconds is how long the wet gain takes to cross its whole range
+	// when the control jumps. The control is a dial someone drags, so it
+	// arrives as a run of small steps rather than one large one, but a step
+	// applied instantly is still a discontinuity in the output, and the loudest
+	// case -- releasing the dial at one end and clicking the other -- is a jump
+	// of the entire range. Ramping it per sample makes every one of those a
+	// glide instead of a click.
+	wetRampSeconds = 0.03
 
 	// rightPreDelayOffset and rightModRateOffset detune the right channel's
 	// network from the left one. Two identical reverbs fed the two channels of
@@ -65,29 +74,30 @@ const (
 //
 // It is FDNReverb rather than the Freeverb beside it in algo-dsp for one
 // reason: the Freeverb's comb and allpass lengths are hardcoded sample counts
-// calibrated for 44.1 kHz and it has no SetSampleRate, so on the 48 kHz an
+// calibrated for 44.1 kHz and it has no SetSampleRate, so at the 48 kHz an
 // AudioContext often runs at it would render a room roughly 9% smaller and
 // brighter than the one it was tuned to be. FDNReverb takes the rate in its
 // constructor and rescales its reference delays to it.
+//
+// The networks are run wet-only -- dry 0, wet 1 -- and the blend is done here
+// rather than inside them. Their own mix law would apply one gain to a whole
+// block, which is exactly the discontinuity wetRampSeconds exists to avoid;
+// owning the blend is what lets the gain move per sample.
 type stereoReverb struct {
 	left  *reverb.FDNReverb
 	right *reverb.FDNReverb
 
-	// mix is the wet control, 0..1. wet gain is mix*maxWetGain; the dry gain
-	// is always 1.
-	mix float64
+	// target is where the control has been put, in wet gain, and wet is where
+	// the ramp has actually reached. They are equal except while a change is
+	// gliding in.
+	target float64
+	wet    float64
+	// step is how far wet may move per sample.
+	step float64
 
-	// tailFrames counts down the frames still worth processing after the mix
-	// reached zero. See process for why silence is not immediate.
-	tailFrames int
-	// tailLength is what tailFrames is reloaded with: RT60 at the engine's
-	// sample rate, so a tail that is closed off is allowed to decay by the full
-	// 60 dB before the network is reset and skipped.
-	tailLength int
-
-	// scratchL and scratchR deinterleave the block for the two mono networks.
-	// Grow-only, like the engine's mixBuffer, so a wider callback than the last
-	// one is the only thing that ever allocates here.
+	// scratchL and scratchR carry the block through the two mono networks.
+	// Grow-only, like the engine's mixBuffer, so a callback wider than any seen
+	// before is the only thing that ever allocates here.
 	scratchL []float64
 	scratchR []float64
 }
@@ -108,15 +118,11 @@ func newStereoReverb(sampleRate int, p ReverbParams) (*stereoReverb, error) {
 		return nil, fmt.Errorf("right channel: %w", err)
 	}
 
-	r := &stereoReverb{
-		left:       left,
-		right:      right,
-		tailLength: int(p.RT60 * float64(sampleRate)),
-	}
-
-	r.setMix(0)
-
-	return r, nil
+	return &stereoReverb{
+		left:  left,
+		right: right,
+		step:  maxWetGain / (wetRampSeconds * float64(sampleRate)),
+	}, nil
 }
 
 // newReverbChannel builds one network, offset from the nominal room by the two
@@ -127,11 +133,12 @@ func newReverbChannel(sampleRate int, p ReverbParams, preDelayOffset, modRateOff
 		return nil, err
 	}
 
-	// The dry gain never moves. The mix control rides the wet gain alone, so
-	// that a closed control is an exact bypass and an opening one adds a tail
-	// rather than trading the strike away for it -- a crossfade would make a
-	// glockenspiel go dull on the way to going wet.
-	if err := r.SetDry(1); err != nil {
+	// Wet-only: the caller blends. See the type comment.
+	if err := r.SetDry(0); err != nil {
+		return nil, err
+	}
+
+	if err := r.SetWet(1); err != nil {
 		return nil, err
 	}
 
@@ -156,10 +163,11 @@ func newReverbChannel(sampleRate int, p ReverbParams, preDelayOffset, modRateOff
 
 // setMix updates the wet control, clamped to 0..1.
 //
-// It allocates nothing and takes no lock: FDNReverb.SetWet is a field store,
-// and only SetSampleRate resizes the delay lines, which happens once in the
-// constructor. So this is safe to call between blocks on the thread that
-// renders them, which is the only thread that calls it.
+// It moves the ramp's target, not the gain, so a control that is dragged from
+// one end to the other is heard as a sweep rather than as a series of steps. It
+// allocates nothing and takes no lock -- it stores one float -- so it is safe
+// to call between blocks on the thread that renders them, which is the only
+// thread that calls it.
 func (r *stereoReverb) setMix(mix float64) {
 	if mix < 0 {
 		mix = 0
@@ -169,42 +177,35 @@ func (r *stereoReverb) setMix(mix float64) {
 		mix = 1
 	}
 
-	// Closing the control arms the tail budget. While it is open the budget is
-	// not consulted at all, so there is nothing to arm in the other direction.
-	if mix == 0 && r.mix > 0 {
-		r.tailFrames = r.tailLength
-	}
-
-	r.mix = mix
-
-	wet := mix * maxWetGain
-
-	// The errors are dropped on purpose: SetWet rejects only negative and
-	// non-finite values, and wet is a clamped product of two constants and a
-	// clamped input, so neither is reachable.
-	_ = r.left.SetWet(wet)
-	_ = r.right.SetWet(wet)
+	r.target = mix * maxWetGain
 }
 
-// reset clears the tail without changing the mix.
+// mix reports the control position the reverb is heading for, 0..1.
+func (r *stereoReverb) mix() float64 {
+	return r.target / maxWetGain
+}
+
+// reset clears the tail and lands the ramp on its target, leaving the reverb in
+// the state it would have been in had the current setting always been in force
+// and nothing had ever been played through it.
 func (r *stereoReverb) reset() {
 	r.left.Reset()
 	r.right.Reset()
-	r.tailFrames = 0
+	r.wet = r.target
 }
 
-// process applies the reverb to one block of interleaved stereo frames, in
-// place.
+// process adds the reverb to one block of interleaved stereo frames, in place.
 //
-// A closed mix is not immediately a skip. Turning the control to zero while a
-// tail is ringing has to let that tail decay rather than cut it off mid-air, so
-// the networks keep running for RT60 worth of frames afterwards -- their wet
-// gain is already zero, so what is still audible is only what the delay lines
-// held when the control closed. Once that budget is spent the state is cleared
-// and the block is left untouched, because a dry instrument should not go on
-// paying for sixteen modulated delay lines it contributes nothing to.
+// A control resting at zero is an exact bypass: the block is returned untouched
+// and the networks are not run at all, because a dry instrument should not pay
+// for sixteen modulated delay lines that contribute nothing. The state is
+// cleared on the way into that condition rather than left standing, so the
+// reverb does not resume a room from minutes ago when the control comes back
+// up. That does mean closing the control ends the tail rather than letting it
+// ring out, which is what a wet-mix control means: the ramp is there so it ends
+// without a click, not so it survives.
 func (r *stereoReverb) process(interleaved []float32) {
-	if r.mix == 0 && r.tailFrames <= 0 {
+	if r.target == 0 && r.wet == 0 {
 		return
 	}
 
@@ -226,20 +227,47 @@ func (r *stereoReverb) process(interleaved []float32) {
 	r.left.ProcessInPlace(left)
 	r.right.ProcessInPlace(right)
 
+	wet := r.wet
+
 	for i := range frames {
-		interleaved[i*2] = float32(left[i])
-		interleaved[i*2+1] = float32(right[i])
+		wet = approach(wet, r.target, r.step)
+
+		interleaved[i*2] += float32(wet * left[i])
+		interleaved[i*2+1] += float32(wet * right[i])
 	}
 
-	if r.mix == 0 {
-		r.tailFrames -= frames
+	r.wet = wet
 
-		if r.tailFrames <= 0 {
-			r.left.Reset()
-			r.right.Reset()
-			r.tailFrames = 0
+	// Reaching a closed control is where the networks are parked. Doing it here
+	// rather than in setMix is what keeps the ramp audible: the block that
+	// finishes the glide down is still a block the tail was mixed into.
+	if r.target == 0 && r.wet == 0 {
+		r.left.Reset()
+		r.right.Reset()
+	}
+}
+
+// approach moves value one step towards target without overshooting it.
+func approach(value, target, step float64) float64 {
+	if value < target {
+		value += step
+		if value > target {
+			return target
 		}
+
+		return value
 	}
+
+	if value > target {
+		value -= step
+		if value < target {
+			return target
+		}
+
+		return value
+	}
+
+	return target
 }
 
 // ensureScratch grows the deinterleave buffers to hold frames, and never
