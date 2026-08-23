@@ -23,6 +23,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -144,6 +145,26 @@ export const MAYFLY_TUNING_FIELDS: readonly MayflyTuningField[] = [
 		b.WriteString("  },\n")
 	}
 
+	b.WriteString("] as const;\n\n")
+
+	// The table above is flat, because that is how the CLI help and the docs
+	// read, but the document nests two blocks. Emitting the membership rather
+	// than letting the browser transcribe it means a key moved into or out of a
+	// block in Go cannot leave the form building the wrong shape.
+	b.WriteString(`/**
+ * The keys MAYFLY_TUNING_FIELDS lists flat that the document nests under
+ * "convergence". Derived from MayflyConvergence in
+ * internal/optimizer/tuningfile.go.
+ */
+export const MAYFLY_CONVERGENCE_KEYS: readonly string[] = [
+`)
+	writeKeys(&b, jsonKeys(optimizer.MayflyConvergence{}))
+	b.WriteString("] as const;\n\n")
+
+	b.WriteString(`/** The same, for MayflySchedule. */
+export const MAYFLY_SCHEDULE_KEYS: readonly string[] = [
+`)
+	writeKeys(&b, jsonKeys(optimizer.MayflySchedule{}))
 	b.WriteString("] as const;\n\n")
 
 	b.WriteString(`/** The knobs a dialect can set: the shared ones plus its own. */
@@ -288,4 +309,27 @@ func markdownRange(field optimizer.MayflyTuningField) string {
 
 func escapePipes(value string) string {
 	return strings.ReplaceAll(value, "|", "\\|")
+}
+
+// jsonKeys reads the json tag names off a struct, in declaration order.
+func jsonKeys(value any) []string {
+	fields := reflect.TypeOf(value)
+	keys := make([]string, 0, fields.NumField())
+
+	for i := range fields.NumField() {
+		tag := fields.Field(i).Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+
+		keys = append(keys, strings.Split(tag, ",")[0])
+	}
+
+	return keys
+}
+
+func writeKeys(b *strings.Builder, keys []string) {
+	for _, key := range keys {
+		b.WriteString("  " + quote(key) + ",\n")
+	}
 }

@@ -442,6 +442,25 @@ export const MAYFLY_TUNING_FIELDS: readonly MayflyTuningField[] = [
   },
 ] as const;
 
+/**
+ * The keys MAYFLY_TUNING_FIELDS lists flat that the document nests under
+ * "convergence". Derived from MayflyConvergence in
+ * internal/optimizer/tuningfile.go.
+ */
+export const MAYFLY_CONVERGENCE_KEYS: readonly string[] = [
+  "target_cost",
+  "min_improvement",
+  "stagnation_iterations",
+  "min_iterations",
+] as const;
+
+/** The same, for MayflySchedule. */
+export const MAYFLY_SCHEDULE_KEYS: readonly string[] = [
+  "epochs",
+  "restarts",
+  "classify_evals",
+] as const;
+
 /** The knobs a dialect can set: the shared ones plus its own. */
 export function mayflyTuningFieldsFor(
   variant: string,

@@ -5,6 +5,7 @@ import {
   isTerminal,
   type FitRequestFields,
   type FitSnapshot,
+  type MayflyTuningDocument,
 } from "../../api/types";
 import type { FitWorkerCommand, FitWorkerEvent } from "./fitProtocol";
 import { recordPoint, type CostPoint, type FitEvents } from "./useFitEvents";
@@ -47,7 +48,57 @@ function formBoolean(form: FormData, name: string, fallback: boolean): boolean {
   return formString(form, name, String(fallback)) === "true";
 }
 
-function requestFromForm(form: FormData): FitRequestFields {
+/**
+ * Reads an optional number, keeping "absent" apart from a written zero.
+ *
+ * The three knobs this reads all have a meaningful zero -- a cost target of
+ * zero is a target, and mayfly reserves -1 and 0 of the offspring count for
+ * two different things -- so an absent field has to stay absent rather than
+ * fall back to a value.
+ */
+function formOptionalNumber(form: FormData, name: string): number | undefined {
+  const value = form.get(name);
+
+  if (typeof value !== "string" || value.trim() === "") {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+/**
+ * Lifts the tuning document out of the multipart body and back into JSON.
+ *
+ * This is the one place the two front ends genuinely diverge, and it looks
+ * like an oversight without the reason: over HTTP the document is a multipart
+ * **file part** named `mayflyTuning`, read by `readMayflyTuningPart` with
+ * FormFile exactly as `bounds` is. The WASM entry point cannot take a second
+ * file -- `fitStart` has a fixed five-argument contract -- so
+ * `browserfit.Request` carries the document inline in the request JSON
+ * instead. The form builds one body for both, so the blob is decoded here.
+ */
+async function tuningFromForm(
+  form: FormData,
+): Promise<MayflyTuningDocument | undefined> {
+  const part = form.get("mayflyTuning");
+
+  if (!(part instanceof Blob)) {
+    return undefined;
+  }
+
+  return JSON.parse(await part.text()) as MayflyTuningDocument;
+}
+
+function requestFromForm(
+  form: FormData,
+  tuning: MayflyTuningDocument | undefined,
+): FitRequestFields {
+  const targetCost = formOptionalNumber(form, "mayflyTargetCost");
+  const nc = formOptionalNumber(form, "mayflyNc");
+  const ncRatio = formOptionalNumber(form, "mayflyNcRatio");
+
   return {
     note: formNumber(form, "note", DEFAULT_FIT_REQUEST.note),
     velocity: formNumber(form, "velocity", DEFAULT_FIT_REQUEST.velocity),
@@ -89,6 +140,38 @@ function requestFromForm(form: FormData): FitRequestFields {
       DEFAULT_FIT_REQUEST.mayflyPopulation,
     ),
     mayflySeed: formString(form, "mayflySeed", DEFAULT_FIT_REQUEST.mayflySeed),
+    mayflyPreset: formString(
+      form,
+      "mayflyPreset",
+      DEFAULT_FIT_REQUEST.mayflyPreset,
+    ),
+    mayflyEpochs: formNumber(
+      form,
+      "mayflyEpochs",
+      DEFAULT_FIT_REQUEST.mayflyEpochs,
+    ),
+    mayflyRestarts: formNumber(
+      form,
+      "mayflyRestarts",
+      DEFAULT_FIT_REQUEST.mayflyRestarts,
+    ),
+    mayflyStagnation: formNumber(
+      form,
+      "mayflyStagnation",
+      DEFAULT_FIT_REQUEST.mayflyStagnation,
+    ),
+    mayflySelection: formString(
+      form,
+      "mayflySelection",
+      DEFAULT_FIT_REQUEST.mayflySelection,
+    ),
+    // Spread rather than assigned: with exactOptionalPropertyTypes a written
+    // `undefined` is not the same as an absent key, and absent is what these
+    // three have to be.
+    ...(targetCost === undefined ? {} : { mayflyTargetCost: targetCost }),
+    ...(nc === undefined ? {} : { mayflyNc: nc }),
+    ...(ncRatio === undefined ? {} : { mayflyNcRatio: ncRatio }),
+    ...(tuning === undefined ? {} : { mayflyTuning: tuning }),
   };
 }
 
@@ -177,10 +260,11 @@ export function useWasmFitWorker(enabled: boolean): WasmFitWorker {
 
     const fitClient: WasmFitClient = {
       async start(form) {
-        const [reference, preset, bounds] = await Promise.all([
+        const [reference, preset, bounds, tuning] = await Promise.all([
           partBytes(form, "reference", true),
           partBytes(form, "preset"),
           partBytes(form, "bounds"),
+          tuningFromForm(form),
         ]);
 
         return new Promise<FitSnapshot>((resolve, reject) => {
@@ -188,7 +272,7 @@ export function useWasmFitWorker(enabled: boolean): WasmFitWorker {
           send(
             {
               type: "start",
-              request: requestFromForm(form),
+              request: requestFromForm(form, tuning),
               reference,
               preset,
               bounds,
