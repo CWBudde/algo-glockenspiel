@@ -17,14 +17,8 @@ import type {
   RecycledBuffer,
   RenderedBlock,
 } from "./protocol";
-import { wasmModuleURL } from "./moduleURL";
-import {
-  hasEveryExport,
-  WASM_NAMESPACE,
-  WASM_READY_CALLBACK,
-  WASM_READY_TIMEOUT_MS,
-  type GlockenspielWasm,
-} from "./wasmTypes";
+import { loadWasm } from "./loadWasm";
+import { hasAudioExports, type GlockenspielAudioWasm } from "./wasmTypes";
 
 /**
  * The slice of the worker global scope this file touches, declared locally
@@ -36,15 +30,11 @@ import {
 interface WorkerScope {
   postMessage(message: EngineEvent): void;
   onmessage: ((event: MessageEvent<EngineCommand>) => void) | null;
-  setTimeout: typeof setTimeout;
-  clearTimeout: typeof clearTimeout;
-  [WASM_READY_CALLBACK]?: (api?: GlockenspielWasm) => void;
-  [WASM_NAMESPACE]?: GlockenspielWasm;
 }
 
 const scope = self as unknown as WorkerScope;
 
-let api: GlockenspielWasm | null = null;
+let api: GlockenspielAudioWasm | null = null;
 let memory: WebAssembly.Memory | null = null;
 let loading: Promise<void> | null = null;
 
@@ -144,35 +134,6 @@ export function messageOf(error: unknown): string {
 }
 
 /**
- * waitForWasmReady installs the hook the Go module invokes once its exports are
- * published, and resolves with the namespace object it passes.
- *
- * The hook has to be installed before the runtime starts, because Go calls it
- * from inside `go.run(...)` -- the module's main runs synchronously up to the
- * point where it blocks -- so there is no later moment at which registering it
- * would still be in time. The timeout only turns a module that died before
- * publishing its exports into a visible error.
- */
-function waitForWasmReady(): Promise<GlockenspielWasm | undefined> {
-  return new Promise((resolve, reject) => {
-    const timer = scope.setTimeout(() => {
-      delete scope[WASM_READY_CALLBACK];
-      reject(
-        new Error(
-          `WASM module did not signal ready within ${WASM_READY_TIMEOUT_MS} ms`,
-        ),
-      );
-    }, WASM_READY_TIMEOUT_MS);
-
-    scope[WASM_READY_CALLBACK] = (ready) => {
-      scope.clearTimeout(timer);
-      delete scope[WASM_READY_CALLBACK];
-      resolve(ready ?? scope[WASM_NAMESPACE]);
-    };
-  });
-}
-
-/**
  * load fetches the shim and the module and runs the Go runtime.
  *
  * wasm_exec.js is imported for its side effect rather than fetched and eval'd:
@@ -183,55 +144,21 @@ function waitForWasmReady(): Promise<GlockenspielWasm | undefined> {
  * is why it is imported by URL and never bundled.
  */
 async function load(baseURL: string): Promise<void> {
-  await import(/* @vite-ignore */ new URL("wasm_exec.js", baseURL).href);
+  const loaded = await loadWasm(
+    baseURL,
+    "audio",
+    hasAudioExports,
+    (runtimeError: unknown) => {
+      rendering = false;
+      post({
+        type: "error",
+        message: `WASM runtime stopped: ${messageOf(runtimeError)}`,
+      });
+    },
+  );
 
-  const go = new Go();
-  const moduleURL = await wasmModuleURL(baseURL);
-  const response = await fetch(moduleURL);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch WASM: ${response.status}`);
-  }
-
-  let result: WebAssembly.WebAssemblyInstantiatedSource;
-  try {
-    result = await WebAssembly.instantiateStreaming(
-      response.clone(),
-      go.importObject,
-    );
-  } catch {
-    // A server that does not send application/wasm refuses streaming
-    // instantiation; the buffered path works regardless of content type.
-    const bytes = await response.arrayBuffer();
-    result = await WebAssembly.instantiate(bytes, go.importObject);
-  }
-
-  const exports = result.instance.exports;
-  const wasmMemory = exports.mem ?? exports.memory;
-  if (!(wasmMemory instanceof WebAssembly.Memory)) {
-    throw new Error("WASM memory export not found");
-  }
-
-  memory = wasmMemory;
-
-  const ready = waitForWasmReady();
-  // go.run resolves when the Go program exits, which for this module means it
-  // died: main blocks forever on purpose. Reporting that beats leaving an
-  // unhandled rejection in a console nobody is looking at, next to an
-  // instrument that stopped making sound.
-  void go.run(result.instance).catch((runtimeError: unknown) => {
-    rendering = false;
-    post({
-      type: "error",
-      message: `WASM runtime stopped: ${messageOf(runtimeError)}`,
-    });
-  });
-
-  const exportsReady = await ready;
-  if (!hasEveryExport(exportsReady)) {
-    throw new Error(`${WASM_NAMESPACE} is missing its exports`);
-  }
-
-  api = exportsReady;
+  api = loaded.api;
+  memory = loaded.memory;
   post({ type: "loaded" });
 }
 

@@ -12,7 +12,7 @@ export interface ApiProbe {
 }
 
 /**
- * Probes `GET api/version` once on mount.
+ * Probes `GET api/version` when the Optimize route first needs a backend.
  *
  * The same bundle is served two ways. Under `glockenspiel serve` the whole fit
  * API is there; on GitHub Pages none of it is, and there is no /api/ catch-all
@@ -24,13 +24,17 @@ export interface ApiProbe {
  * One probe, no retry: the answer cannot change without a reload, because what
  * it really reports is which of the two deployments served the page.
  */
-export function useApiAvailable(): ApiProbe {
+export function useApiAvailable(enabled = true): ApiProbe {
   const [probe, setProbe] = useState<ApiProbe>({
     availability: "probing",
     version: null,
   });
 
   useEffect(() => {
+    if (!enabled || probe.availability !== "probing") {
+      return;
+    }
+
     let cancelled = false;
 
     getVersion()
@@ -48,7 +52,7 @@ export function useApiAvailable(): ApiProbe {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [enabled, probe.availability]);
 
   return probe;
 }

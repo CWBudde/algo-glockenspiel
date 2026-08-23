@@ -26,7 +26,7 @@ describe("wasmModuleURL", () => {
       Promise.resolve(respond({ hash: "0badc0de" })),
     );
 
-    await expect(wasmModuleURL(BASE, fetchImpl)).resolves.toBe(
+    await expect(wasmModuleURL(BASE, "audio", fetchImpl)).resolves.toBe(
       `${BASE}glockenspiel.wasm?v=0badc0de`,
     );
 
@@ -40,7 +40,7 @@ describe("wasmModuleURL", () => {
   it("falls back to the bare name when the manifest is missing", async () => {
     const [fetchImpl] = stub(() => Promise.resolve(respond(null, false)));
 
-    await expect(wasmModuleURL(BASE, fetchImpl)).resolves.toBe(
+    await expect(wasmModuleURL(BASE, "audio", fetchImpl)).resolves.toBe(
       `${BASE}glockenspiel.wasm`,
     );
   });
@@ -48,7 +48,7 @@ describe("wasmModuleURL", () => {
   it("falls back when the manifest carries no hash", async () => {
     const [fetchImpl] = stub(() => Promise.resolve(respond({ bytes: 42 })));
 
-    await expect(wasmModuleURL(BASE, fetchImpl)).resolves.toBe(
+    await expect(wasmModuleURL(BASE, "audio", fetchImpl)).resolves.toBe(
       `${BASE}glockenspiel.wasm`,
     );
   });
@@ -57,11 +57,28 @@ describe("wasmModuleURL", () => {
     const [fetchImpl] = stub(() => Promise.reject(new Error("offline")));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-    await expect(wasmModuleURL(BASE, fetchImpl)).resolves.toBe(
+    await expect(wasmModuleURL(BASE, "audio", fetchImpl)).resolves.toBe(
       `${BASE}glockenspiel.wasm`,
     );
     expect(warn).toHaveBeenCalled();
 
     warn.mockRestore();
+  });
+
+  it("resolves the lazy fit module independently", async () => {
+    const [fetchImpl] = stub(() =>
+      Promise.resolve(
+        respond({
+          wasm: "glockenspiel.wasm",
+          hash: "audio-hash",
+          fitWasm: "glockenspiel-fit.wasm",
+          fitHash: "fit-hash",
+        }),
+      ),
+    );
+
+    await expect(wasmModuleURL(BASE, "fit", fetchImpl)).resolves.toBe(
+      `${BASE}glockenspiel-fit.wasm?v=fit-hash`,
+    );
   });
 });

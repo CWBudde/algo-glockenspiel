@@ -23,11 +23,11 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | 2     | Real SIMD on three targets   | done                              |
 | 3     | Optimizer                    | done                              |
 | 4     | Serve and the optimizer UI   | done                              |
-| 5     | Web app                      | open — 5.1–5.3 done; 5.4–5.5 open |
+| 5     | Web app                      | open — 5.1–5.6 done; size remains |
 | 6     | Split out VST3               | open — 6.1 all but the last audit |
 | 7     | Documentation                | open — 7.1 and 7.2 done           |
 
-## Status (2026-08-21)
+## Status (2026-08-23)
 
 Reviewed against the goal above. What exists and works:
 
@@ -56,12 +56,12 @@ Reviewed against the goal above. What exists and works:
 What does not match the goal:
 
 - AVX-512 is deferred rather than written, with the reason in `## Deferred`.
-- The optimizer tab has no code. `serve` does: it hosts the app and the fit API
-  (Phase 4.1 and 4.2), but nothing in `web/` calls the API yet, so fitting from the browser
-  still means fitting with `curl`.
-- The optimizer tab is done (4.3) and so is the audio transport (5.2); what is left in Phase 5
-  is the baked wood textures and printed key hints (5.4), plus a visual and responsive redesign
-  of the Play and Optimize views (5.5).
+- The optimizer UI selects the native fit API when it is reachable and a dedicated WASM worker
+  on static hosts. Both Simple and Mayfly can be started, watched, canceled, auditioned and
+  downloaded on GitHub Pages; the browser path is intentionally the slower demonstration path.
+- The remaining Phase 5 item is payload size. Adding the optimizer makes the raw WASM larger,
+  so splitting or lazy-loading the Go payload is now the material follow-up rather than a cosmetic
+  byte reduction.
 - There are no tags. The module path resolves now — it is
   `github.com/cwbudde/algo-glockenspiel`, matching the repository — but until a version is
   tagged, the plugin repository still cannot depend on this one the ordinary way (Phase 6.3).
@@ -396,12 +396,10 @@ Acceptance criteria:
       button and `api/fit/preset` behind a link. Driven end to end against
       `testdata/reference/legacy_synth_a4.wav`; the downloaded JSON renders with
       `glockenspiel synth --preset`.
-- [x] The Pages build degrades gracefully with no server. The tab probes `GET api/version`
-      once on mount — which 404s through the static handler where there is no API, since
-      there is no `/api/` catch-all — and renders the `glockenspiel serve` command and the
-      CLI equivalent instead of a form that would fail on submit. Confirmed against
-      `npx serve web/dist` with no Go process: Play works completely, Optimize explains
-      itself. Running the optimizer in WASM stays deferred.
+- [x] The Pages build works with no server. The tab probes `GET api/version` when Optimize first opens;
+      where that 404s it lazily loads a dedicated WASM fit worker and keeps the same form,
+      progress curve, cancel, audition and download flow. The native service remains preferred
+      when reachable. The fallback explanation is now reserved for a WASM load failure.
 
 ### Phase 4.1: The server skeleton — DONE (2026-08-21)
 
@@ -484,12 +482,13 @@ Goal: the browser side of the same loop.
       and the chart folds in only the samples it has not drawn, one redraw per animation frame.
       The `maxIterations` the panel reads "n of m" against is stamped with the job it was sent
       for, because only a fit this page started has a known limit.
-- [x] The Pages build detects the missing API and explains that Optimize needs the local CLI.
+- [x] The Pages build detects the missing API and selects the browser optimizer.
       `useApiAvailable.ts`, and the served root moved with it: a Vite bundle is a build
       artifact with hashed names and cannot be `go:embed`ed without making the binary's
       contents depend on whether someone ran a build step, so `DistDir` became the served root
       and the embedded tree shrank to one placeholder page naming `just build-web`. Pages now
-      uploads `web/dist`. Running the optimizer in WASM stays deferred.
+      uploads `web/dist`; the missing API lazily starts `fit.worker.ts` against the separate
+      `glockenspiel-fit.wasm` artifact, so Play does not pay for optimizer code.
 
 The architecture, the WASM bridge, the two-step build and the Optimize loop are written up in
 [docs/web-app.md](docs/web-app.md), which also closes Phase 7.3's first bullet.
@@ -780,6 +779,23 @@ Bite-sized tasks, intended to be independently reviewable in this order:
       keyboard traversal and Axe result. Only the 390px Play reference changed; desktop Play and
       Optimize remain pixel-exact.
 
+### Phase 5.6: Browser optimizer
+
+Goal: make the Optimize workflow demonstrable on GitHub Pages without a background server.
+
+- [x] Keep the native service as the preferred backend and lazily start a dedicated fit worker
+      only when `GET api/version` proves the page is on a static host. The optimizer has its own Go
+      runtime so CPU-bound fitting cannot starve the realtime audio worker.
+- [x] Accept the reference WAV, optional preset and optional bounds as transferred buffers, decode
+      them without a filesystem in `internal/browserfit`, and run both Simple and Mayfly against
+      the same objective, codec and validation packages used by the CLI and server.
+- [x] Preserve the existing UI contract: browser jobs emit the same whole `FitSnapshot` shape,
+      support cooperative cancellation, populate the live cost chart, and return fitted JSON and
+      rendered WAV blobs for download and audition.
+- [x] Document the performance boundary. Go `js/wasm` is single-threaded here, uses the portable
+      DSP kernels and runs Mayfly with one evaluation worker, so Pages presents this as the slower
+      explanatory backend rather than a native-performance replacement.
+
 ## Phase 6: Split Out VST3
 
 Goal: this repo builds cleanly from a fresh clone.
@@ -934,7 +950,8 @@ Goal: document what is undocumented, retire what is finished.
       after the React rewrite, the WASM bridge — the `glockenspielWasm` global, the
       `__glockenspielWasmReady` handshake and the detached-`ArrayBuffer` hazard behind
       `interleavedFrames` — the two-step build and why the served root is the dist tree, why
-      routing is hash-based, the Optimize loop, and why Pages cannot fit. `web/README.md`
+      routing is hash-based, the dual-backend Optimize loop, and how Pages fits in a dedicated
+      worker. `web/README.md`
       gained an Optimize section, and `docs/serve.md`'s "nothing under `web/` calls any of
       this yet" is no longer true and no longer says so.
 - [x] Retire `docs/vst3-evaluation.md` and `docs/vst3go-spike.md` with the 6.3 split. They are
@@ -962,7 +979,6 @@ Goal: document what is undocumented, retire what is finished.
   a time with no separate tail path, and `cpufeat.Features` now carries `HasAVX512F` and
   `HasAVX512DQ`. Revisit when a runner pool with guaranteed AVX-512 is available, or when
   forced-feature emulation can execute the kernel on hardware that has the instructions.
-- Running the optimizer itself in WASM.
 - Richer preset library and multi-note modeling.
 - Any GUI editor for the plugin, which now lives in its own repository.
 

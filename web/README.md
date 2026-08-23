@@ -39,8 +39,8 @@ just build-web
 That runs `scripts/build-web.sh`, which does three things in order:
 
 1. `npm ci && npm run build` in `web/` — the React bundle into `web/dist`,
-2. `scripts/build-wasm.sh` — `web/dist/glockenspiel.wasm` and
-   `web/dist/manifest.json`,
+2. `scripts/build-wasm.sh` — the audio `glockenspiel.wasm`, the lazy
+   `glockenspiel-fit.wasm`, and their shared `manifest.json`,
 3. copies `web/wasm_exec.js` into `web/dist` verbatim.
 
 The copy comes last because `--refresh-wasm-exec` is handled inside
@@ -49,7 +49,7 @@ copy taken before that would leave the pre-upgrade shim beside a module built by
 the new toolchain.
 
 Both halves land in the same directory. Vite runs with `emptyOutDir: false` so
-it does not delete the module beside it, and the module is built second, so
+it does not delete the modules beside it, and the modules are built second, so
 neither step erases the other's output whichever one changed.
 
 Everything in `web/dist` is a build artifact: the directory is gitignored and
@@ -70,7 +70,7 @@ pixels in memory and fails when a tracked image is missing or stale. The check
 compares inflated scanlines rather than compressed bytes, because Node releases
 can encode the same pixels into different zlib streams.
 
-To build only the module:
+To build only the two modules:
 
 ```bash
 just build-wasm
@@ -96,10 +96,10 @@ npm --prefix web run dev          # in another, for hot reload
 ```
 
 `vite.config.ts` proxies `/api` to `http://localhost:8080`, so the dev server
-can talk to a running `serve`. It also maps `/glockenspiel.wasm` and
-`/manifest.json` onto `web/dist`, because those two are build output rather than
-sources and the dev server would otherwise answer 404 for them; `just build-web`
-still has to have run at least once.
+can talk to a running `serve`. It also maps `/glockenspiel.wasm`,
+`/glockenspiel-fit.wasm` and `/manifest.json` onto `web/dist`, because those are
+build output rather than sources and the dev server would otherwise answer 404
+for them; `just build-web` still has to have run at least once.
 
 Checks, all of which CI runs:
 
@@ -131,12 +131,12 @@ Pages has a rewrite rule.
 
 ## Optimize
 
-The **Optimize** tab fits the model against a reference recording, using the fit
-API of the `glockenspiel serve` process that is hosting the page. It needs that
-process: the tab probes `GET api/version` on mount and, where nothing answers,
-renders the command that makes the API reachable instead of a form that would
-fail on submit. That is the GitHub Pages case, and it is the only difference
-between the hosted build and a local one.
+The **Optimize** tab fits the model against a reference recording. It probes
+`GET api/version` on mount and prefers the native fit API of `glockenspiel
+serve` when it answers. On a static host such as GitHub Pages, the same form
+starts a dedicated WebAssembly optimizer worker instead. The browser path is
+slower and single-threaded, but it exposes the complete workflow for learning
+and experimentation.
 
 The loop:
 
@@ -146,31 +146,34 @@ The loop:
    `mayfly`) and the scalars. The defaults are the `fit` command's own, so a
    preset fitted from the browser and one fitted from the terminal are the same
    fit. Every field is held to the server's range before anything is uploaded.
-3. **Start fit.** The server runs one fit at a time; a second start is refused
-   with "a fit is already running", which the form shows in those words.
-4. The cost curve, the counters and the stop reason fill live from
-   `api/fit/events`, a Server-Sent Events stream carrying a whole status object
-   per report. Nothing polls.
+3. **Start fit.** Either backend runs one fit at a time; a second start is
+   refused with "a fit is already running", which the form shows in those
+   words.
+4. The cost curve, counters and stop reason fill from whole status snapshots.
+   The native backend streams them through `api/fit/events`; the WASM worker
+   posts the same shape directly. Nothing polls.
 5. **Cancel fit** stops it. A cancelled run keeps the best parameters it found,
    so the audition and the download stay available.
 6. **Render and play** auditions the fitted preset at the note and velocity the
    fit ran against; **Download preset JSON** saves it in the schema
    `glockenspiel synth --preset` loads.
 
-The wire types live in `src/api/types.ts`, transcribed by hand from the Go
-structs that produce them. Renaming a field in the server is meant to become a
-type error here.
+The snapshot types live in `src/api/types.ts`, shared by the API client and the
+WASM worker. Renaming a server field or returning a different browser shape is
+meant to become a type error here.
 
 See [../docs/serve.md](../docs/serve.md) for the API itself and
 [../docs/web-app.md](../docs/web-app.md) for how the tab is put together.
 
 ## The WASM Bridge
 
-`cmd/glockenspiel-wasm` publishes exactly one global, `glockenspielWasm`,
-carrying `init`, `noteOn`, `setMasterGain` and `processBlock`. It announces
-itself by calling `__glockenspielWasmReady` — installed by
-`src/audio/engine.worker.ts` before the Go runtime starts — so the page waits
-for an actual signal rather than guessing how long start-up takes.
+Each module publishes exactly one `glockenspielWasm` global inside its own
+worker. The audio module carries `init`, `noteOn`, `setMasterGain` and
+`processBlock`; the lazy fit module carries `fitStart`, `fitCancel`, `fitPreset`
+and `fitRender`. Both announce themselves through
+`__glockenspielWasmReady`, installed by the shared worker loader before the Go
+runtime starts, so each worker waits for an actual signal rather than guessing
+how long start-up takes.
 
 The module runs in a Web Worker, not on the page: an `AudioWorkletNode` drains
 the blocks the worker renders, over a channel the two hold directly. Pass

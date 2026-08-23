@@ -7,6 +7,12 @@ const maxRenderSeconds = 60;
 
 export interface AuditionProps {
   snapshot: FitSnapshot | null;
+  artifacts?: FitArtifacts | undefined;
+}
+
+export interface FitArtifacts {
+  preset(): Promise<Blob>;
+  render(note: number, velocity: number, duration: number): Promise<Blob>;
 }
 
 /**
@@ -36,7 +42,7 @@ function defaultDuration(referenceSeconds: number): number {
  * long mayfly run wants to hear. Gating on the state instead would hide a
  * perfectly good preset behind a "canceled" label.
  */
-export function Audition({ snapshot }: AuditionProps) {
+export function Audition({ snapshot, artifacts }: AuditionProps) {
   const hasPreset = snapshot?.hasPreset ?? false;
 
   const jobId = snapshot?.jobId ?? null;
@@ -58,7 +64,13 @@ export function Audition({ snapshot }: AuditionProps) {
   const [rendered, setRendered] = useState<{
     jobId: string | null;
     url: string;
+    owned: boolean;
   } | null>(null);
+  const [artifactError, setArtifactError] = useState<{
+    jobId: string | null;
+    message: string;
+  } | null>(null);
+  const [rendering, setRendering] = useState(false);
 
   const durationText =
     chosen !== null && chosen.jobId === jobId
@@ -88,6 +100,15 @@ export function Audition({ snapshot }: AuditionProps) {
     void player.play().catch(() => undefined);
   }, [audioUrl]);
 
+  useEffect(
+    () => () => {
+      if (rendered?.owned === true) {
+        URL.revokeObjectURL(rendered.url);
+      }
+    },
+    [rendered],
+  );
+
   if (snapshot === null || !hasPreset) {
     return (
       <section className="optimize-audition" aria-labelledby="audition-heading">
@@ -100,7 +121,38 @@ export function Audition({ snapshot }: AuditionProps) {
     );
   }
 
-  const play = () => {
+  const play = async () => {
+    setArtifactError(null);
+
+    if (artifacts !== undefined) {
+      setRendering(true);
+
+      try {
+        const audio = await artifacts.render(
+          snapshot.note,
+          snapshot.velocity,
+          duration,
+        );
+        setRendered({
+          jobId,
+          url: URL.createObjectURL(audio),
+          owned: true,
+        });
+      } catch (cause) {
+        setArtifactError({
+          jobId,
+          message:
+            cause instanceof Error
+              ? cause.message
+              : "The fitted note could not be rendered.",
+        });
+      } finally {
+        setRendering(false);
+      }
+
+      return;
+    }
+
     const query = new URLSearchParams({
       note: String(snapshot.note),
       velocity: String(snapshot.velocity),
@@ -112,7 +164,39 @@ export function Audition({ snapshot }: AuditionProps) {
       t: String(Date.now()),
     });
 
-    setRendered({ jobId, url: `api/fit/audio?${query.toString()}` });
+    setRendered({
+      jobId,
+      url: `api/fit/audio?${query.toString()}`,
+      owned: false,
+    });
+  };
+
+  const downloadPreset = async () => {
+    if (artifacts === undefined) {
+      return;
+    }
+
+    setArtifactError(null);
+
+    try {
+      const data = await artifacts.preset();
+      const url = URL.createObjectURL(data);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${jobId ?? "glockenspiel-fit"}.json`;
+      link.click();
+      window.setTimeout(() => {
+        URL.revokeObjectURL(url);
+      }, 0);
+    } catch (cause) {
+      setArtifactError({
+        jobId,
+        message:
+          cause instanceof Error
+            ? cause.message
+            : "The fitted preset could not be downloaded.",
+      });
+    }
   };
 
   const durationInvalid = !(
@@ -147,23 +231,40 @@ export function Audition({ snapshot }: AuditionProps) {
           />
         </label>
 
-        <button type="button" onClick={play} disabled={durationInvalid}>
-          Render and play
+        <button
+          type="button"
+          onClick={() => void play()}
+          disabled={durationInvalid || rendering}
+        >
+          {rendering ? "Rendering…" : "Render and play"}
         </button>
 
-        {/*
-          The server sends Content-Disposition: attachment with the job's own
-          file name, so an ordinary link is the whole of the download.
-        */}
-        <a className="audition-download" href="api/fit/preset">
-          Download preset JSON
-        </a>
+        {artifacts === undefined ? (
+          /* The server supplies Content-Disposition with the job's file name. */
+          <a className="audition-download" href="api/fit/preset">
+            Download preset JSON
+          </a>
+        ) : (
+          <button
+            className="audition-download"
+            type="button"
+            onClick={() => void downloadPreset()}
+          >
+            Download preset JSON
+          </button>
+        )}
       </div>
 
       <p id="audition-duration-hint" className="optimize-note">
         Longer than 0 and at most {maxRenderSeconds} seconds; the server refuses
         anything else.
       </p>
+
+      {artifactError?.jobId === jobId && (
+        <p className="fit-field-error" role="alert">
+          {artifactError.message}
+        </p>
+      )}
 
       {audioUrl !== null && (
         // No caption track: a rendered instrument note carries no speech.

@@ -21,24 +21,41 @@
  * script existed, or served by something that does not hand out .json, should
  * still load the demo; it just falls back to plain revalidation.
  */
+export type WasmArtifact = "audio" | "fit";
+
 export async function wasmModuleURL(
   baseURL: string,
+  artifact: WasmArtifact = "audio",
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
-  const url = new URL("glockenspiel.wasm", baseURL).href;
+  const fallbackName =
+    artifact === "audio" ? "glockenspiel.wasm" : "glockenspiel-fit.wasm";
 
   try {
     const response = await fetchImpl(new URL("manifest.json", baseURL).href, {
       cache: "no-store",
     });
     if (!response.ok) {
-      return url;
+      return new URL(fallbackName, baseURL).href;
     }
 
-    const manifest = (await response.json()) as { hash?: unknown };
-    if (typeof manifest.hash === "string" && manifest.hash.length > 0) {
-      return `${url}?v=${encodeURIComponent(manifest.hash)}`;
+    const manifest = (await response.json()) as {
+      wasm?: unknown;
+      hash?: unknown;
+      fitWasm?: unknown;
+      fitHash?: unknown;
+    };
+    const name = artifact === "audio" ? manifest.wasm : manifest.fitWasm;
+    const hash = artifact === "audio" ? manifest.hash : manifest.fitHash;
+    const url = new URL(
+      typeof name === "string" && name.length > 0 ? name : fallbackName,
+      baseURL,
+    ).href;
+    if (typeof hash === "string" && hash.length > 0) {
+      return `${url}?v=${encodeURIComponent(hash)}`;
     }
+
+    return url;
   } catch (error) {
     console.warn(
       "No build manifest; fetching the module unfingerprinted",
@@ -46,5 +63,5 @@ export async function wasmModuleURL(
     );
   }
 
-  return url;
+  return new URL(fallbackName, baseURL).href;
 }

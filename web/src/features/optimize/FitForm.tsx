@@ -1,6 +1,11 @@
 import { useId, useMemo, useRef, useState } from "react";
 
-import { cancelFit, FitApiError, getFitStatus, startFit } from "../../api/fit";
+import {
+  cancelFit as cancelServerFit,
+  FitApiError,
+  getFitStatus as getServerFitStatus,
+  startFit as startServerFit,
+} from "../../api/fit";
 import {
   BOUNDS_KEYS,
   DEFAULT_FIT_REQUEST,
@@ -38,7 +43,21 @@ export interface FitFormProps {
    * echo the request back and the progress panel reads "n of m" against it.
    */
   onSnapshot: (snapshot: FitSnapshot, maxIterations?: number) => void;
+  /** Uses the HTTP service by default; static deployments provide WASM actions. */
+  actions?: FitActions | undefined;
 }
+
+export interface FitActions {
+  start(form: FormData): Promise<FitSnapshot>;
+  cancel(jobId?: string): Promise<FitSnapshot>;
+  status?: () => Promise<FitSnapshot>;
+}
+
+const SERVER_ACTIONS: FitActions = {
+  start: startServerFit,
+  cancel: cancelServerFit,
+  status: getServerFitStatus,
+};
 
 /**
  * What buildForm answers with: the finished body plus the `maxIterations` it
@@ -250,7 +269,7 @@ function parseBoundsRow(
   return { range: [low, high] };
 }
 
-export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
+export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
   const ids = useId();
   const fieldId = (name: string) => `${ids}-${name}`;
 
@@ -280,6 +299,7 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
   const [busy, setBusy] = useState(false);
 
   const running = snapshot?.state === "running";
+  const fitActions = actions ?? SERVER_ACTIONS;
   const mayfly = optimizer === "mayfly";
   const jobState =
     snapshot === null
@@ -511,7 +531,7 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
     setBusy(true);
 
     try {
-      const started = await startFit(built.form);
+      const started = await fitActions.start(built.form);
 
       onSnapshot(started, built.maxIterations);
       setNotice(`Fit ${started.jobId} started.`);
@@ -529,7 +549,11 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
           await watchTheRunningFit();
         }
       } else {
-        setFormError("The fit could not be started.");
+        setFormError(
+          cause instanceof Error
+            ? cause.message
+            : "The fit could not be started.",
+        );
       }
     } finally {
       setBusy(false);
@@ -547,8 +571,12 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
    * page did not send the request and does not know the limit.
    */
   async function watchTheRunningFit() {
+    if (fitActions.status === undefined) {
+      return;
+    }
+
     try {
-      onSnapshot(await getFitStatus());
+      onSnapshot(await fitActions.status());
     } catch {
       // The conflict itself is already on screen and is the actionable half.
       // A follow-up read that fails as well adds nothing the user can act on,
@@ -566,7 +594,7 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
       // The job id is passed so that cancelling while the watched run ends and
       // another begins cannot silently kill the newcomer; the server answers a
       // mismatch with a 409 rather than stopping the wrong fit.
-      const stopped = await cancelFit(snapshot?.jobId);
+      const stopped = await fitActions.cancel(snapshot?.jobId);
 
       onSnapshot(stopped);
       setNotice(`Fit ${stopped.jobId} is ${stopped.state}.`);
@@ -574,7 +602,9 @@ export function FitForm({ snapshot, onSnapshot }: FitFormProps) {
       setFormError(
         cause instanceof FitApiError
           ? cause.message
-          : "The fit could not be cancelled.",
+          : cause instanceof Error
+            ? cause.message
+            : "The fit could not be cancelled.",
       );
     } finally {
       setBusy(false);

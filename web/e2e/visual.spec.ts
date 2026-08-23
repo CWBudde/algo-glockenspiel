@@ -112,7 +112,7 @@ async function installStableFitApi(page: Page): Promise<void> {
   });
 }
 
-/** Makes Optimize render the static-host guidance instead of the fit form. */
+/** Makes Optimize select its browser-WASM backend instead of the fit API. */
 async function installUnavailableFitApi(page: Page): Promise<void> {
   await page.route("**/api/version", async (route) => {
     await route.fulfill({
@@ -1271,12 +1271,16 @@ test("Optimize exposes ordered setup and compact service states", async ({
   await unavailablePage.goto("/#/optimize");
   await expect(
     unavailablePage.getByRole("status", {
-      name: "Fit service unavailable",
+      name: "Browser optimizer ready · WebAssembly",
     }),
-  ).toHaveAttribute("data-state", "unavailable");
+  ).toHaveAttribute("data-state", "available");
   await expect(
-    unavailablePage.getByText("glockenspiel serve", { exact: true }),
+    unavailablePage.getByText(
+      "This static version runs fitting locally in WebAssembly. It is slower than the native service, but uses the same objectives, parameter bounds and optimizer backends.",
+      { exact: true },
+    ),
   ).toBeVisible();
+  await expect(unavailablePage.locator(".fit-form")).toBeVisible();
   await unavailablePage.close();
 });
 

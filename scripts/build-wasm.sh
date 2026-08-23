@@ -1,10 +1,10 @@
 #!/bin/bash
 #
-# Builds the browser demo: compiles cmd/glockenspiel-wasm to web/dist and writes
-# a manifest naming the content hash of the module, which the front end appends
-# to the fetch URL for cache busting (see web/src/audio/useWasmEngine.ts).
+# Builds the browser demo's audio and optimizer modules into web/dist and writes
+# a manifest naming both content hashes, which the workers append to their fetch
+# URLs for cache busting.
 #
-# It builds only the module. `just build-web` runs scripts/build-web.sh, which
+# It builds only the modules. `just build-web` runs scripts/build-web.sh, which
 # builds the React bundle beside it; use that unless you deliberately want the
 # module on its own.
 #
@@ -12,7 +12,7 @@
 # toolchain in use, because the two share an ABI.
 #
 # Usage:
-#   scripts/build-wasm.sh                      build the module
+#   scripts/build-wasm.sh                      build both modules
 #   scripts/build-wasm.sh --refresh-wasm-exec  update the tracked
 #                                              web/wasm_exec.js from the current
 #                                              Go toolchain, then build
@@ -80,9 +80,10 @@ echo "Building WASM glockenspiel demo..."
 mkdir -p web/dist
 mkdir -p "${GOCACHE:-/tmp/gocache}" "${GOMODCACHE:-/tmp/gomodcache}"
 
-WASM_OUT=web/dist/glockenspiel.wasm
+AUDIO_WASM_OUT=web/dist/glockenspiel.wasm
+FIT_WASM_OUT=web/dist/glockenspiel-fit.wasm
 
-echo "Compiling Go to WASM..."
+echo "Compiling audio Go to WASM..."
 # -trimpath keeps absolute build paths -- $HOME, CI checkout directories -- out
 # of the module, and makes the output reproducible for the content hash below,
 # which would otherwise differ per machine for identical source. -s -w drops the
@@ -91,13 +92,20 @@ echo "Compiling Go to WASM..."
 GOCACHE="${GOCACHE:-/tmp/gocache}" \
 	GOMODCACHE="${GOMODCACHE:-/tmp/gomodcache}" \
 	GOOS=js GOARCH=wasm \
-	go build -trimpath -ldflags="-s -w" -o "$WASM_OUT" ./cmd/glockenspiel-wasm
+	go build -trimpath -ldflags="-s -w" -o "$AUDIO_WASM_OUT" ./cmd/glockenspiel-wasm
+
+echo "Compiling optimizer Go to WASM..."
+GOCACHE="${GOCACHE:-/tmp/gocache}" \
+	GOMODCACHE="${GOMODCACHE:-/tmp/gomodcache}" \
+	GOOS=js GOARCH=wasm \
+	go build -trimpath -ldflags="-s -w" -o "$FIT_WASM_OUT" ./cmd/glockenspiel-fit-wasm
 
 size_of() {
 	wc -c <"$1" | tr -d ' '
 }
 
-SIZE_RAW=$(size_of "$WASM_OUT")
+AUDIO_SIZE_RAW=$(size_of "$AUDIO_WASM_OUT")
+FIT_SIZE_RAW=$(size_of "$FIT_WASM_OUT")
 
 # wasm-opt (binaryen) shrinks the module further and is worth having, but it is
 # a separate toolchain that a Go checkout does not bring with it. Making it
@@ -107,30 +115,35 @@ SIZE_RAW=$(size_of "$WASM_OUT")
 # on success, so a wasm-opt that is too old for the features Go emits leaves the
 # working build in place instead of a truncated one.
 #
-# -O3 rather than -Oz: measured on this module (binaryen 132), -O3 gives
-# 3,212,389 bytes and -Oz 3,171,836, so -Oz buys 1.3% at the cost of optimising
-# for size in code that runs in the audio callback. The feature flags name what
-# Go's wasm backend emits; without them an older wasm-opt rejects the module,
-# which is exactly the failure the fallback above keeps out of the build.
+# -O3 rather than -Oz: on the synthesis-only module that preceded the browser
+# optimizer, -O3 gave 3,212,389 bytes and -Oz 3,171,836, so -Oz bought 1.3% at
+# the cost of optimising for size in code that runs in the audio callback. The
+# browser-fit build is larger because it carries Gonum, Mayfly and the spectral
+# objective, but the audio hot path makes the same tradeoff. The feature flags
+# name what Go's wasm backend emits; without them an older wasm-opt rejects the
+# module, which is exactly the failure the fallback above keeps out of the build.
 if command -v wasm-opt >/dev/null 2>&1; then
-	echo "Optimizing with wasm-opt..."
-	WASM_OPT_LOG=$(mktemp)
-	if wasm-opt -O3 --enable-bulk-memory --enable-nontrapping-float-to-int \
-		--enable-sign-ext --enable-mutable-globals \
-		"$WASM_OUT" -o "$WASM_OUT.opt" 2>"$WASM_OPT_LOG"; then
-		mv "$WASM_OUT.opt" "$WASM_OUT"
-	else
-		rm -f "$WASM_OUT.opt"
-		echo "Note: wasm-opt failed, keeping the unoptimized module. Log:" >&2
-		sed 's/^/  /' "$WASM_OPT_LOG" >&2 || true
-	fi
-	rm -f "$WASM_OPT_LOG"
+	for wasm_output in "$AUDIO_WASM_OUT" "$FIT_WASM_OUT"; do
+		echo "Optimizing $wasm_output with wasm-opt..."
+		WASM_OPT_LOG=$(mktemp)
+		if wasm-opt -O3 --enable-bulk-memory --enable-nontrapping-float-to-int \
+			--enable-sign-ext --enable-mutable-globals \
+			"$wasm_output" -o "$wasm_output.opt" 2>"$WASM_OPT_LOG"; then
+			mv "$wasm_output.opt" "$wasm_output"
+		else
+			rm -f "$wasm_output.opt"
+			echo "Note: wasm-opt failed for $wasm_output, keeping the unoptimized module. Log:" >&2
+			sed 's/^/  /' "$WASM_OPT_LOG" >&2 || true
+		fi
+		rm -f "$WASM_OPT_LOG"
+	done
 else
 	echo "Note: wasm-opt not found, skipping the size pass."
 	echo "      Install binaryen (e.g. 'apt install binaryen') for a smaller module."
 fi
 
-SIZE_FINAL=$(size_of "$WASM_OUT")
+AUDIO_SIZE_FINAL=$(size_of "$AUDIO_WASM_OUT")
+FIT_SIZE_FINAL=$(size_of "$FIT_WASM_OUT")
 
 # The hash is what the front end puts in the fetch URL, so the browser asks for a
 # different resource whenever the bytes differ. It is deliberately not part of
@@ -138,20 +151,31 @@ SIZE_FINAL=$(size_of "$WASM_OUT")
 # missing build from a missing file and print the command that fixes it, and
 # web/embed.go embeds only a placeholder page. A query parameter busts the
 # cache without touching either.
-if command -v sha256sum >/dev/null 2>&1; then
-	HASH=$(sha256sum "$WASM_OUT" | cut -c1-16)
-else
-	HASH=$(shasum -a 256 "$WASM_OUT" | cut -c1-16)
-fi
+hash_of() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$1" | cut -c1-16
+	else
+		shasum -a 256 "$1" | cut -c1-16
+	fi
+}
+
+AUDIO_HASH=$(hash_of "$AUDIO_WASM_OUT")
+FIT_HASH=$(hash_of "$FIT_WASM_OUT")
 
 cat >web/dist/manifest.json <<EOF
 {
   "wasm": "glockenspiel.wasm",
-  "hash": "$HASH",
-  "bytes": $SIZE_FINAL
+  "hash": "$AUDIO_HASH",
+  "bytes": $AUDIO_SIZE_FINAL,
+  "fitWasm": "glockenspiel-fit.wasm",
+  "fitHash": "$FIT_HASH",
+  "fitBytes": $FIT_SIZE_FINAL
 }
 EOF
 
 echo "Build complete. Files in web/dist/"
-printf 'Module: %s bytes (%s before wasm-opt), hash %s\n' "$SIZE_FINAL" "$SIZE_RAW" "$HASH"
+printf 'Audio module: %s bytes (%s before wasm-opt), hash %s\n' \
+	"$AUDIO_SIZE_FINAL" "$AUDIO_SIZE_RAW" "$AUDIO_HASH"
+printf 'Fit module:   %s bytes (%s before wasm-opt), hash %s\n' \
+	"$FIT_SIZE_FINAL" "$FIT_SIZE_RAW" "$FIT_HASH"
 echo "Run: go run ./cmd/glockenspiel serve   (or: npx serve web/dist)"
