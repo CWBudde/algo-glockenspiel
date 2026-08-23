@@ -82,8 +82,12 @@ const (
 	DecayMsValidationMax = 5000.0
 
 	// DecayMsSearchMax is the upper end of the optimizer's decay search box and
-	// of the plugin's decay knobs -- the range a preset is authored in, as
-	// opposed to the range it may legally reach after transposition.
+	// of the plugin's decay knobs. That is all it is.
+	//
+	// It is emphatically not the ceiling a preset is authored under, which is
+	// [AuthoredDecayMsMax] and depends on the base note -- and which drops below
+	// this constant above note 75, so a fit run up there can return a preset
+	// [ValidateAuthoredBarParams] refuses. Nothing validates against this value.
 	//
 	// It stays at the 500 ms it has always been. Widening it is not a free
 	// change: the optimizer log-encodes decay into the unit cube, so stretching

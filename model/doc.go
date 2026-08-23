@@ -33,12 +33,25 @@
 //
 // Every parameter has an exported minimum and maximum, and [ValidateBarParams]
 // enforces them. The decay dimension is the one asymmetry, and the one place a
-// consumer is likely to guess wrong: there is no DecayMsMax. There are three
-// constants, because a preset is authored at one note and played at another.
-// [DecayMsMin] and [DecayMsSearchMax] bound what a preset file may be written
-// with; [DecayMsValidationMax] is the far wider ceiling that BarParams must
-// clear at the moment they reach NewBar, after [TransposeToNote] has divided
-// every decay by the transposition ratio. Use [ValidateAuthoredBarParams] and
-// [AuthoredDecayMsMax] to check a preset in the range it was authored in, which
-// depends on its base note.
+// consumer is likely to guess wrong: there is no DecayMsMax, and none of the
+// three constants that do exist is the ceiling a preset is authored under.
+//
+// [DecayMsValidationMax] is what a BarParams must clear at the moment it
+// reaches NewBar, after [TransposeToNote] has divided every decay by the
+// transposition ratio. [DecayMsSearchMax] is narrower and unrelated to
+// validation: it bounds the optimizer's search box and the plugin's decay
+// knobs, nothing more.
+//
+// The authoring ceiling is not a constant at all. A preset is written at
+// one note and played across the whole keyboard, and transposing down stretches
+// every decay, so what a preset file may carry depends on its base note:
+// [AuthoredDecayMsMax] returns 5000 ms at note 36, 743 ms at note 69 and
+// 156.25 ms at note 96. [ValidateAuthoredBarParams] is the check, and it is
+// strictly stronger than ValidateBarParams. Use those two for anything that
+// produces or accepts a preset file.
+//
+// Note the direction of that: above note 75 the authoring ceiling falls below
+// DecayMsSearchMax -- 525 ms at note 75, 496 ms at note 76 -- so a fit run at a
+// high base note can return a preset ValidateAuthoredBarParams refuses. Treating DecayMsSearchMax as an authoring
+// bound is what silenced the bottom 17 keys of the keyboard once already.
 package model

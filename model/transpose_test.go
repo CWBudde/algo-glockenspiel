@@ -180,3 +180,40 @@ func TestTransposeToNoteScalesBothDirections(t *testing.T) {
 		})
 	}
 }
+
+// TestAuthoredCeilingCrossesTheSearchBoxAtNote76 pins the numbers the package
+// overview quotes, and the direction of the relationship they illustrate.
+//
+// DecayMsSearchMax is not an authoring bound, and the clearest evidence is that
+// it is on the wrong side of the real one for the upper third of the keyboard:
+// a fit run above note 75 searches a box that reaches past what a preset at that
+// base note may legally carry, so it can return a preset
+// ValidateAuthoredBarParams refuses. A reader who takes the two for the same
+// thing gets a dead low register below the crossover and spurious rejections
+// above it, so both halves are worth failing a build over.
+func TestAuthoredCeilingCrossesTheSearchBoxAtNote76(t *testing.T) {
+	for _, tc := range []struct {
+		note int
+		want float64
+	}{
+		{note: KeyboardFirstNote, want: DecayMsValidationMax},
+		{note: 69, want: 743.25},
+		{note: 75, want: 525.56},
+		{note: 76, want: 496.06},
+		{note: KeyboardLastNote, want: 156.25},
+	} {
+		if got := AuthoredDecayMsMax(tc.note); math.Abs(got-tc.want) > 0.01 {
+			t.Errorf("AuthoredDecayMsMax(%d) = %.2f ms, want %.2f", tc.note, got, tc.want)
+		}
+	}
+
+	if AuthoredDecayMsMax(75) <= DecayMsSearchMax {
+		t.Errorf("the authoring ceiling at note 75 (%.2f ms) should still exceed the search box (%g ms)",
+			AuthoredDecayMsMax(75), DecayMsSearchMax)
+	}
+
+	if AuthoredDecayMsMax(76) >= DecayMsSearchMax {
+		t.Errorf("the authoring ceiling at note 76 (%.2f ms) should have fallen below the search box (%g ms)",
+			AuthoredDecayMsMax(76), DecayMsSearchMax)
+	}
+}

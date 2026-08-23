@@ -57,25 +57,51 @@ any exported signature, exported struct field, or result type qualified by an
 re-export. It has to be a test _about the declarations_ rather than a test that
 uses the API: a usage test written inside this module would pass either way.
 
-## Two ceilings on decay, and no `DecayMsMax`
+## The decay ceilings, and why none of them is `DecayMsMax`
 
-The single trap in the surface, and the one a consumer is most likely to guess
-wrong, because the obvious name does not exist.
+The single trap in the surface. The obvious name does not exist, and the
+constant that looks like it should stand in for it does not mean what it looks
+like.
 
-A preset is authored at one note and played at another, and `TransposeToNote`
-divides every decay by the transposition ratio, so the decays that reach
-`NewBar` are not the decays in the file. There are therefore three constants:
+A preset is authored at one note and played across the whole keyboard.
+`TransposeToNote` divides every decay by the transposition ratio, so
+transposing _down_ stretches them, and the decays that reach `NewBar` are not
+the decays in the file.
 
-| Constant               | Bounds                                                                     |
-| ---------------------- | -------------------------------------------------------------------------- |
-| `DecayMsMin`           | the shortest decay, everywhere                                             |
-| `DecayMsSearchMax`     | what a preset file may be **written** with, and what a fit searches        |
-| `DecayMsValidationMax` | what a `BarParams` may carry when it reaches `NewBar`, after transposition |
+| Constant               | Bounds                                                                     | Enforced by         |
+| ---------------------- | -------------------------------------------------------------------------- | ------------------- |
+| `DecayMsMin`           | the shortest decay, everywhere                                             | `ValidateBarParams` |
+| `DecayMsValidationMax` | what a `BarParams` may carry when it reaches `NewBar`, after transposition | `ValidateBarParams` |
+| `DecayMsSearchMax`     | the optimizer's search box and the plugin's decay knobs — nothing else     | nothing             |
 
-`ValidateBarParams` enforces the wide one. To check a preset in the range it was
-authored in — which depends on its base note — use `ValidateAuthoredBarParams`
-and `AuthoredDecayMsMax`. Collapsing the two ceilings back into one is what
-silenced MIDI 36–96's bottom 17 keys; see Phase 5.1 in `PLAN.md`.
+**The authoring ceiling is not in that table, because it is not a constant.**
+How much decay a preset file may carry depends on its base note, since that is
+what decides how far the bottom key transposes it down. `AuthoredDecayMsMax`
+computes it — 5000 ms at note 36, 743 ms at note 69, 156 ms at note 96 — and
+`ValidateAuthoredBarParams` is the check. It is strictly stronger than
+`ValidateBarParams`, and it decides by transposing the preset for real rather
+than by comparing against a restated bound, so validation and the synthesizer
+cannot disagree at the boundary.
+
+Anything that produces or accepts a preset file wants those two. Reaching for
+`DecayMsSearchMax` instead is wrong in both directions:
+
+- **Too permissive below note 76.** A preset at note 69 with a 1000 ms decay is
+  inside no constant's range but reaches `NewBar` as 6727 ms at note 36 and goes
+  silent. That is the dead low register, and collapsing these ceilings into one
+  500 ms constant is what silenced MIDI 36–52 once already; see Phase 5.1 in
+  `PLAN.md`.
+- **Too strict above it.** The authoring ceiling crosses below 500 ms at note 76
+  — 525 ms at note 75, 496 ms at note 76 — so a fit run at a high base note can
+  return a preset inside the optimizer's own search box that
+  `ValidateAuthoredBarParams` refuses. 500 ms at note 100 is 20159 ms at
+  note 36.
+
+Only the bottom of the keyboard is checked, and only the decay ceiling.
+Transposing down is monotonic, so the lowest playable note is the worst case.
+The mirror-image bounds at the top — decays shrinking toward `DecayMsMin` and
+mode frequencies pushed toward `FrequencyMaxHz` — are the same class of defect
+and are deliberately not checked; both are far harder to hit by accident.
 
 ## Shape is runtime configuration
 
