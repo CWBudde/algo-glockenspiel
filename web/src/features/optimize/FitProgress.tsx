@@ -4,7 +4,8 @@ import type { FitSnapshot } from "../../api/types";
 import { Audition } from "./Audition";
 import { CostChart } from "./CostChart";
 import { FitStatus } from "./FitStatus";
-import { useFitEvents } from "./useFitEvents";
+import { useFitEvents, type FitEvents } from "./useFitEvents";
+import type { FitArtifacts } from "./Audition";
 
 export interface FitProgressProps {
   /**
@@ -26,6 +27,10 @@ export interface FitProgressProps {
    * terminal state on its own.
    */
   onSnapshot?: (snapshot: FitSnapshot) => void;
+  /** In-memory progress from the browser worker; absent for the HTTP service. */
+  events?: FitEvents | undefined;
+  /** In-memory artifacts from the browser worker; absent for the HTTP service. */
+  artifacts?: FitArtifacts | undefined;
 }
 
 /**
@@ -41,9 +46,12 @@ export function FitProgress({
   jobId,
   maxIterations,
   onSnapshot,
+  events,
+  artifacts,
 }: FitProgressProps) {
+  const serverEvents = useFitEvents(events === undefined ? jobId : null);
   const { snapshot, points, revision, streaming, streamError } =
-    useFitEvents(jobId);
+    events ?? serverEvents;
 
   useEffect(() => {
     if (snapshot !== null) {
@@ -89,7 +97,7 @@ export function FitProgress({
         )}
       </div>
 
-      <Audition snapshot={snapshot} />
+      <Audition snapshot={snapshot} artifacts={artifacts} />
     </section>
   );
 }

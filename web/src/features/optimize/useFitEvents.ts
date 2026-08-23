@@ -209,7 +209,7 @@ export function useFitEvents(jobId: string | null): FitEvents {
  * this runs once per report: rebuilding it would cost O(n) per event and O(n^2)
  * over a run.
  */
-function recordPoint(points: CostPoint[], snapshot: FitSnapshot): void {
+export function recordPoint(points: CostPoint[], snapshot: FitSnapshot): void {
   const point: CostPoint = {
     iteration: snapshot.optimizerIterations,
     best: snapshot.bestCost,

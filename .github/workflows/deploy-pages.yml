@@ -8,6 +8,7 @@ on:
       - ".github/workflows/deploy-pages.yml"
       - "assets/**"
       - "cmd/glockenspiel-wasm/**"
+      - "cmd/glockenspiel-fit-wasm/**"
       - "go.mod"
       - "go.sum"
       - "internal/**"

@@ -6,6 +6,8 @@ import { Topbar } from "./components/Topbar";
 import { OptimizePage } from "./routes/OptimizePage";
 import { PlayPage } from "./routes/PlayPage";
 import { parseRoute, type Route } from "./routes/routes";
+import { useApiAvailable } from "./features/optimize/useApiAvailable";
+import { useWasmFitWorker } from "./features/optimize/useWasmFitWorker";
 
 /** The dial reads 10..100; the engine takes a linear gain of 0.1..1.0. */
 function gainFromPercent(percent: number): number {
@@ -35,6 +37,10 @@ export function App() {
   // should die because the user looked at another tab.
   const engine = useEngineWorker();
   const audio = useAudioEngine(engine.client, gainFromPercent(gainPercent));
+  const fitApi = useApiAvailable(route === "optimize");
+  const wasmFit = useWasmFitWorker(
+    route === "optimize" && fitApi.availability === "unavailable",
+  );
 
   return (
     <main className="studio-shell">
@@ -48,7 +54,7 @@ export function App() {
           onGainChange={setGainPercent}
         />
       ) : (
-        <OptimizePage />
+        <OptimizePage api={fitApi} wasm={wasmFit} />
       )}
     </main>
   );

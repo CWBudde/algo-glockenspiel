@@ -3,8 +3,8 @@
 `web/` is the user-facing product: a React 19 + TypeScript app, built by Vite,
 driving the Go synthesis core compiled to WebAssembly. It has two tabs. **Play**
 strikes bars and hears them. **Optimize** fits the model against a reference
-recording, which needs the Go binary and therefore only works where one is
-running.
+recording. It prefers the native fit service when one is present and otherwise
+runs the same fitting stack locally in WebAssembly.
 
 This page is about how the app is put together and why. For the flags and routes
 of the server that hosts it, see [serve.md](serve.md); for building and
@@ -44,12 +44,12 @@ Optimize unmounts the play surface, and neither the Go runtime nor a ringing
 note should die because the user looked at another tab. `useEngineWorker` and
 `useAudioEngine` are therefore mounted above the router and passed down.
 
-**The Optimize tab is a stack of small pieces around one job.** `OptimizePage`
-owns exactly one thing — the snapshot of the fit currently being watched — and
-hands it to `FitForm` (start and cancel) and to `FitProgress` (the stream, the
-curve, the numbers, the audition). Every snapshot, wherever it arrives from, is
-one whole status object; the server never sends a delta, so there is no
-reconciliation to write and no second source of truth to keep in step.
+**The Optimize tab is a stack of small pieces around one job.** `App` keeps the
+API probe and lazy browser worker alive across tab switches; `OptimizePage`
+selects that worker or the native service and hands its snapshot to `FitForm`
+(start and cancel) and `FitProgress` (the curve, numbers and audition). Every
+snapshot, wherever it arrives from, is one whole status object; neither backend
+sends a delta, so there is no reconciliation to write.
 
 Until this phase the front end was 40 KB of hand-written ES modules with no
 build step. TypeScript was the reason to change that, more than React: the fit
@@ -62,10 +62,11 @@ sends including the ones no component reads yet.
 
 ## The WASM bridge
 
-`cmd/glockenspiel-wasm` publishes exactly one global, `glockenspielWasm`,
-carrying `init`, `noteOn`, `setMasterGain` and `processBlock`. One namespace
-rather than five bare `wasm*` globals, so what belongs to this module is
-visible at a glance.
+Each Go module publishes exactly one global, `glockenspielWasm`, inside the
+worker that owns it. `cmd/glockenspiel-wasm` supplies `init`, `noteOn`,
+`setMasterGain` and `processBlock`; `cmd/glockenspiel-fit-wasm` supplies
+`fitStart`, `fitCancel`, `fitPreset` and `fitRender`. The workers have separate
+global scopes, and one namespace per module makes ownership visible at a glance.
 
 ### The ready handshake
 
@@ -84,11 +85,12 @@ that was seconds from being ready, and 50 ms of dead time on every load where it
 was not. A 10 s timer bounds the wait, so a module that never signals produces a
 message rather than a spinner.
 
-The module is fetched at its fixed name, `glockenspiel.wasm`, with the content
-hash `scripts/build-wasm.sh` records in `manifest.json` appended as `?v=<hash>`.
-The name is fixed because `internal/server` hard-codes it to recognise a missing
-build; the fingerprint travels in the query string instead. A missing manifest is
-not fatal — the module is then fetched unfingerprinted and revalidated normally.
+The audio and fit modules are fetched as `glockenspiel.wasm` and
+`glockenspiel-fit.wasm`, with their independent content hashes from
+`manifest.json` appended as `?v=<hash>`. The audio name stays fixed because
+`internal/server` recognises a missing build by it; both fingerprints travel in
+the query string. A missing manifest is not fatal — each worker falls back to
+its bare module name and normal revalidation.
 
 ### The detached-`ArrayBuffer` hazard
 
@@ -142,8 +144,8 @@ just build-web
 
 runs `scripts/build-web.sh`, which does the React bundle first
 (`npm ci && npm run build`) and `scripts/build-wasm.sh` second. Both write into
-`web/dist`. Vite runs with `emptyOutDir: false` so it does not delete the module
-beside it, and the module is built second, so neither step erases the other's
+`web/dist`. Vite runs with `emptyOutDir: false` so it does not delete the modules
+beside it, and the modules are built second, so neither step erases the other's
 output whichever one changed.
 
 They are two steps because they are two toolchains, and only one of them is
@@ -180,38 +182,40 @@ manifest, the module, `api/fit/events` — is relative for the same reason.
 
 ## The Optimize loop
 
-The tab is a client of the fit API described in [serve.md](serve.md). One fit at
-a time, held by the server, so the page's job is to start it, watch it, and read
-the result.
+The tab has two backends with one UI contract. When `glockenspiel serve` is
+present it is a client of the fit API described in [serve.md](serve.md). On a
+static host it sends the same validated inputs to a dedicated optimizer worker.
+Both produce the `FitSnapshot` shape consumed by the chart, status and audition.
 
-1. **Probe.** `useApiAvailable` fetches `GET api/version` once on mount. Where
-   there is no server this 404s — there is no `/api/` catch-all, so it falls
-   through to the static 404 — and the tab renders an explanation instead of a
-   form.
-2. **Start.** `FitForm` posts a multipart body to `POST api/fit/start`: the
-   reference WAV, an optional starting preset, optional bounds, and every scalar.
-   Each scalar is held client-side to the range `internal/server/params.go` holds
-   it to, because a `400` that arrives after a 16 MiB upload is a slow way to
-   learn that `note` was 200. The `409` — "a fit is already running" — is
-   surfaced with those words rather than as a generic failure, and the current
-   job is read once and adopted, so the Cancel button the message points at is
-   actually reachable when the slot is held by another tab or by the CLI.
-3. **Watch.** `useFitEvents` opens an `EventSource` on `api/fit/events` for the
-   job's lifetime. The stream opens with the current snapshot, so attaching
-   mid-run, or after the run already ended, paints immediately.
+1. **Probe.** `useApiAvailable` fetches `GET api/version` once when Optimize is
+   first opened. An answer selects the native service. Where it 404s — there is no `/api/`
+   catch-all, so a static host falls through to its normal 404 —
+   `useWasmFitWorker` lazily starts the browser backend and the form stays
+   available.
+2. **Start.** `FitForm` builds one body containing the reference WAV, an optional
+   starting preset, optional bounds, and every scalar. The native backend posts
+   it to `POST api/fit/start`; the browser backend transfers its file parts to
+   the worker and serializes the scalars. Each scalar is held client-side to the
+   server's range, because discovering that `note` was 200 after moving a 16 MiB
+   WAV is needless work. A native `409` — "a fit is already running" — is
+   surfaced with those words, and its current job is adopted so Cancel is
+   reachable. The browser worker already owns and displays its single job.
+3. **Watch.** For a native job, `useFitEvents` opens an `EventSource` on
+   `api/fit/events`. A browser job posts whole snapshots from its worker. Both
+   feed the same in-place cost history and terminal-state handling.
 4. **Read.** `CostChart` plots best and current cost against the optimizer's own
-   iteration count; `FitStatus` shows the state, the counts, the elapsed time and
-   the stop reason; `Audition` renders the fitted preset through
-   `api/fit/audio` and links to `api/fit/preset` for the download.
+   iteration count; `FitStatus` shows the state, counts, elapsed time and stop
+   reason. `Audition` either calls `api/fit/audio` and `api/fit/preset`, or asks
+   the worker to return equivalent WAV and JSON blobs.
 
 Four details of that loop are load-bearing enough to write down.
 
-**There is no polling.** Not on the progress path — the stream carries it — and
-not after a cancel either: `POST api/fit/cancel` waits for the run to actually
-stop before it answers, so its `200` already means the slot is free. The one
-non-stream read is a single `GET api/fit` on mount, because a fit outlives the
-page and a reload should land back on whatever is running with the Cancel button
-reachable, rather than stranding the slot.
+**There is no polling.** The native stream and browser-worker messages carry
+progress. Both cancel calls resolve only after a terminal snapshot: the server
+waits for the run to stop before answering, while the worker resolves its
+pending request when Go emits `canceled`. The one non-stream read is a single
+`GET api/fit` when the native backend connects, because a server fit outlives a
+reload and should return with Cancel reachable rather than strand its slot.
 
 **The stream must be closed on a terminal event.** It carries no `id:` and no
 `retry:`, so there is no Last-Event-ID replay to lean on. A source left open past
@@ -220,10 +224,10 @@ reconnected again, forever. `close()` on `done` and on `shutdown` is not
 tidiness; it is the only thing that ends the loop.
 
 **`hasPreset` is not `state === "succeeded"`.** A run cancelled after its first
-report still has the best parameters found so far, and the server answers
-`api/fit/preset` and `api/fit/audio` for it. The audition gates on `hasPreset`
-for that reason: someone who watched a curve flatten out and pressed Cancel
-wanted the result, not an empty panel.
+report still has the best parameters found so far. The server answers its preset
+and audio endpoints for it; the worker returns the corresponding JSON and WAV
+blobs. The audition gates on `hasPreset` for that reason: someone who watched a
+curve flatten out and pressed Cancel wanted the result, not an empty panel.
 
 **Two iteration counts, two rows.** `iteration` counts progress _reports_ and
 moves once per `reportEvery`; `optimizerIterations` is the backend's own count
@@ -240,9 +244,9 @@ belonging to a different fit.
 ### What the cost chart has and has not been shown to do
 
 The y axis is logarithmic, which cannot plot a zero or a negative. Both occur:
-the snapshot returned by `POST api/fit/start` reports `bestCost: 0` on every run,
-before any candidate has been evaluated. Such a sample is dropped rather than
-clamped to an invented epsilon that would draw a floor which is not in the data.
+the initial snapshot reports `bestCost: 0` on every run, before any candidate
+has been evaluated. Such a sample is dropped rather than clamped to an invented
+epsilon that would draw a floor which is not in the data.
 
 A run at `reportEvery: 1` may produce 100,000 samples, so nothing on the path
 from the stream to the canvas walks the history: `useFitEvents` grows one array
@@ -261,23 +265,25 @@ very reference, so a run starting there starts at its own optimum. It makes that
 fixture a poor demo, and the falling-curve case was exercised with a synthetic
 series instead.
 
-## Why Pages cannot fit
+## Fitting on Pages
 
-The hosted build is the same bundle, served by GitHub Pages, with no Go process
-behind it. Two things follow.
+GitHub Pages has no Go process, so the failed version probe starts a second,
+optimizer-only worker. It loads `glockenspiel-fit.wasm`, leaving Play's smaller
+audio module and runtime alone: fitting cannot block the worker that keeps the
+audio queue full. The WAV, optional preset and optional bounds cross into the
+worker as transferred `ArrayBuffer`s and are decoded in memory by
+`internal/browserfit`; no upload or filesystem is involved.
 
-Play works completely. It is the WebAssembly module, an `AudioContext` and static
-files, and Pages serves all three.
+The browser backend exposes both Simple and Mayfly and uses the same objective,
+codec, bounds parser and artifact renderers as the native paths. Mayfly is held
+to one worker because Go's `js/wasm` target is single-threaded. The optimizer
+reports internally once per iteration even when the user asks to display fewer
+points. Each internal report sleeps for one millisecond after updating the best
+preset, which cooperatively hands the worker event loop back to JavaScript so a
+queued Cancel command is actually observable during CPU-bound Go code.
 
-Optimize cannot run at all, and says so. Fitting is CPU-bound work the Go binary
-does — the objective renders and scores the whole reference once per candidate
-evaluation — and there is no binary behind a static host. The tab detects this
-from the `api/version` probe and renders the command that makes the API
-reachable, plus the CLI equivalent for someone who does not want a browser in the
-loop at all. It does not render a form that would fail on submit.
-
-Running the optimizer itself in WASM is deferred, not scheduled. It is listed
-under `## Deferred` in `PLAN.md`. The reason is not that it cannot be compiled:
-it is that a fit is minutes of full-core work, the browser build has one thread
-and no SIMD kernels, and a "fit" that is an order of magnitude slower than the
-CLI's would be a worse answer than the sentence telling you to run the CLI.
+This is a demonstration backend, not a performance replacement for the CLI.
+The module is larger because it now includes Gonum, Mayfly and the spectral
+objective; execution has neither the native SIMD kernels nor multi-core
+candidate evaluation. The UI says so while retaining the native service as the
+preferred backend whenever it is reachable.

@@ -1,12 +1,12 @@
 #!/bin/bash
 #
 # Builds everything the browser needs into web/dist: the React bundle and the
-# WebAssembly module.
+# WebAssembly modules.
 #
 # The two halves are produced by two toolchains and land in the same directory.
 # Vite is configured with `emptyOutDir: false` precisely so that it does not
 # delete the module beside it, and this script runs the bundle first and the
-# module second so that neither erases the other's output whichever one changed.
+# modules second so that neither erases the other's output whichever one changed.
 #
 # Usage:
 #   scripts/build-web.sh                      build both halves
@@ -20,7 +20,7 @@ cd "$ROOT"
 if ! command -v npm >/dev/null 2>&1; then
 	echo "Error: npm was not found." >&2
 	echo "       The browser front end is a Vite + React app; building it needs Node." >&2
-	echo "       Install Node 22 or newer, or build only the module with:" >&2
+	echo "       Install Node 22 or newer, or build only the modules with:" >&2
 	echo "" >&2
 	echo "         just build-wasm" >&2
 	exit 1

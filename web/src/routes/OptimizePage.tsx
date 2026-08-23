@@ -1,20 +1,19 @@
 /**
  * The Optimize tab.
  *
- * The page owns nothing but the job the tab is currently watching: the form
- * starts and cancels it, and FitProgress subscribes to the server's event
- * stream for it. Every snapshot -- from the status read on mount, from a start
- * or a cancel, and from the stream -- is one whole status object, so there is a
- * single shape of truth and no reconciliation to do.
+ * The page selects the native service or browser worker and composes the form
+ * with its progress. Every snapshot -- from an HTTP response, SSE, or a worker
+ * message -- is one whole status object, so both backends paint the same UI.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { FitApiError, getFitStatus } from "../api/fit";
 import type { FitSnapshot } from "../api/types";
-import { FitForm } from "../features/optimize/FitForm";
+import { FitForm, type FitActions } from "../features/optimize/FitForm";
 import { FitProgress } from "../features/optimize/FitProgress";
-import { useApiAvailable } from "../features/optimize/useApiAvailable";
+import type { ApiProbe } from "../features/optimize/useApiAvailable";
+import type { WasmFitWorker } from "../features/optimize/useWasmFitWorker";
 
 /** The command that makes the fit API reachable. */
 const SERVE_COMMAND = "glockenspiel serve";
@@ -28,9 +27,16 @@ const SERVE_COMMAND = "glockenspiel serve";
  */
 type StartLimit = { jobId: string; maxIterations: number };
 
-export function OptimizePage() {
-  const { availability, version } = useApiAvailable();
-  const [snapshot, setSnapshot] = useState<FitSnapshot | null>(null);
+export interface OptimizePageProps {
+  api: ApiProbe;
+  wasm: WasmFitWorker;
+}
+
+export function OptimizePage({ api, wasm }: OptimizePageProps) {
+  const { availability, version } = api;
+  const [serverSnapshot, setServerSnapshot] = useState<FitSnapshot | null>(
+    null,
+  );
 
   // What a fit was started with, stamped with the job it was sent for. The
   // server does not echo the request back, so only the form knows the limit,
@@ -42,12 +48,26 @@ export function OptimizePage() {
   const [limit, setLimit] = useState<StartLimit | null>(null);
 
   const onSnapshot = useCallback((next: FitSnapshot, startedWith?: number) => {
-    setSnapshot(next);
+    setServerSnapshot(next);
 
     if (startedWith !== undefined) {
       setLimit({ jobId: next.jobId, maxIterations: startedWith });
     }
   }, []);
+
+  const browserMode = availability === "unavailable";
+  const snapshot = browserMode ? wasm.events.snapshot : serverSnapshot;
+  const wasmActions = useMemo<FitActions | undefined>(() => {
+    const local = wasm.client;
+    if (local === null) {
+      return undefined;
+    }
+
+    return {
+      start: (form) => local.start(form),
+      cancel: (jobId) => local.cancel(jobId ?? ""),
+    };
+  }, [wasm.client]);
 
   const limitApplies = limit !== null && limit.jobId === snapshot?.jobId;
   const maxIterations = limitApplies ? limit.maxIterations : null;
@@ -56,7 +76,11 @@ export function OptimizePage() {
       ? "Checking fit service"
       : availability === "available"
         ? `Fit service connected · ${version ?? "unknown version"}`
-        : "Fit service unavailable";
+        : wasm.error
+          ? "Browser optimizer unavailable"
+          : wasm.client === null
+            ? "Loading browser optimizer"
+            : "Browser optimizer ready · WebAssembly";
 
   // A fit outlives the page: the server holds one slot and a reload lands back
   // on whatever is running. Reading the status once on mount is what makes the
@@ -71,7 +95,7 @@ export function OptimizePage() {
     getFitStatus()
       .then((current) => {
         if (!cancelled) {
-          setSnapshot(current);
+          setServerSnapshot(current);
         }
       })
       .catch((cause: unknown) => {
@@ -102,7 +126,14 @@ export function OptimizePage() {
             aria-label={serviceStatus}
             aria-live="polite"
             className="optimize-api-status"
-            data-state={availability}
+            data-state={
+              availability === "probing" ||
+              (browserMode && wasm.client === null && !wasm.error)
+                ? "probing"
+                : availability === "available" || wasm.client !== null
+                  ? "available"
+                  : "unavailable"
+            }
             role="status"
           >
             {serviceStatus}
@@ -116,35 +147,41 @@ export function OptimizePage() {
       </header>
 
       <div className="optimize-availability">
-        {availability === "unavailable" ? (
+        {browserMode ? (
           <>
             <p className="optimize-placeholder">
-              Fitting needs the local Go service. Run it and open the address it
-              prints:
+              This static version runs fitting locally in WebAssembly. It is
+              slower than the native service, but uses the same objectives,
+              parameter bounds and optimizer backends.
             </p>
 
-            <pre className="optimize-command">
-              <code>{SERVE_COMMAND}</code>
-            </pre>
-
-            <p className="optimize-placeholder">
-              Or fit from the command line:
-            </p>
-
-            <pre className="optimize-command">
-              <code>
-                glockenspiel fit --reference recording.wav --output preset.json
-              </code>
-            </pre>
+            {wasm.error ? (
+              <>
+                <p className="optimize-placeholder">
+                  {wasm.status}. For native fitting, run:
+                </p>
+                <pre className="optimize-command">
+                  <code>{SERVE_COMMAND}</code>
+                </pre>
+              </>
+            ) : wasm.client === null ? (
+              <p className="optimize-placeholder">{wasm.status}</p>
+            ) : null}
           </>
         ) : null}
       </div>
 
-      {availability === "available" ? (
+      {availability === "available" || wasmActions !== undefined ? (
         <div className="optimize-workspace">
-          <FitForm onSnapshot={onSnapshot} snapshot={snapshot} />
+          <FitForm
+            actions={browserMode ? wasmActions : undefined}
+            onSnapshot={onSnapshot}
+            snapshot={snapshot}
+          />
 
           <FitProgress
+            artifacts={browserMode ? (wasm.client ?? undefined) : undefined}
+            events={browserMode ? wasm.events : undefined}
             jobId={snapshot?.jobId ?? null}
             maxIterations={maxIterations}
             onSnapshot={onSnapshot}
