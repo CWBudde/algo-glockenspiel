@@ -13,6 +13,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	embeddedassets "github.com/cwbudde/algo-glockenspiel/assets"
@@ -31,6 +32,10 @@ const (
 	minSampleRate = 4000
 	maxSampleRate = 192000
 	maxRenderTime = 60 * time.Second
+
+	// yieldInterval bounds how long objective evaluation may run before the
+	// fit hands control back to its caller.
+	yieldInterval = 25 * time.Millisecond
 )
 
 // Request is the browser worker's JSON description of one fit.
@@ -194,14 +199,54 @@ func (p *Prepared) ReferenceSeconds() float64 {
 // iteration even when the UI displays fewer reports: the WASM bridge uses the
 // callback as a cooperative yield point so Cancel and worker messages remain
 // responsive during CPU-bound fitting.
-func (p *Prepared) Run(ctx context.Context, report func(optimizer.Progress)) (*optimizer.Result, error) {
-	return p.backend.Optimize(ctx, p.objective.Objective(), p.initial,
+//
+// yield, when non-nil, is the same cooperative yield applied between objective
+// evaluations. A single optimizer iteration holds the caller for as long as it
+// takes to evaluate the whole population -- thousands of renders for a large
+// Mayfly swarm -- so yielding only between iterations is not enough.
+func (p *Prepared) Run(ctx context.Context, report func(optimizer.Progress), yield func()) (*optimizer.Result, error) {
+	return p.backend.Optimize(ctx, p.yielding(yield), p.initial,
 		p.objective.Codec().EncodedBounds(), optimizer.OptimizeOptions{
 			MaxIterations: p.request.MaxIterations,
 			TimeBudget:    p.timeBudget,
 			ReportEvery:   1,
 			Report:        report,
 		})
+}
+
+// yielding wraps the objective so that yield runs at most every yieldInterval,
+// keeping the cost of handing control back a small fraction of the evaluation
+// it interrupts. The lock is what makes the wrapper safe for the parallel
+// evaluation the optimizers are allowed to do; yield itself runs unlocked so a
+// yielding goroutine never stalls the others.
+func (p *Prepared) yielding(yield func()) optimizer.ObjectiveFunc {
+	objective := p.objective.Objective()
+	if yield == nil {
+		return objective
+	}
+
+	var (
+		mu   sync.Mutex
+		last = time.Now()
+	)
+
+	return func(params []float64) float64 {
+		cost := objective(params)
+
+		mu.Lock()
+
+		due := time.Since(last) >= yieldInterval
+		if due {
+			last = time.Now()
+		}
+		mu.Unlock()
+
+		if due {
+			yield()
+		}
+
+		return cost
+	}
 }
 
 // Preset decodes an optimizer point into a fitted preset.

@@ -289,6 +289,11 @@ export function useWasmFitWorker(enabled: boolean): WasmFitWorker {
         case "error": {
           const failure = new Error(message.message);
           failPending(failure);
+          // The runtime behind this client is gone: the module failed to load,
+          // or the Go runtime exited. Dropping the client is what stops
+          // OptimizePage from advertising the backend as available and keeping
+          // the form mounted over a dead worker.
+          setClient(null);
           setStatus(message.message);
           setError(true);
           setEvents((previous) => ({
@@ -307,6 +312,7 @@ export function useWasmFitWorker(enabled: boolean): WasmFitWorker {
       );
       console.error("WASM fit worker failed", event);
       failPending(failure);
+      setClient(null);
       setStatus(messageOf(failure));
       setError(true);
     };

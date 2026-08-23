@@ -51,7 +51,7 @@ func TestBrowserFitRunsFromMemoryAndProducesArtifacts(t *testing.T) {
 		t.Fatalf("reference duration = %g, want positive", prepared.ReferenceSeconds())
 	}
 
-	result, err := prepared.Run(context.Background(), nil)
+	result, err := prepared.Run(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("run browser fit: %v", err)
 	}

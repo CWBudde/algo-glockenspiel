@@ -222,7 +222,7 @@ func (j *wasmFitJob) running() bool {
 }
 
 func (j *wasmFitJob) run(ctx context.Context) {
-	result, err := j.prepared.Run(ctx, j.report)
+	result, err := j.prepared.Run(ctx, j.report, yieldToWorker)
 	if err != nil {
 		j.finish("failed", nil, err)
 
@@ -269,10 +269,7 @@ func (j *wasmFitJob) report(progress optimizer.Progress) {
 		j.emit()
 	}
 
-	// A CPU-bound Go WASM goroutine otherwise owns this worker's JavaScript
-	// event loop until the optimizer returns. Sleeping hands control back long
-	// enough for a queued Cancel command (and the progress postMessage) to run.
-	time.Sleep(time.Millisecond)
+	yieldToWorker()
 }
 
 func (j *wasmFitJob) finish(state string, result *optimizer.Result, cause error) {
@@ -346,6 +343,16 @@ func (j *wasmFitJob) snapshot() wasmFitSnapshot {
 	}
 
 	return snapshot
+}
+
+// yieldToWorker hands the worker's JavaScript event loop back to the browser.
+// A CPU-bound Go WASM goroutine otherwise owns it until the optimizer returns,
+// so a queued Cancel command (and the progress postMessage) would only run
+// once the whole fit finished. browserfit calls this between objective
+// evaluations as well: one Mayfly iteration evaluates the entire population,
+// which is thousands of renders at the largest population the form allows.
+func yieldToWorker() {
+	time.Sleep(time.Millisecond)
 }
 
 func copyBytes(value js.Value, limit int) ([]byte, error) {
