@@ -99,8 +99,16 @@ build-wasm *ARGS:
 install:
     go install ./cmd/glockenspiel
 
-# Run all checks (formatting, linting, tests, tidiness)
-ci: check-formatted test lint check-tidy
+# Regenerate the TypeScript mirror of the Mayfly tuning knob table
+gen-mayfly-tuning:
+    go run ./cmd/gen-mayfly-tuning
+
+# Verify the generated Mayfly tuning table matches internal/optimizer
+check-mayfly-tuning:
+    go run ./cmd/gen-mayfly-tuning --check
+
+# Run all checks (formatting, linting, tests, tidiness, generated files)
+ci: check-formatted test lint check-tidy check-mayfly-tuning
 
 # Clean build artifacts
 clean:

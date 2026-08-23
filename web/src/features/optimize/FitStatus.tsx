@@ -136,6 +136,41 @@ export function FitStatus({
             </div>
           )}
 
+          {snapshot.mayflyVariant !== undefined &&
+            snapshot.mayflyVariant !== "" && (
+              <div>
+                {/*
+                  What the mayfly backend settled on, which is not always what
+                  was asked for: with the variant set to "auto" the optimizer
+                  measures the landscape and chooses, and this row is the only
+                  place the choice is ever reported.
+                */}
+                <dt>Mayfly variant</dt>
+                <dd>{snapshot.mayflyVariant}</dd>
+              </div>
+            )}
+
+          {snapshot.mayflySeed !== undefined && snapshot.mayflySeed !== "" && (
+            <div>
+              {/*
+                Rendered verbatim, never through Number(): the seed is an int64
+                and a JS number stops representing every integer past 2^53, so
+                a round trip through one could display a seed that was never
+                used and cannot reproduce the run.
+              */}
+              <dt>Mayfly seed</dt>
+              <dd>{snapshot.mayflySeed}</dd>
+            </div>
+          )}
+
+          {snapshot.mayflyRecommendation !== undefined &&
+            snapshot.mayflyRecommendation !== "" && (
+              <div>
+                <dt>Why this variant</dt>
+                <dd>{snapshot.mayflyRecommendation}</dd>
+              </div>
+            )}
+
           <div>
             <dt>Fitted preset</dt>
             <dd>{snapshot.hasPreset ? "available" : "not yet"}</dd>

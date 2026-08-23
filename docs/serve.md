@@ -103,19 +103,44 @@ same time.
 is `reference`, a WAV file. Everything else mirrors a flag of the `fit` command
 and keeps that command's default when it is absent:
 
-| Field                                             | Default            | Notes                                                     |
-| ------------------------------------------------- | ------------------ | --------------------------------------------------------- |
-| `reference` (file)                                | required           | Mono or the first channel of a multi-channel file.        |
-| `preset` (file)                                   | built-in           | An optional starting preset, as JSON.                     |
-| `bounds` (file)                                   | default box        | Optional search bounds, as JSON. See below.               |
-| `note`, `velocity`                                | 69, 100            | MIDI, `0`–`127`.                                          |
-| `optimizer`                                       | `simple`           | `simple` or `mayfly`.                                     |
-| `metric`                                          | `rms`              | `rms`, `log` or `spectral`.                               |
-| `maxIterations`                                   | `100`              | At most 100000.                                           |
-| `timeBudget`                                      | `30s`              | A Go duration, or a bare number of seconds. At most `1h`. |
-| `reportEvery`                                     | `10`               | How often progress is reported, and therefore streamed.   |
-| `align`, `normalizeGain`                          | on, off            | As `--align` and `--normalize-gain`.                      |
-| `mayflyVariant`, `mayflyPopulation`, `mayflySeed` | `desma`, `10`, `1` | Only read for `--optimizer mayfly`.                       |
+| Field                                             | Default            | Notes                                                                                        |
+| ------------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
+| `reference` (file)                                | required           | Mono or the first channel of a multi-channel file.                                           |
+| `preset` (file)                                   | built-in           | An optional starting preset, as JSON.                                                        |
+| `bounds` (file)                                   | default box        | Optional search bounds, as JSON. See below.                                                  |
+| `note`, `velocity`                                | 69, 100            | MIDI, `0`–`127`.                                                                             |
+| `optimizer`                                       | `simple`           | `simple` or `mayfly`.                                                                        |
+| `metric`                                          | `rms`              | `rms`, `log` or `spectral`.                                                                  |
+| `maxIterations`                                   | `100`              | At most 100000.                                                                              |
+| `timeBudget`                                      | `30s`              | A Go duration, or a bare number of seconds. At most `1h`.                                    |
+| `reportEvery`                                     | `10`               | How often progress is reported, and therefore streamed.                                      |
+| `align`, `normalizeGain`                          | on, off            | As `--align` and `--normalize-gain`.                                                         |
+| `mayflyVariant`, `mayflyPopulation`, `mayflySeed` | `desma`, `10`, `1` | Only read for `--optimizer mayfly`. `mayflyVariant` also accepts `auto`.                     |
+| `mayflyPreset`                                    | none               | A Mayfly preset name. Cannot be combined with `mayflyVariant`.                               |
+| `mayflyEpochs`, `mayflyRestarts`                  | `1`, `0`           | Warm and cold rounds. Each in `[1,1000]` and `[0,1000]`.                                     |
+| `mayflyStagnation`                                | `0`                | Stop a round after N iterations without progress. Must be narrower than a round.             |
+| `mayflyTargetCost`                                | none               | Stop once the best cost reaches it. Absent and `0` differ.                                   |
+| `mayflyNc`, `mayflyNcRatio`                       | none               | Crossover offspring count and ratio. `mayflyNc` accepts `-1` for automatic and `0` for none. |
+| `mayflySelection`                                 | mayfly's default   | `rank` or `tournament`.                                                                      |
+| `mayflyTuning` (file)                             | none               | The Mayfly tuning document, as JSON. See below.                                              |
+
+### Mayfly tuning
+
+`mayflyTuning` is a file part, like `bounds`, and holds the same document
+`fit --mayfly-tuning` reads, parsed by the same code. Every key is optional and
+an omitted key keeps whatever the dialect already chose; unknown keys and
+trailing content are rejected. The key list is in
+[mayfly-tuning.md](mayfly-tuning.md), and [optimizer.md](optimizer.md) explains
+how the document fits into a run.
+
+A malformed document is a `400` on the start request. It never claims the single
+fit slot, so the next well-formed request still starts rather than getting a
+`409`.
+
+Progress snapshots carry `mayflyVariant`, `mayflySeed` and, when `auto` was
+requested, `mayflyRecommendation`. Without them a client that asked for `auto`
+could never learn which dialect actually ran. `mayflySeed` is a **string**,
+because a JavaScript `Number` loses integers past 2^53.
 
 ### Bounds
 

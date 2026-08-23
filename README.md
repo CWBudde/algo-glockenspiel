@@ -89,7 +89,7 @@ glockenspiel fit \
   --resume
 ```
 
-Flags: `--reference`, `--preset`, `--bounds`, `--output`, `--note`, `--velocity`, `--sample-rate`, `--optimizer` (`simple` or `mayfly`), `--metric` (`rms`, `log` or `spectral`), `--max-iter`, `--time-budget` (a Go duration such as `30s` or `10m`; a bare number is read as seconds), `--align`, `--normalize-gain`, `--report-every`, `--checkpoint-interval`, `--work-dir`, `--resume`, `--mayfly-variant`, `--mayfly-pop`, `--mayfly-seed`.
+Flags: `--reference`, `--preset`, `--bounds`, `--output`, `--note`, `--velocity`, `--sample-rate`, `--optimizer` (`simple` or `mayfly`), `--metric` (`rms`, `log` or `spectral`), `--max-iter`, `--time-budget` (a Go duration such as `30s` or `10m`; a bare number is read as seconds), `--align`, `--normalize-gain`, `--report-every`, `--checkpoint-interval`, `--work-dir`, `--resume`, `--mayfly-variant` (one of seven dialects, or `auto`), `--mayfly-pop`, `--mayfly-seed`, `--mayfly-preset`, `--mayfly-tuning`, `--mayfly-epochs`, `--mayfly-restarts`, `--mayfly-stagnation`, `--mayfly-target-cost`, `--mayfly-nc`, `--mayfly-nc-ratio`, `--mayfly-selection`. See [docs/mayfly-tuning.md](docs/mayfly-tuning.md) for the tuning document.
 
 It writes the fitted preset to `--output`, the best-fit render to `<work-dir>/fitted_output.wav` and checkpoints to `<work-dir>/checkpoint_*.json`.
 

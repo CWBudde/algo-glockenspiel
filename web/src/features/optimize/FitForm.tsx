@@ -7,11 +7,19 @@ import {
   startFit as startServerFit,
 } from "../../api/fit";
 import {
+  MAYFLY_CONVERGENCE_KEYS,
+  MAYFLY_SCHEDULE_KEYS,
+  mayflyTuningFieldsFor,
+  type MayflyTuningField,
+} from "../../api/mayflyTuning.generated";
+import {
   BOUNDS_KEYS,
   DEFAULT_FIT_REQUEST,
   DEFAULT_PARAM_BOUNDS,
   FIT_LIMITS,
   LOG_ENCODED_BOUNDS_KEYS,
+  MAYFLY_PRESETS,
+  MAYFLY_SELECTIONS,
   MAYFLY_VARIANTS,
   METRIC_NAMES,
   MODEL_BOUNDS_LIMITS,
@@ -20,6 +28,10 @@ import {
   type BoundsKey,
   type BoundsRange,
   type FitSnapshot,
+  type MayflyConvergenceDocument,
+  type MayflyScheduleDocument,
+  type MayflyTuningDocument,
+  type MayflyTuningValue,
   type MayflyVariant,
   type MetricName,
   type OptimizerName,
@@ -79,7 +91,26 @@ interface ScalarFields {
   timeBudget: string;
   mayflyPopulation: string;
   mayflySeed: string;
+  mayflyPreset: string;
+  mayflySelection: string;
+  mayflyEpochs: string;
+  mayflyRestarts: string;
+  mayflyStagnation: string;
+  mayflyTargetCost: string;
+  mayflyNc: string;
+  mayflyNcRatio: string;
 }
+
+/**
+ * The tuning knobs as typed, keyed by `MayflyTuningField.key`.
+ *
+ * An absent or empty entry is an omitted knob, and an omitted knob is the
+ * whole point of the document's design: it keeps whatever the dialect or the
+ * preset already chose. Values for knobs the current dialect does not own stay
+ * in state while another dialect is selected but are never built, because the
+ * builder is handed only the fields on screen.
+ */
+type TuningValues = Partial<Record<string, string>>;
 
 /** One `[min, max]` row of the bounds editor, as typed. */
 type BoundsRow = { min: string; max: string };
@@ -96,6 +127,15 @@ const INITIAL_SCALARS: ScalarFields = {
   timeBudget: DEFAULT_FIT_REQUEST.timeBudget,
   mayflyPopulation: String(DEFAULT_FIT_REQUEST.mayflyPopulation),
   mayflySeed: DEFAULT_FIT_REQUEST.mayflySeed,
+  mayflyPreset: DEFAULT_FIT_REQUEST.mayflyPreset,
+  mayflySelection: DEFAULT_FIT_REQUEST.mayflySelection,
+  mayflyEpochs: String(DEFAULT_FIT_REQUEST.mayflyEpochs),
+  mayflyRestarts: String(DEFAULT_FIT_REQUEST.mayflyRestarts),
+  mayflyStagnation: String(DEFAULT_FIT_REQUEST.mayflyStagnation),
+  // The three that have no default: absent is not zero for any of them.
+  mayflyTargetCost: "",
+  mayflyNc: "",
+  mayflyNcRatio: "",
 };
 
 const EMPTY_BOUNDS_ROWS: BoundsRows = Object.fromEntries(
@@ -269,6 +309,244 @@ function parseBoundsRow(
   return { range: [low, high] };
 }
 
+/**
+ * Parses an optional whole number: an empty field is an omitted knob rather
+ * than a zero, exactly as formIntPtr treats one.
+ *
+ * The three scalars this parses -- the cost target, the offspring count and
+ * the offspring ratio -- all have a meaningful zero, so "unset" cannot be
+ * spelled as one and the absent value has to survive all the way to the wire.
+ */
+export function parseOptionalInt(
+  label: string,
+  raw: string,
+  low: number,
+  high: number,
+): { value?: number } | { error: string } {
+  const trimmed = raw.trim();
+
+  if (trimmed === "") {
+    return {};
+  }
+
+  return parseInt10(label, trimmed, low, high);
+}
+
+/** The same, for a value that need not be whole. */
+export function parseOptionalNumber(
+  label: string,
+  raw: string,
+  low: number,
+  high: number,
+): { value?: number } | { error: string } {
+  const trimmed = raw.trim();
+
+  if (trimmed === "") {
+    return {};
+  }
+
+  // The pattern, not Number(), decides what a number is: Number() also takes
+  // "0x10" and "Infinity", neither of which Go's ParseFloat reads.
+  if (!/^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) {
+    return { error: `${label} must be a number.` };
+  }
+
+  const value = Number(trimmed);
+
+  if (!Number.isFinite(value)) {
+    return { error: `${label} must be a finite number.` };
+  }
+
+  if (value < low || value > high) {
+    return { error: `${label} must be in [${low}, ${high}].` };
+  }
+
+  return { value };
+}
+
+/** The error key one tuning knob reports under. */
+export function tuningErrorKey(key: string): string {
+  return `tuning-${key}`;
+}
+
+/**
+ * Knobs the form already offers as a field of their own, and which the knob
+ * editor therefore leaves out.
+ *
+ * These are the settings algo-piano's optimizer audit found to matter most --
+ * round length above all, then early stopping -- so they are promoted out of
+ * the long alphabetical list and given plain names near the top. Rendering them
+ * in both places would put two identically labelled inputs on one form, and no
+ * amount of documented precedence makes that readable.
+ *
+ * The CLI keeps both spellings, because there the shorthand saves writing a
+ * file at all. A form field is a form field either way, so there is nothing to
+ * save here.
+ */
+const PROMOTED_TUNING_KEYS = new Set([
+  "epochs",
+  "restarts",
+  "stagnation_iterations",
+  "target_cost",
+  "nc",
+  "nc_ratio",
+  "selection",
+]);
+
+/** Holds a knob to the range the generated table carries for it. */
+function tuningRangeError(
+  field: MayflyTuningField,
+  value: number,
+): string | null {
+  if (field.min !== undefined) {
+    const tooLow =
+      field.minExclusive === true ? value <= field.min : value < field.min;
+
+    if (tooLow) {
+      return field.minExclusive === true
+        ? `${field.label} must be above ${field.min}.`
+        : `${field.label} must be at least ${field.min}.`;
+    }
+  }
+
+  if (field.max !== undefined) {
+    const tooHigh =
+      field.maxExclusive === true ? value >= field.max : value > field.max;
+
+    if (tooHigh) {
+      return field.maxExclusive === true
+        ? `${field.label} must be below ${field.max}.`
+        : `${field.label} must be at most ${field.max}.`;
+    }
+  }
+
+  return null;
+}
+
+/** What one knob contributes: a value, nothing at all, or a reason it cannot. */
+type ParsedKnob =
+  | { value: MayflyTuningValue }
+  | { omitted: true }
+  | { error: string };
+
+/** Reads one knob according to its kind. An empty field is omitted, never zero. */
+function parseTuningField(field: MayflyTuningField, raw: string): ParsedKnob {
+  const trimmed = raw.trim();
+
+  if (trimmed === "") {
+    return { omitted: true };
+  }
+
+  if (field.kind === "bool") {
+    // A checkbox has no empty state, so the value is held as a string: an
+    // untouched knob is "", and only a touched one is "true" or "false".
+    return { value: trimmed === "true" };
+  }
+
+  if (field.kind === "enum") {
+    if (field.options !== undefined && !field.options.includes(trimmed)) {
+      return {
+        error: `${field.label} must be one of ${field.options.join(", ")}.`,
+      };
+    }
+
+    return { value: trimmed };
+  }
+
+  const parsed =
+    field.kind === "int"
+      ? parseInt10(field.label, trimmed, -Infinity, Infinity)
+      : parseOptionalNumber(field.label, trimmed, -Infinity, Infinity);
+
+  if ("error" in parsed) {
+    return { error: parsed.error };
+  }
+
+  if (parsed.value === undefined) {
+    return { omitted: true };
+  }
+
+  const rangeError = tuningRangeError(field, parsed.value);
+
+  return rangeError === null ? { value: parsed.value } : { error: rangeError };
+}
+
+/** What buildMayflyTuningDocument answers with. */
+type BuiltTuning =
+  | { document: MayflyTuningDocument; count: number }
+  | { errors: FieldErrors };
+
+/**
+ * Builds the `mayflyTuning` document from the knob editor.
+ *
+ * It takes the fields to read rather than reading the whole generated table,
+ * so the caller decides which dialect's knobs are in play and a knob the form
+ * is not showing can never reach the wire.
+ *
+ * `count` is what decides whether the document is sent at all. An untouched
+ * editor yields zero and no part: an empty document would be harmless, but a
+ * part that is always present makes "did the user tune anything" unanswerable
+ * from the request alone.
+ */
+export function buildMayflyTuningDocument(
+  fields: readonly MayflyTuningField[],
+  values: TuningValues,
+): BuiltTuning {
+  const found: FieldErrors = {};
+  const document: MayflyTuningDocument = {};
+  const convergence: MayflyConvergenceDocument = {};
+  const schedule: MayflyScheduleDocument = {};
+
+  let count = 0;
+
+  for (const field of fields) {
+    const parsed = parseTuningField(field, values[field.key] ?? "");
+
+    if ("error" in parsed) {
+      found[tuningErrorKey(field.key)] = parsed.error;
+
+      continue;
+    }
+
+    if ("omitted" in parsed) {
+      continue;
+    }
+
+    count += 1;
+
+    // The generated table lists every knob flat, because that is how the CLI
+    // help and the docs read; the document nests two blocks of them. The block
+    // membership is generated alongside the table from MayflyConvergence and
+    // MayflySchedule, so a key moved between blocks in Go cannot leave this
+    // building the wrong shape.
+    if (MAYFLY_CONVERGENCE_KEYS.includes(field.key)) {
+      (convergence as Record<string, MayflyTuningValue>)[field.key] =
+        parsed.value;
+    } else if (MAYFLY_SCHEDULE_KEYS.includes(field.key)) {
+      (schedule as Record<string, MayflyTuningValue>)[field.key] = parsed.value;
+    } else {
+      document[field.key] = parsed.value;
+    }
+  }
+
+  if (Object.keys(found).length > 0) {
+    return { errors: found };
+  }
+
+  // An empty block is left out rather than written as {}: the decoder reads a
+  // present block as "these keys were chosen", and an empty one would say
+  // nothing while still looking deliberate.
+  if (Object.keys(convergence).length > 0) {
+    document.convergence = convergence;
+  }
+
+  if (Object.keys(schedule).length > 0) {
+    document.schedule = schedule;
+  }
+
+  return { document, count };
+}
+
 export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
   const ids = useId();
   const fieldId = (name: string) => `${ids}-${name}`;
@@ -288,6 +566,8 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
   const [normalizeGain, setNormalizeGain] = useState(
     DEFAULT_FIT_REQUEST.normalizeGain,
   );
+
+  const [tuningValues, setTuningValues] = useState<TuningValues>({});
 
   const [useBounds, setUseBounds] = useState(false);
   const [boundsRows, setBoundsRows] = useState<BoundsRows>(EMPTY_BOUNDS_ROWS);
@@ -312,12 +592,35 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
     setScalars((previous) => ({ ...previous, [name]: value }));
   };
 
+  const setTuning = (key: string, value: string) => {
+    setTuningValues((previous) => ({ ...previous, [key]: value }));
+  };
+
   const setBound = (key: BoundsKey, end: keyof BoundsRow, value: string) => {
     setBoundsRows((previous) => ({
       ...previous,
       [key]: { ...previous[key], [end]: value },
     }));
   };
+
+  /**
+   * The dialect the knob editor is for.
+   *
+   * A preset picks a dialect of its own and the engine refuses a preset and an
+   * explicit variant together, so a chosen preset takes the variant select off
+   * the screen -- removed rather than disabled, for the reason the whole mayfly
+   * block is -- and leaves the editor with the shared knobs only, exactly as
+   * "auto" does.
+   */
+  const mayflyPreset = scalars.mayflyPreset.trim();
+  const tuningVariant = mayflyPreset === "" ? mayflyVariant : "auto";
+  const tuningFields = useMemo(
+    () =>
+      mayflyTuningFieldsFor(tuningVariant).filter(
+        (field) => !PROMOTED_TUNING_KEYS.has(field.key),
+      ),
+    [tuningVariant],
+  );
 
   /** The maximum reference size, spelled the way the server's message does. */
   const referenceLimitLabel = useMemo(
@@ -396,6 +699,14 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
 
     let population: number | null = null;
     let seed: string | null = null;
+    let epochs: number | null = null;
+    let restarts: number | null = null;
+    let stagnation: number | null = null;
+    let targetCost: number | undefined;
+    let nc: number | undefined;
+    let ncRatio: number | undefined;
+    let tuning: MayflyTuningDocument | null = null;
+    let tuningCount = 0;
 
     if (mayfly) {
       const parsedPopulation = parseInt10(
@@ -416,6 +727,91 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
         found.mayflySeed = parsedSeed.error;
       } else {
         seed = parsedSeed.value;
+      }
+
+      const parsedEpochs = parseInt10(
+        "The epoch count",
+        scalars.mayflyEpochs,
+        FIT_LIMITS.mayflyEpochs.min,
+        FIT_LIMITS.mayflyEpochs.max,
+      );
+      const parsedRestarts = parseInt10(
+        "The restart count",
+        scalars.mayflyRestarts,
+        FIT_LIMITS.mayflyRestarts.min,
+        FIT_LIMITS.mayflyRestarts.max,
+      );
+      const parsedStagnation = parseInt10(
+        "The stagnation limit",
+        scalars.mayflyStagnation,
+        FIT_LIMITS.mayflyStagnation.min,
+        FIT_LIMITS.mayflyStagnation.max,
+      );
+
+      if ("error" in parsedEpochs) {
+        found.mayflyEpochs = parsedEpochs.error;
+      } else {
+        epochs = parsedEpochs.value;
+      }
+
+      if ("error" in parsedRestarts) {
+        found.mayflyRestarts = parsedRestarts.error;
+      } else {
+        restarts = parsedRestarts.value;
+      }
+
+      if ("error" in parsedStagnation) {
+        found.mayflyStagnation = parsedStagnation.error;
+      } else {
+        stagnation = parsedStagnation.value;
+      }
+
+      // The three whose zero is a value of its own, so an empty field has to
+      // stay absent rather than become one.
+      const parsedTargetCost = parseOptionalNumber(
+        "The target cost",
+        scalars.mayflyTargetCost,
+        FIT_LIMITS.mayflyTargetCost.min,
+        FIT_LIMITS.mayflyTargetCost.max,
+      );
+      const parsedNC = parseOptionalInt(
+        "The offspring count",
+        scalars.mayflyNc,
+        FIT_LIMITS.mayflyNc.min,
+        FIT_LIMITS.mayflyNc.max,
+      );
+      const parsedNCRatio = parseOptionalNumber(
+        "The offspring ratio",
+        scalars.mayflyNcRatio,
+        FIT_LIMITS.mayflyNcRatio.min,
+        FIT_LIMITS.mayflyNcRatio.max,
+      );
+
+      if ("error" in parsedTargetCost) {
+        found.mayflyTargetCost = parsedTargetCost.error;
+      } else {
+        targetCost = parsedTargetCost.value;
+      }
+
+      if ("error" in parsedNC) {
+        found.mayflyNc = parsedNC.error;
+      } else {
+        nc = parsedNC.value;
+      }
+
+      if ("error" in parsedNCRatio) {
+        found.mayflyNcRatio = parsedNCRatio.error;
+      } else {
+        ncRatio = parsedNCRatio.value;
+      }
+
+      const builtTuning = buildMayflyTuningDocument(tuningFields, tuningValues);
+
+      if ("errors" in builtTuning) {
+        Object.assign(found, builtTuning.errors);
+      } else {
+        tuning = builtTuning.document;
+        tuningCount = builtTuning.count;
       }
     }
 
@@ -450,8 +846,18 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
           name === "reportEvery" ||
           name === "mayflyPopulation" ||
           name === "mayflySeed" ||
+          name === "mayflyEpochs" ||
+          name === "mayflyRestarts" ||
+          name === "mayflyStagnation" ||
+          name === "mayflyTargetCost" ||
+          name === "mayflyNc" ||
+          name === "mayflyNcRatio" ||
           name === "bounds" ||
-          name.startsWith("bounds-"),
+          name.startsWith("bounds-") ||
+          // Every knob of the tuning editor reports under this prefix, so the
+          // list does not have to be restated each time the generated table
+          // grows a knob.
+          name.startsWith("tuning-"),
       );
 
       if (advancedError) {
@@ -504,9 +910,44 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
     form.append("normalizeGain", String(normalizeGain));
 
     if (mayfly) {
-      form.append("mayflyVariant", mayflyVariant);
+      // The variant and the preset are exclusive: MayflyOptimizer refuses a
+      // run that names both, and parseFitRequest reads an empty variant field
+      // as "the preset chooses". Sending the field empty rather than dropping
+      // it keeps the WASM front end, which falls back to the default variant
+      // for an absent field, from reintroducing the conflict.
+      form.append("mayflyVariant", mayflyPreset === "" ? mayflyVariant : "");
+      form.append("mayflyPreset", mayflyPreset);
       form.append("mayflyPopulation", String(population));
       form.append("mayflySeed", String(seed));
+      form.append("mayflyEpochs", String(epochs));
+      form.append("mayflyRestarts", String(restarts));
+      form.append("mayflyStagnation", String(stagnation));
+      form.append("mayflySelection", scalars.mayflySelection);
+
+      // Absent rather than zero: the server reads these three with the pointer
+      // twins of its form helpers, so an omitted field leaves the knob
+      // unwritten while a written zero is a value.
+      if (targetCost !== undefined) {
+        form.append("mayflyTargetCost", String(targetCost));
+      }
+
+      if (nc !== undefined) {
+        form.append("mayflyNc", String(nc));
+      }
+
+      if (ncRatio !== undefined) {
+        form.append("mayflyNcRatio", String(ncRatio));
+      }
+
+      if (tuning !== null && tuningCount > 0) {
+        // A JSON Blob, exactly as `bounds` is: readMayflyTuningPart reads
+        // `mayflyTuning` with FormFile, not FormValue.
+        form.append(
+          "mayflyTuning",
+          new Blob([JSON.stringify(tuning)], { type: "application/json" }),
+          "mayflyTuning.json",
+        );
+      }
     }
 
     return { form, maxIterations: (maxIterations as { value: number }).value };
@@ -614,6 +1055,80 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
   /** Renders the message under a field and wires it up for a screen reader. */
   function describedBy(name: string): string | undefined {
     return errors[name] === undefined ? undefined : `${fieldId(name)}-error`;
+  }
+
+  /** One row of the tuning editor, rendered from the generated knob table. */
+  function tuningRow(field: MayflyTuningField) {
+    const name = tuningErrorKey(field.key);
+    const id = fieldId(name);
+    const value = tuningValues[field.key] ?? "";
+    const help = `${id}-help`;
+    const describedBySelf =
+      errors[name] === undefined ? help : `${help} ${id}-error`;
+
+    return (
+      <div className="fit-field" key={field.key}>
+        <label htmlFor={id}>{field.label}</label>
+
+        {field.kind === "enum" ? (
+          <select
+            aria-describedby={describedBySelf}
+            id={id}
+            onChange={(event) => {
+              setTuning(field.key, event.target.value);
+            }}
+            value={value}
+          >
+            {/*
+              The empty option is the omitted knob, and it is first so that it
+              is what an untouched row shows. Choosing it again removes the key
+              from the document rather than writing a "default" value, which
+              the document has no way to spell.
+            */}
+            <option value="">(keep the dialect's own)</option>
+            {(field.options ?? []).map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        ) : field.kind === "bool" ? (
+          <input
+            aria-describedby={describedBySelf}
+            checked={value === "true"}
+            id={id}
+            onChange={(event) => {
+              // An untouched checkbox is "", not false: a checkbox has no
+              // third state, so the string is what keeps "never set" apart
+              // from "deliberately off". Unticking a ticked one writes false.
+              setTuning(field.key, String(event.target.checked));
+            }}
+            type="checkbox"
+          />
+        ) : (
+          <input
+            aria-describedby={describedBySelf}
+            aria-invalid={errors[name] !== undefined}
+            id={id}
+            inputMode={field.kind === "int" ? "numeric" : "decimal"}
+            max={field.max}
+            min={field.min}
+            onChange={(event) => {
+              setTuning(field.key, event.target.value);
+            }}
+            placeholder="default"
+            step={field.kind === "int" ? 1 : "any"}
+            type="number"
+            value={value}
+          />
+        )}
+
+        <p className="fit-hint" id={help}>
+          {field.help}
+        </p>
+        {fieldError(name)}
+      </div>
+    );
   }
 
   function fieldError(name: string) {
@@ -875,23 +1390,58 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
 
                 <div className="fit-row">
                   <div className="fit-field">
-                    <label htmlFor={fieldId("mayflyVariant")}>
-                      Mayfly variant
-                    </label>
+                    <label htmlFor={fieldId("mayflyPreset")}>Preset</label>
                     <select
-                      id={fieldId("mayflyVariant")}
+                      id={fieldId("mayflyPreset")}
                       onChange={(event) => {
-                        setMayflyVariant(event.target.value as MayflyVariant);
+                        setScalar("mayflyPreset", event.target.value);
                       }}
-                      value={mayflyVariant}
+                      value={scalars.mayflyPreset}
                     >
-                      {MAYFLY_VARIANTS.map((name) => (
+                      <option value="">(none — choose a variant)</option>
+                      {MAYFLY_PRESETS.map((name) => (
                         <option key={name} value={name}>
                           {name}
                         </option>
                       ))}
                     </select>
+                    <p className="fit-hint">
+                      A preset picks a dialect and a whole configuration for a
+                      kind of landscape.
+                    </p>
                   </div>
+
+                  {/*
+                    The variant select is removed while a preset is chosen for
+                    the reason the whole mayfly block is removed for the simple
+                    optimizer: the engine refuses a run that names a preset and
+                    a dialect at once, so a control that appears to choose one
+                    would be a control that lies.
+                  */}
+                  {mayflyPreset === "" ? (
+                    <div className="fit-field">
+                      <label htmlFor={fieldId("mayflyVariant")}>
+                        Mayfly variant
+                      </label>
+                      <select
+                        id={fieldId("mayflyVariant")}
+                        onChange={(event) => {
+                          setMayflyVariant(event.target.value as MayflyVariant);
+                        }}
+                        value={mayflyVariant}
+                      >
+                        {MAYFLY_VARIANTS.map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="fit-hint">
+                        <code>auto</code> measures the landscape and picks a
+                        dialect; the Status panel reports which one it chose.
+                      </p>
+                    </div>
+                  ) : null}
 
                   <div className="fit-field">
                     <label htmlFor={fieldId("mayflyPopulation")}>
@@ -933,6 +1483,206 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
                     {fieldError("mayflySeed")}
                   </div>
                 </div>
+
+                <div className="fit-row">
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("mayflyEpochs")}>Epochs</label>
+                    <input
+                      aria-describedby={describedBy("mayflyEpochs")}
+                      aria-invalid={errors.mayflyEpochs !== undefined}
+                      id={fieldId("mayflyEpochs")}
+                      inputMode="numeric"
+                      max={FIT_LIMITS.mayflyEpochs.max}
+                      min={FIT_LIMITS.mayflyEpochs.min}
+                      onChange={(event) => {
+                        setScalar("mayflyEpochs", event.target.value);
+                      }}
+                      type="number"
+                      value={scalars.mayflyEpochs}
+                    />
+                    <p className="fit-hint">Optimizer epochs per fit.</p>
+                    {fieldError("mayflyEpochs")}
+                  </div>
+
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("mayflyRestarts")}>Restarts</label>
+                    <input
+                      aria-describedby={describedBy("mayflyRestarts")}
+                      aria-invalid={errors.mayflyRestarts !== undefined}
+                      id={fieldId("mayflyRestarts")}
+                      inputMode="numeric"
+                      max={FIT_LIMITS.mayflyRestarts.max}
+                      min={FIT_LIMITS.mayflyRestarts.min}
+                      onChange={(event) => {
+                        setScalar("mayflyRestarts", event.target.value);
+                      }}
+                      type="number"
+                      value={scalars.mayflyRestarts}
+                    />
+                    <p className="fit-hint">
+                      Restarts from a fresh population.
+                    </p>
+                    {fieldError("mayflyRestarts")}
+                  </div>
+
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("mayflyStagnation")}>
+                      Stagnation limit
+                    </label>
+                    <input
+                      aria-describedby={describedBy("mayflyStagnation")}
+                      aria-invalid={errors.mayflyStagnation !== undefined}
+                      id={fieldId("mayflyStagnation")}
+                      inputMode="numeric"
+                      max={FIT_LIMITS.mayflyStagnation.max}
+                      min={FIT_LIMITS.mayflyStagnation.min}
+                      onChange={(event) => {
+                        setScalar("mayflyStagnation", event.target.value);
+                      }}
+                      type="number"
+                      value={scalars.mayflyStagnation}
+                    />
+                    <p className="fit-hint">
+                      Iterations without improvement before stopping. Zero
+                      disables it.
+                    </p>
+                    {fieldError("mayflyStagnation")}
+                  </div>
+                </div>
+
+                <div className="fit-row">
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("mayflyTargetCost")}>
+                      Target cost
+                    </label>
+                    <input
+                      aria-describedby={describedBy("mayflyTargetCost")}
+                      aria-invalid={errors.mayflyTargetCost !== undefined}
+                      id={fieldId("mayflyTargetCost")}
+                      inputMode="decimal"
+                      onChange={(event) => {
+                        setScalar("mayflyTargetCost", event.target.value);
+                      }}
+                      // Empty, not zero, when it is not wanted: zero is a
+                      // usable target, so only an absent field can mean "off".
+                      placeholder="off"
+                      step="any"
+                      type="number"
+                      value={scalars.mayflyTargetCost}
+                    />
+                    <p className="fit-hint">
+                      Stop once the best cost reaches this. Leave empty for no
+                      target.
+                    </p>
+                    {fieldError("mayflyTargetCost")}
+                  </div>
+
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("mayflyNc")}>Offspring count</label>
+                    <input
+                      aria-describedby={describedBy("mayflyNc")}
+                      aria-invalid={errors.mayflyNc !== undefined}
+                      id={fieldId("mayflyNc")}
+                      inputMode="numeric"
+                      max={FIT_LIMITS.mayflyNc.max}
+                      min={FIT_LIMITS.mayflyNc.min}
+                      onChange={(event) => {
+                        setScalar("mayflyNc", event.target.value);
+                      }}
+                      placeholder="default"
+                      type="number"
+                      value={scalars.mayflyNc}
+                    />
+                    <p className="fit-hint">
+                      <code>-1</code> derives it from the ratio, <code>0</code>{" "}
+                      disables crossover. Empty keeps the dialect's own.
+                    </p>
+                    {fieldError("mayflyNc")}
+                  </div>
+
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("mayflyNcRatio")}>
+                      Offspring ratio
+                    </label>
+                    <input
+                      aria-describedby={describedBy("mayflyNcRatio")}
+                      aria-invalid={errors.mayflyNcRatio !== undefined}
+                      id={fieldId("mayflyNcRatio")}
+                      inputMode="decimal"
+                      max={FIT_LIMITS.mayflyNcRatio.max}
+                      min={FIT_LIMITS.mayflyNcRatio.min}
+                      onChange={(event) => {
+                        setScalar("mayflyNcRatio", event.target.value);
+                      }}
+                      placeholder="default"
+                      step="any"
+                      type="number"
+                      value={scalars.mayflyNcRatio}
+                    />
+                    <p className="fit-hint">
+                      Offspring as a fraction of the population, used only when
+                      the count is <code>-1</code>.
+                    </p>
+                    {fieldError("mayflyNcRatio")}
+                  </div>
+
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("mayflySelection")}>
+                      Parent selection
+                    </label>
+                    <select
+                      id={fieldId("mayflySelection")}
+                      onChange={(event) => {
+                        setScalar("mayflySelection", event.target.value);
+                      }}
+                      value={scalars.mayflySelection}
+                    >
+                      <option value="">(keep the dialect's own)</option>
+                      {MAYFLY_SELECTIONS.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <section
+                  aria-labelledby={fieldId("tuning-heading")}
+                  className="fit-advanced-section"
+                >
+                  <h4 id={fieldId("tuning-heading")}>Tuning</h4>
+
+                  <p className="fit-hint">
+                    Every knob is optional: an empty field is left out of the
+                    document, and a knob that is left out keeps whatever the
+                    dialect or the preset already chose. An untouched editor
+                    sends no document at all.
+                  </p>
+
+                  <p className="fit-hint">
+                    The settings above are not repeated here. Male and female
+                    population are, because they override Population and may
+                    differ from each other; a knob set here wins.
+                  </p>
+
+                  {/*
+                    The knobs come from the generated table rather than a list
+                    written here, so a knob that moves upstream moves in the
+                    form as well: `just gen-mayfly-tuning` is the only step.
+                  */}
+                  {tuningVariant === "auto" ? (
+                    <p className="fit-hint">
+                      {mayflyPreset === ""
+                        ? "Only the shared knobs are shown: with the variant set to auto the dialect is chosen at run time, and a dialect's own knobs cannot be chosen before the dialect is."
+                        : "Only the shared knobs are shown: the preset chooses the dialect, and a dialect's own knobs cannot be chosen before the dialect is."}
+                    </p>
+                  ) : null}
+
+                  <div className="fit-row">
+                    {tuningFields.map((field) => tuningRow(field))}
+                  </div>
+                </section>
               </section>
             ) : null}
 

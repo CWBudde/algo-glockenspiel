@@ -53,10 +53,23 @@ type OptimizerState struct {
 }
 
 // MayflyCheckpointEnv stores the Mayfly settings needed to resume consistently.
+//
+// The tuning surface fields are all omitempty, and CheckpointVersion is
+// deliberately unchanged by them: the version guards the meaning of the encoded
+// parameter vector, which none of this touches, and LoadCheckpoint decodes with
+// a plain json.Unmarshal, so a checkpoint written before these fields existed
+// still loads and one written with them still loads in an older build.
 type MayflyCheckpointEnv struct {
 	Variant    string `json:"variant"`
+	Preset     string `json:"preset,omitempty"`
 	Population int    `json:"population"`
 	Seed       int64  `json:"seed"`
+	Epochs     int    `json:"epochs,omitempty"`
+	Restarts   int    `json:"restarts,omitempty"`
+
+	// Tuning is the merged document the run was configured with, so a resume
+	// reproduces it without the tuning file having to still be on disk.
+	Tuning *MayflyTuning `json:"tuning,omitempty"`
 }
 
 // SaveCheckpoint writes a checkpoint atomically to disk.

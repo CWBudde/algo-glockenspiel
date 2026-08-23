@@ -41,6 +41,10 @@ type wasmFitJob struct {
 	failure    string
 	finished   time.Time
 	fitted     *preset.Preset
+
+	mayflyVariant        string
+	mayflySeed           string
+	mayflyRecommendation string
 }
 
 type wasmFitSnapshot struct {
@@ -63,6 +67,14 @@ type wasmFitSnapshot struct {
 	Velocity         int     `json:"velocity"`
 	Optimizer        string  `json:"optimizer"`
 	Metric           string  `json:"metric"`
+
+	// The three Mayfly fields are what the run resolved rather than what the
+	// request asked for, which is the only way "auto" is visible at all. The
+	// seed is a decimal string because a JavaScript Number cannot hold a
+	// 64-bit integer, exactly as it is on the way in.
+	MayflyVariant        string `json:"mayflyVariant,omitempty"`
+	MayflySeed           string `json:"mayflySeed,omitempty"`
+	MayflyRecommendation string `json:"mayflyRecommendation,omitempty"`
 
 	StartedAt  time.Time  `json:"startedAt"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
@@ -122,6 +134,8 @@ func (m *wasmFitManager) start(_ js.Value, args []js.Value) any {
 	}
 	m.active = job
 	m.mu.Unlock()
+
+	prepared.OnMayflyResolve(job.resolved)
 
 	job.emit()
 
@@ -248,6 +262,19 @@ func (j *wasmFitJob) run(ctx context.Context) {
 	j.finish(state, result, nil)
 }
 
+// resolved records what the Mayfly run chose, and emits at once so the UI can
+// name the dialect an "auto" fit picked while that fit is still running rather
+// than only after it finishes. It takes the lock like every other writer.
+func (j *wasmFitJob) resolved(resolved optimizer.ResolvedMayfly) {
+	j.mu.Lock()
+	j.mayflyVariant = resolved.Variant
+	j.mayflySeed = strconv.FormatInt(resolved.Seed, 10)
+	j.mayflyRecommendation = resolved.Recommendation
+	j.mu.Unlock()
+
+	j.emit()
+}
+
 func (j *wasmFitJob) report(progress optimizer.Progress) {
 	fitted, err := j.prepared.Preset(progress.BestParams)
 
@@ -317,24 +344,27 @@ func (j *wasmFitJob) snapshot() wasmFitSnapshot {
 	}
 
 	snapshot := wasmFitSnapshot{
-		JobID:               j.id,
-		State:               j.state,
-		Iteration:           j.reports,
-		OptimizerIterations: j.progress.OptimizerIterations,
-		Evaluations:         j.progress.Evaluations,
-		CurrentCost:         j.progress.CurrentCost,
-		BestCost:            j.progress.BestCost,
-		ElapsedMS:           elapsed.Milliseconds(),
-		StopReason:          j.stopReason,
-		Error:               j.failure,
-		SampleRate:          j.prepared.SampleRate(),
-		ReferenceSeconds:    j.prepared.ReferenceSeconds(),
-		Note:                j.request.Note,
-		Velocity:            j.request.Velocity,
-		Optimizer:           j.request.Optimizer,
-		Metric:              j.request.Metric,
-		StartedAt:           j.started,
-		HasPreset:           j.fitted != nil,
+		JobID:                j.id,
+		State:                j.state,
+		Iteration:            j.reports,
+		OptimizerIterations:  j.progress.OptimizerIterations,
+		Evaluations:          j.progress.Evaluations,
+		CurrentCost:          j.progress.CurrentCost,
+		BestCost:             j.progress.BestCost,
+		ElapsedMS:            elapsed.Milliseconds(),
+		StopReason:           j.stopReason,
+		Error:                j.failure,
+		SampleRate:           j.prepared.SampleRate(),
+		ReferenceSeconds:     j.prepared.ReferenceSeconds(),
+		Note:                 j.request.Note,
+		Velocity:             j.request.Velocity,
+		Optimizer:            j.request.Optimizer,
+		Metric:               j.request.Metric,
+		MayflyVariant:        j.mayflyVariant,
+		MayflySeed:           j.mayflySeed,
+		MayflyRecommendation: j.mayflyRecommendation,
+		StartedAt:            j.started,
+		HasPreset:            j.fitted != nil,
 	}
 
 	if !j.finished.IsZero() {

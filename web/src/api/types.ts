@@ -87,6 +87,24 @@ export interface FitSnapshot {
    * leaves the best parameters found so far.
    */
   hasPreset: boolean;
+
+  /**
+   * What the mayfly backend settled on, present only once a mayfly run has
+   * resolved its configuration. This is the whole point of reporting it: with
+   * `variant: "auto"` the user asked the optimizer to choose the dialect, and
+   * without an echo there is no way to learn which one it chose.
+   */
+  mayflyVariant?: string;
+
+  /**
+   * The resolved seed, as a decimal **string**. It is an int64 and a JS
+   * `Number` stops representing every integer past 2^53, so it is rendered
+   * verbatim and never passed through `Number()`.
+   */
+  mayflySeed?: string;
+
+  /** Why an automatically chosen dialect was chosen. Empty when none was. */
+  mayflyRecommendation?: string;
 }
 
 /**
@@ -107,8 +125,15 @@ export type MetricName = "rms" | "log" | "spectral";
 /** `selectOptimizer`'s vocabulary. */
 export type OptimizerName = "simple" | "mayfly";
 
-/** `MayflyOptimizer.Validate`'s vocabulary. */
+/**
+ * `MayflyOptimizer.Validate`'s vocabulary.
+ *
+ * "auto" is a request rather than a dialect: it asks the optimizer to measure
+ * the landscape and pick one. Which one it picked is only knowable afterwards,
+ * from `FitSnapshot.mayflyVariant`.
+ */
 export const MAYFLY_VARIANTS = [
+  "auto",
   "ma",
   "desma",
   "olce",
@@ -124,6 +149,33 @@ export const MAYFLY_VARIANTS = [
  * installs whatever 3.x is current -- and deriving it sidesteps that for good.
  */
 export type MayflyVariant = (typeof MAYFLY_VARIANTS)[number];
+
+/**
+ * `mayfly.ConfigPreset`'s vocabulary, from config_loader.go upstream.
+ *
+ * A preset already chooses a dialect, so the engine refuses a preset and an
+ * explicit variant together; the form sends one or the other, never both.
+ */
+export const MAYFLY_PRESETS = [
+  "unimodal",
+  "multimodal",
+  "highly_multimodal",
+  "deceptive",
+  "narrow_valley",
+  "high_dimensional",
+  "fast_convergence",
+  "stable_convergence",
+  "multi_objective",
+] as const;
+
+/** Derived from the list, for the reason MayflyVariant is. */
+export type MayflyPreset = (typeof MAYFLY_PRESETS)[number];
+
+/** The `selection` knob's vocabulary: how crossover pairs its parents. */
+export const MAYFLY_SELECTIONS = ["rank", "tournament"] as const;
+
+/** Derived from the list, for the reason MayflyVariant is. */
+export type MayflySelection = (typeof MAYFLY_SELECTIONS)[number];
 
 export const METRIC_NAMES: readonly MetricName[] = [
   "rms",
@@ -163,6 +215,45 @@ export interface FitRequestFields {
   mayflyVariant: MayflyVariant;
   mayflyPopulation: number;
   mayflySeed: string;
+
+  /**
+   * A `mayfly.ConfigPreset` name, or "" for none. It is exclusive with
+   * `mayflyVariant`: a preset already picked a dialect, and the engine refuses
+   * both at once, so the form sends `mayflyVariant: ""` alongside a preset.
+   */
+  mayflyPreset: string;
+
+  /** The wrapper's own run schedule; all three fold into `schedule`. */
+  mayflyEpochs: number;
+  mayflyRestarts: number;
+
+  /** Iterations without improvement before the run stops. Zero disables it. */
+  mayflyStagnation: number;
+
+  /** A `selection` name, or "" to keep what the dialect chose. */
+  mayflySelection: string;
+
+  /**
+   * The three knobs whose zero is a real value, so "unset" cannot be spelled
+   * as one. They are absent rather than zero when the user typed nothing:
+   * `fitRequest` holds them as Go pointers for exactly this reason -- zero is
+   * a usable cost target, `mayflyNc` reserves -1 for "derive it" and 0 for "no
+   * crossover at all", and a zero ratio is a ratio.
+   */
+  mayflyTargetCost?: number;
+  mayflyNc?: number;
+  mayflyNcRatio?: number;
+
+  /**
+   * The tuning document, carried inline for the browser optimizer only.
+   *
+   * Over HTTP the same document is a multipart **file part** named
+   * `mayflyTuning`, exactly as `bounds` is, and never a scalar field; see
+   * `readMayflyTuningPart` in internal/server/fit.go. The WASM entry point has
+   * a fixed five-argument contract with nowhere to put a second file, so
+   * `browserfit.Request` takes the document in the request JSON instead.
+   */
+  mayflyTuning?: MayflyTuningDocument;
 }
 
 /**
@@ -183,6 +274,11 @@ export const DEFAULT_FIT_REQUEST: FitRequestFields = {
   mayflyVariant: "desma",
   mayflyPopulation: 10,
   mayflySeed: "1",
+  mayflyPreset: "",
+  mayflyEpochs: 1,
+  mayflyRestarts: 0,
+  mayflyStagnation: 0,
+  mayflySelection: "",
 };
 
 /**
@@ -199,6 +295,19 @@ export const FIT_LIMITS = {
   maxIterations: { min: 1, max: 100_000 },
   reportEvery: { min: 0, max: 100_000 },
   mayflyPopulation: { min: 2, max: 4096 },
+  /** `parseFitRequest`'s own bounds on the wrapper schedule. */
+  mayflyEpochs: { min: 1, max: 1000 },
+  mayflyRestarts: { min: 0, max: 1000 },
+  /** Bounded by `maxFitIterations`, as the iteration limit is. */
+  mayflyStagnation: { min: 0, max: 100_000 },
+  /** `maxFitTargetCost`; a cost is whatever the metric produces. */
+  mayflyTargetCost: { min: -1e12, max: 1e12 },
+  /**
+   * mayfly.NCAuto is -1, so -1 is the floor rather than zero, and the ceiling
+   * is the population cap: offspring are produced by pairing the population.
+   */
+  mayflyNc: { min: -1, max: 4096 },
+  mayflyNcRatio: { min: 0, max: 4096 },
   /** `maxFitTimeBudget`, in seconds; the lower bound is exclusive. */
   timeBudgetSeconds: { min: 0, max: 3600 },
   /** `maxRenderSeconds`; the lower bound is exclusive. */
@@ -289,6 +398,53 @@ export const DEFAULT_PARAM_BOUNDS: Required<BoundsDocument> = {
   decay_ms: [0.1, 500],
   harmonic_gain: [0, 2],
 };
+
+/* ------------------------------------------------------------------ */
+/* Mayfly tuning                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `optimizer.MayflyConvergence`: when a run may stop early.
+ *
+ * `target_cost` is nested and optional in Go for the reason it is optional
+ * here -- zero is a usable target, so "no target" has to be the absent key.
+ */
+export interface MayflyConvergenceDocument {
+  target_cost?: number;
+  min_improvement?: number;
+  stagnation_iterations?: number;
+  min_iterations?: number;
+}
+
+/** `optimizer.MayflySchedule`: the wrapper's own run schedule. */
+export interface MayflyScheduleDocument {
+  epochs?: number;
+  restarts?: number;
+  classify_evals?: number;
+}
+
+/** What a flat tuning knob may hold, by `MayflyTuningField.kind`. */
+export type MayflyTuningValue = number | boolean | string;
+
+/**
+ * The optional `mayflyTuning` document: `optimizer.MayflyTuning`, which is a
+ * curated subset of mayfly's own config keys.
+ *
+ * Every key is optional and an omitted key keeps whatever the variant factory
+ * or the preset already chose, so an empty document is a no-op and a document
+ * naming one knob changes one knob. The flat keys are indexed rather than
+ * spelled out: `MAYFLY_TUNING_FIELDS` in ./mayflyTuning.generated.ts is
+ * generated from the Go table and is the single list of them.
+ */
+export interface MayflyTuningDocument {
+  convergence?: MayflyConvergenceDocument;
+  schedule?: MayflyScheduleDocument;
+  [key: string]:
+    | MayflyTuningValue
+    | MayflyConvergenceDocument
+    | MayflyScheduleDocument
+    | undefined;
+}
 
 /* ------------------------------------------------------------------ */
 /* The preset                                                          */

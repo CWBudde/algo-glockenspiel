@@ -3,6 +3,9 @@ package optimizer
 import (
 	"context"
 	"math"
+	"reflect"
+	"sort"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,7 +16,7 @@ import (
 )
 
 func TestMayflyConfigRejectsUnsupportedVariant(t *testing.T) {
-	if _, err := newMayflyConfig("nope", 10, 3, 5); err == nil {
+	if _, err := newMayflyConfig(ResolvedMayfly{Variant: "nope"}, 10, 3, 5, nil, nil); err == nil {
 		t.Fatal("expected unsupported variant to fail")
 	}
 }
@@ -344,10 +347,417 @@ func TestMayflyOptimizerImprovesLegacyReference(t *testing.T) {
 		Parameters: *recovered,
 	}, sampleRate, 69, 100, float64(len(reference))/float64(sampleRate))
 	initialRendered := renderNote(t, &initial, sampleRate, 69, 100, float64(len(reference))/float64(sampleRate))
-	initialRMS := ComputeRMSError(initialRendered, reference)
 
-	finalRMS := ComputeRMSError(rendered, reference)
+	// Measure the rendered result under the same alignment the objective used.
+	// A bare ComputeRMSError compares sample by sample, so it scores a fit that
+	// is near-perfect but shifted by a few samples as a large regression -- and
+	// an onset-aligning objective is free to find exactly that. This assertion
+	// used to pass only because the trajectory happened not to land on a
+	// shifted solution; measured across seeds 1, 2 and 3 the aligned error
+	// improves by about 88% while the unaligned one swings from -81% to +41%.
+	plan := objective.Alignment()
+	initialRMS := plan.RMSError(initialRendered, reference)
+
+	finalRMS := plan.RMSError(rendered, reference)
 	if !(finalRMS < initialRMS) {
 		t.Fatalf("expected rendered RMS to improve: initial=%g final=%g", initialRMS, finalRMS)
+	}
+}
+
+// TestMayflyZeroSeedIsReportedAndReproducible pins the difference between "pick
+// a seed" and "be unreproducible". A zero seed used to leave cfg.Rand nil, so
+// the library chose a seed, reported it in a field this wrapper discarded, and
+// the run could never be repeated. Resolving it here makes the same run
+// repeatable by feeding the reported seed back in.
+func TestMayflyZeroSeedIsReportedAndReproducible(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	initial := []float64{5, 5}
+	objective := func(x []float64) float64 { return square(x[0]-1.25) + square(x[1]+2.5) }
+
+	run := func(seed int64) (int64, float64) {
+		t.Helper()
+
+		var resolved ResolvedMayfly
+
+		opt := &MayflyOptimizer{
+			Variant:    "desma",
+			Population: 6,
+			Seed:       seed,
+			MaxWorkers: 1,
+			OnResolve:  func(r ResolvedMayfly) { resolved = r },
+		}
+
+		result, err := opt.Optimize(context.Background(), objective, initial, bounds, OptimizeOptions{
+			MaxIterations: 20,
+		})
+		if err != nil {
+			t.Fatalf("Optimize failed: %v", err)
+		}
+
+		if resolved.Seed == 0 {
+			t.Fatal("expected a non-zero resolved seed to be reported")
+		}
+
+		if resolved.Variant != "desma" {
+			t.Fatalf("unexpected resolved variant: got %q", resolved.Variant)
+		}
+
+		return resolved.Seed, result.BestCost
+	}
+
+	chosen, first := run(0)
+
+	replayed, second := run(chosen)
+	if replayed != chosen {
+		t.Fatalf("explicit seed was not honoured: got %d want %d", replayed, chosen)
+	}
+
+	if first != second {
+		t.Fatalf("replaying the reported seed changed the result: got %g want %g", second, first)
+	}
+}
+
+// TestMayflyValidateChecksTheWholeConfiguration guards the property the HTTP and
+// WASM front ends rely on: a request that cannot run is refused before it books
+// the single fit slot. Validate now builds the real configuration, so it
+// catches far more than an unknown variant name.
+func TestMayflyValidateChecksTheWholeConfiguration(t *testing.T) {
+	tests := []struct {
+		name    string
+		opt     MayflyOptimizer
+		iters   int
+		wantErr bool
+	}{
+		{name: "default is valid", opt: MayflyOptimizer{}, iters: 100},
+		{name: "explicit variant is valid", opt: MayflyOptimizer{Variant: "gsasma"}, iters: 100},
+		{name: "alias is valid", opt: MayflyOptimizer{Variant: "olce-ma"}, iters: 100},
+		{name: "unknown variant", opt: MayflyOptimizer{Variant: "nope"}, iters: 100, wantErr: true},
+		// A Population below two is not an error here: population() normalises
+		// it to the default. The NPop guard in validateMayflyConfig covers the
+		// path that can genuinely set it, which is the tuning document.
+		{name: "population below two is normalised", opt: MayflyOptimizer{Population: 1}, iters: 100},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.opt.Validate(test.iters)
+			if test.wantErr && err == nil {
+				t.Fatal("expected an error")
+			}
+
+			if !test.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestMayflyUnknownVariantListsTheAlternativesInOrder pins the sorted list.
+// ListVariants ranges over a map, so without sorting the message differs
+// between runs and cannot be asserted on or usefully read.
+func TestMayflyUnknownVariantListsTheAlternativesInOrder(t *testing.T) {
+	_, err := resolveVariant("nope")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+
+	first := err.Error()
+
+	for range 20 {
+		_, err = resolveVariant("nope")
+		if err.Error() != first {
+			t.Fatalf("variant list is not stable:\n%s\n%s", first, err.Error())
+		}
+	}
+
+	if !strings.Contains(first, "aoblmoa, desma, eobbma, gsasma, ma, mpma, olce") {
+		t.Fatalf("expected a sorted variant list, got %q", first)
+	}
+}
+
+// TestTuningZeroValueIsTodaysBehaviour is the invariant the whole tuning
+// surface rests on: a run that asks for nothing must be configured exactly as
+// it was before the document existed.
+//
+// It compares configurations rather than outcomes deliberately. Comparing two
+// fits would be slow, would depend on the objective, and would fail for
+// reasons that have nothing to do with the document.
+func TestTuningZeroValueIsTodaysBehaviour(t *testing.T) {
+	variants := mayfly.ListVariants()
+	sort.Strings(variants)
+
+	for _, variant := range variants {
+		t.Run(variant, func(t *testing.T) {
+			resolved := ResolvedMayfly{Variant: variant}
+
+			absent, err := newMayflyConfig(resolved, 10, 3, 50, nil, nil)
+			if err != nil {
+				t.Fatalf("newMayflyConfig with no document failed: %v", err)
+			}
+
+			empty, err := newMayflyConfig(resolved, 10, 3, 50, &MayflyTuning{}, nil)
+			if err != nil {
+				t.Fatalf("newMayflyConfig with an empty document failed: %v", err)
+			}
+
+			// ObjectiveFunc and Rand are not set at this point, and neither is
+			// comparable anyway.
+			if !reflect.DeepEqual(absent, empty) {
+				t.Fatalf("an empty tuning document changed the configuration:\n absent=%+v\n  empty=%+v", absent, empty)
+			}
+		})
+	}
+}
+
+// TestMayflyTuningOverridesTheVariantDefault checks the precedence the ordering
+// in newMayflyConfig promises: the document is applied last and wins.
+func TestMayflyTuningOverridesTheVariantDefault(t *testing.T) {
+	rate := 0.5
+	tuning := &MayflyTuning{CoolingRate: &rate}
+
+	cfg, err := newMayflyConfig(ResolvedMayfly{Variant: "gsasma"}, 10, 3, 50, tuning, nil)
+	if err != nil {
+		t.Fatalf("newMayflyConfig failed: %v", err)
+	}
+
+	if cfg.CoolingRate != rate {
+		t.Fatalf("tuning did not win: got %v want %v", cfg.CoolingRate, rate)
+	}
+
+	// A knob belonging to another dialect is refused rather than silently
+	// written, because mayfly ignores the fields of variants it is not running.
+	elite := 3
+	if _, err := newMayflyConfig(ResolvedMayfly{Variant: "gsasma"}, 10, 3, 50,
+		&MayflyTuning{EliteCount: &elite}, nil); err == nil {
+		t.Fatal("expected a DESMA knob to be refused under GSASMA")
+	}
+}
+
+// TestMayflyPresetSelectsADialect covers the preset path, including the two
+// things about it that surprise: it chooses a dialect, so it cannot be combined
+// with an explicit variant; and it does not choose the size of the run.
+func TestMayflyPresetSelectsADialect(t *testing.T) {
+	t.Run("a preset picks the dialect and its knobs", func(t *testing.T) {
+		resolved, err := (&MayflyOptimizer{Preset: "highly_multimodal"}).resolve()
+		if err != nil {
+			t.Fatalf("resolve failed: %v", err)
+		}
+
+		cfg, err := newMayflyConfig(resolved, 10, 3, 50, nil, nil)
+		if err != nil {
+			t.Fatalf("newMayflyConfig failed: %v", err)
+		}
+
+		if !cfg.UseOLCE {
+			t.Fatal("expected highly_multimodal to select OLCE")
+		}
+	})
+
+	t.Run("the run's budget wins over the preset's", func(t *testing.T) {
+		resolved, err := (&MayflyOptimizer{Preset: "high_dimensional"}).resolve()
+		if err != nil {
+			t.Fatalf("resolve failed: %v", err)
+		}
+
+		cfg, err := newMayflyConfig(resolved, 10, 3, 50, nil, nil)
+		if err != nil {
+			t.Fatalf("newMayflyConfig failed: %v", err)
+		}
+
+		if cfg.MaxIterations != 50 || cfg.NPop != 10 {
+			t.Fatalf("preset overrode the run's budget: iters=%d pop=%d", cfg.MaxIterations, cfg.NPop)
+		}
+	})
+
+	t.Run("a preset and a variant together are refused", func(t *testing.T) {
+		if _, err := (&MayflyOptimizer{Preset: "multimodal", Variant: "gsasma"}).resolve(); err == nil {
+			t.Fatal("expected the combination to be refused")
+		}
+	})
+
+	t.Run("an unknown preset lists the alternatives in order", func(t *testing.T) {
+		err := (&MayflyOptimizer{Preset: "nope"}).Validate(50)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+
+		if !strings.Contains(err.Error(), "deceptive, fast_convergence") {
+			t.Fatalf("expected a sorted preset list, got %q", err)
+		}
+	})
+}
+
+// TestMayflyTuningCanNameTheVariant covers a document standing on its own, and
+// the rule that an explicitly configured variant still wins over it.
+func TestMayflyTuningCanNameTheVariant(t *testing.T) {
+	named := "mpma"
+
+	resolved, err := (&MayflyOptimizer{Tuning: &MayflyTuning{Variant: &named}}).resolve()
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+
+	if resolved.Variant != "mpma" {
+		t.Fatalf("document variant ignored: got %q", resolved.Variant)
+	}
+
+	resolved, err = (&MayflyOptimizer{Variant: "gsasma", Tuning: &MayflyTuning{Variant: &named}}).resolve()
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+
+	if resolved.Variant != "gsasma" {
+		t.Fatalf("an explicit variant must win over the document: got %q", resolved.Variant)
+	}
+}
+
+// TestMayflyConvergenceStopsEarly is the first test to exercise Result
+// .Converged. The wrapper has always read TerminationTargetCost and
+// TerminationStagnation back out of the library, but never set
+// Config.Convergence, so neither reason could ever fire and Converged was
+// permanently false.
+func TestMayflyConvergenceStopsEarly(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	initial := []float64{5, 5}
+	objective := func(x []float64) float64 { return square(x[0]-1.25) + square(x[1]+2.5) }
+
+	run := func(t *testing.T, tuning *MayflyTuning) *Result {
+		t.Helper()
+
+		result, err := (&MayflyOptimizer{
+			Variant: "desma", Population: 8, Seed: 1, MaxWorkers: 1, Tuning: tuning,
+		}).Optimize(context.Background(), objective, initial, bounds, OptimizeOptions{
+			MaxIterations: 400,
+		})
+		if err != nil {
+			t.Fatalf("Optimize failed: %v", err)
+		}
+
+		return result
+	}
+
+	t.Run("without a convergence block the budget is spent", func(t *testing.T) {
+		result := run(t, nil)
+		if result.Converged {
+			t.Fatal("an unconfigured run must not claim convergence")
+		}
+
+		if result.StopReason != string(mayfly.TerminationMaxIterations) {
+			t.Fatalf("unexpected stop reason: %q", result.StopReason)
+		}
+	})
+
+	t.Run("target cost stops the run", func(t *testing.T) {
+		target := 1e-6
+		result := run(t, &MayflyTuning{Convergence: &MayflyConvergence{TargetCost: &target}})
+
+		if !result.Converged || result.StopReason != string(mayfly.TerminationTargetCost) {
+			t.Fatalf("expected a target-cost stop, got converged=%v reason=%q",
+				result.Converged, result.StopReason)
+		}
+
+		if result.Iterations >= 400 {
+			t.Fatalf("expected the run to stop early, used %d iterations", result.Iterations)
+		}
+	})
+
+	t.Run("stagnation stops the run", func(t *testing.T) {
+		window, minIters := 5, 1
+		result := run(t, &MayflyTuning{Convergence: &MayflyConvergence{
+			StagnationIterations: &window,
+			MinIterations:        &minIters,
+		}})
+
+		if !result.Converged || result.StopReason != string(mayfly.TerminationStagnation) {
+			t.Fatalf("expected a stagnation stop, got converged=%v reason=%q",
+				result.Converged, result.StopReason)
+		}
+
+		if result.Iterations >= 400 {
+			t.Fatalf("expected the run to stop early, used %d iterations", result.Iterations)
+		}
+	})
+}
+
+// TestMayflyTargetCostEndsTheWholeSchedule pins that a scheduled run stops at
+// the target rather than working through the rest of its round plan. Without
+// the break the later rounds spend audio renders on a question already
+// answered, and a cold restart can finish on maximum_iterations -- reporting
+// the run as unconverged after it had converged.
+//
+// The assertion is an equality rather than a threshold: a four-round schedule
+// that meets the target in its first round must cost exactly what that round
+// costs on its own. Both runs share a seed, and the first round of the plan is
+// the same 100-iteration search either way.
+func TestMayflyTargetCostEndsTheWholeSchedule(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	target := 1e-6
+
+	run := func(t *testing.T, epochs, restarts, budget int) (int, *Result) {
+		t.Helper()
+
+		evaluations := 0
+
+		result, err := (&MayflyOptimizer{
+			Variant: "desma", Population: 8, Seed: 1, MaxWorkers: 1,
+			Tuning: &MayflyTuning{
+				Convergence: &MayflyConvergence{TargetCost: &target},
+				Schedule:    &MayflySchedule{Epochs: &epochs, Restarts: &restarts},
+			},
+		}).Optimize(context.Background(), func(x []float64) float64 {
+			evaluations++
+
+			return square(x[0]-1.25) + square(x[1]+2.5)
+		}, []float64{5, 5}, bounds, OptimizeOptions{MaxIterations: budget})
+		if err != nil {
+			t.Fatalf("Optimize failed: %v", err)
+		}
+
+		return evaluations, result
+	}
+
+	firstRoundOnly, single := run(t, 1, 0, 100)
+	scheduled, result := run(t, 2, 2, 400)
+
+	if !result.Converged || result.StopReason != string(mayfly.TerminationTargetCost) {
+		t.Fatalf("expected the schedule to end on the target cost, got converged=%v reason=%q",
+			result.Converged, result.StopReason)
+	}
+
+	if scheduled != firstRoundOnly {
+		t.Fatalf("a met target must end the schedule: the four-round run spent %d evaluations, its first round alone %d",
+			scheduled, firstRoundOnly)
+	}
+
+	if result.Iterations != single.Iterations {
+		t.Fatalf("expected %d iterations, the first round's own count, got %d",
+			single.Iterations, result.Iterations)
+	}
+}
+
+// TestMayflyPresetReportsTheDialectItChose closes a reporting gap: a preset
+// selects a dialect without naming one, so the resolved report was blank and
+// the caller could not see what had run.
+func TestMayflyPresetReportsTheDialectItChose(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+
+	var resolved ResolvedMayfly
+
+	_, err := (&MayflyOptimizer{
+		Preset: "highly_multimodal", Population: 6, Seed: 1, MaxWorkers: 1,
+		OnResolve: func(r ResolvedMayfly) { resolved = r },
+	}).Optimize(context.Background(), func(x []float64) float64 {
+		return square(x[0]-1.25) + square(x[1]+2.5)
+	}, []float64{5, 5}, bounds, OptimizeOptions{MaxIterations: 10})
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if resolved.Preset != "highly_multimodal" {
+		t.Fatalf("preset not reported: %q", resolved.Preset)
+	}
+
+	if resolved.Variant != "olce" {
+		t.Fatalf("expected the preset's dialect to be reported, got %q", resolved.Variant)
 	}
 }

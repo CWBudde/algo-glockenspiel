@@ -29,6 +29,12 @@ const (
 
 	maxIterations = 100_000
 	maxTimeBudget = time.Hour
+
+	// maxMayflyRounds bounds the schedule the same way the fit service does:
+	// every round costs at least one iteration, so an unbounded count is a
+	// request to split the budget into slices too thin to search.
+	maxMayflyRounds = 1000
+
 	minSampleRate = 4000
 	maxSampleRate = 192000
 	maxRenderTime = 60 * time.Second
@@ -54,6 +60,32 @@ type Request struct {
 	MayflyVariant    string `json:"mayflyVariant"`
 	MayflyPopulation int    `json:"mayflyPopulation"`
 	MayflySeed       string `json:"mayflySeed"`
+
+	MayflyPreset     string   `json:"mayflyPreset,omitempty"`
+	MayflyEpochs     int      `json:"mayflyEpochs,omitempty"`
+	MayflyRestarts   int      `json:"mayflyRestarts,omitempty"`
+	MayflyStagnation int      `json:"mayflyStagnation,omitempty"`
+	MayflyTargetCost *float64 `json:"mayflyTargetCost,omitempty"`
+	MayflyNC         *int     `json:"mayflyNc,omitempty"`
+	MayflyNCRatio    *float64 `json:"mayflyNcRatio,omitempty"`
+	MayflySelection  string   `json:"mayflySelection,omitempty"`
+
+	// MayflyTuning is the full tuning document, inline in the request rather
+	// than a separate input, which is where this front end departs from the
+	// HTTP one. Two reasons:
+	//
+	//  1. fitStart has a fixed five-argument contract -- request, reference,
+	//     preset, bounds, callback -- mirrored by the worker in
+	//     web/src/features/optimize/fit.worker.ts. A sixth argument would break
+	//     that contract on both sides for no gain.
+	//  2. DecodeRequest's DisallowUnknownFields reaches into nested structs, so
+	//     a misspelled knob is rejected here exactly as
+	//     optimizer.DecodeMayflyTuning rejects it in a standalone document.
+	//
+	// The bounds document is a separate argument only because the HTTP path
+	// mirrors it as a multipart file part and this path has no multipart to
+	// mirror; the asymmetry is the transport's, not a decision about tuning.
+	MayflyTuning *optimizer.MayflyTuning `json:"mayflyTuning,omitempty"`
 }
 
 // DecodeRequest parses the worker request without accepting misspelled fields
@@ -193,6 +225,20 @@ func (p *Prepared) SampleRate() int { return p.sampleRate }
 // ReferenceSeconds returns the reference duration.
 func (p *Prepared) ReferenceSeconds() float64 {
 	return float64(p.reference) / float64(p.sampleRate)
+}
+
+// OnMayflyResolve installs the callback that reports what a Mayfly run settled
+// on -- the dialect, the seed, and why an automatically chosen dialect was
+// chosen -- once those are known and before the search starts. It must be
+// called before Run, and a fit that does not use Mayfly never calls back.
+//
+// Without it a variant of "auto" is invisible to the browser: the dialect is
+// picked from the objective inside the run and would otherwise be discarded
+// here, leaving the UI unable to say what it actually ran.
+func (p *Prepared) OnMayflyResolve(report func(optimizer.ResolvedMayfly)) {
+	if backend, ok := p.backend.(*optimizer.MayflyOptimizer); ok {
+		backend.OnResolve = report
+	}
 }
 
 // Run performs the fit. Progress is deliberately requested every optimizer
@@ -342,7 +388,99 @@ func validateRequest(request Request) (time.Duration, int64, error) {
 		return 0, 0, fmt.Errorf("mayflyPopulation must be in [2,4096], got %d", request.MayflyPopulation)
 	}
 
+	if err := validateMayflyTuningScalars(request); err != nil {
+		return 0, 0, err
+	}
+
 	return budget, seed, nil
+}
+
+// validateMayflyTuningScalars checks the scalar tuning settings against the
+// same ranges the fit service applies, so a browser fit and a server fit reject
+// the same request. The values are checked before they reach a tuning document
+// because mayfly reports an unusable configuration only once the run starts,
+// and by then the caller has already waited for the WASM module and the fit.
+//
+// A zero epoch or restart count is the omitted key, not a request for zero
+// rounds: both fields are omitempty on the wire and the schedule already
+// defaults to one warm round and no cold ones.
+func validateMayflyTuningScalars(request Request) error {
+	if request.MayflyEpochs != 0 && (request.MayflyEpochs < 1 || request.MayflyEpochs > maxMayflyRounds) {
+		return fmt.Errorf("mayflyEpochs must be in [1,%d], got %d", maxMayflyRounds, request.MayflyEpochs)
+	}
+
+	if request.MayflyRestarts < 0 || request.MayflyRestarts > maxMayflyRounds {
+		return fmt.Errorf("mayflyRestarts must be in [0,%d], got %d", maxMayflyRounds, request.MayflyRestarts)
+	}
+
+	if request.MayflyStagnation < 0 || request.MayflyStagnation > maxIterations {
+		return fmt.Errorf("mayflyStagnation must be in [0,%d], got %d", maxIterations, request.MayflyStagnation)
+	}
+
+	// -1 is mayfly.NCAuto, which derives the offspring count from the ratio, so
+	// it is the floor rather than an error.
+	if request.MayflyNC != nil && *request.MayflyNC < -1 {
+		return fmt.Errorf("mayflyNc must be at least -1, got %d", *request.MayflyNC)
+	}
+
+	// NaN is rejected explicitly because mayfly sanitises a non-finite knob
+	// mid-run: it would not fail, it would quietly become something else.
+	if request.MayflyNCRatio != nil && (*request.MayflyNCRatio < 0 || math.IsNaN(*request.MayflyNCRatio)) {
+		return fmt.Errorf("mayflyNcRatio must be at least 0, got %g", *request.MayflyNCRatio)
+	}
+
+	return nil
+}
+
+// mayflyTuning turns the request's scalar settings into a tuning document and
+// lets the inline document override it, key by key. Precedence is one sentence:
+// the document wins.
+//
+// The scalars are never written onto a mayfly.Config here. Building a document
+// instead leaves optimizer.MayflyOptimizer with a single applier, so the two
+// ways a browser fit can name a knob cannot drift into two ways of applying it.
+func mayflyTuning(request Request) *optimizer.MayflyTuning {
+	scalars := &optimizer.MayflyTuning{
+		NC:      request.MayflyNC,
+		NCRatio: request.MayflyNCRatio,
+	}
+
+	if request.MayflySelection != "" {
+		selection := request.MayflySelection
+		scalars.Selection = &selection
+	}
+
+	// The blocks stay nil unless something asked for them: a convergence block
+	// that exists is what turns mayfly's early exit on, and an empty one would
+	// turn it on with Go zero values.
+	if request.MayflyTargetCost != nil || request.MayflyStagnation > 0 {
+		convergence := &optimizer.MayflyConvergence{TargetCost: request.MayflyTargetCost}
+
+		if request.MayflyStagnation > 0 {
+			stagnation := request.MayflyStagnation
+			convergence.StagnationIterations = &stagnation
+		}
+
+		scalars.Convergence = convergence
+	}
+
+	if request.MayflyEpochs > 0 || request.MayflyRestarts > 0 {
+		schedule := &optimizer.MayflySchedule{}
+
+		if request.MayflyEpochs > 0 {
+			epochs := request.MayflyEpochs
+			schedule.Epochs = &epochs
+		}
+
+		if request.MayflyRestarts > 0 {
+			restarts := request.MayflyRestarts
+			schedule.Restarts = &restarts
+		}
+
+		scalars.Schedule = schedule
+	}
+
+	return scalars.Overlay(request.MayflyTuning)
 }
 
 func parseDuration(raw string) (time.Duration, error) {
@@ -364,14 +502,18 @@ func selectOptimizer(request Request, seed int64) (optimizer.Optimizer, error) {
 	case "simple":
 		return &optimizer.SimpleOptimizer{}, nil
 	case "mayfly":
+		// MaxWorkers is one because a WASM build has no threads: anything above
+		// one would serialise anyway, at the cost of the goroutine handover.
 		backend := &optimizer.MayflyOptimizer{
 			Variant:    request.MayflyVariant,
+			Preset:     request.MayflyPreset,
 			Population: request.MayflyPopulation,
 			Seed:       seed,
 			MaxWorkers: 1,
+			Tuning:     mayflyTuning(request),
 		}
 
-		if err := backend.Validate(); err != nil {
+		if err := backend.Validate(request.MaxIterations); err != nil {
 			return nil, err
 		}
 

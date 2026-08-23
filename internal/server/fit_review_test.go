@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -283,5 +284,270 @@ func TestReadingThePresetOfAFreshJobIsNilSafeRatherThanAPanic(t *testing.T) {
 
 	if body.Error == "" {
 		t.Fatal("the refusal carries no message")
+	}
+}
+
+// A tuning document arrives as a file part, exactly as the bounds document
+// does, and the run has to actually use it. The document below names a dialect
+// the request never mentions, so the resolved variant the snapshot echoes is
+// proof the file reached the engine rather than being read and dropped.
+func TestFitUsesAnUploadedMayflyTuning(t *testing.T) {
+	handler := newFitServer(t).Handler()
+
+	tuning := []byte(`{"variant": "ma", "npop": 8, "npopf": 8, "schedule": {"epochs": 1}}`)
+
+	response := startFitWithFiles(t, handler, referenceWAV(t, testReferenceLength, testSampleRate),
+		shortMayflyFit(), map[string][]byte{"mayflyTuning": tuning})
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("start = %d, want 202: %s", response.Code, response.Body.String())
+	}
+
+	final := waitForTerminalState(t, handler, 120*time.Second)
+	if final.State != "succeeded" {
+		t.Fatalf("state = %q (error %q), want succeeded", final.State, final.Error)
+	}
+
+	if final.MayflyVariant != "ma" {
+		t.Fatalf("resolved variant = %q, want the document's %q", final.MayflyVariant, "ma")
+	}
+}
+
+// The fit-slot property: a malformed request is a 400 on the start request and
+// not a job that is accepted, claims the single slot, and then fails. The
+// tuning document is decoded before the slot is claimed, so the well-formed
+// request that follows a malformed one must still be accepted.
+func TestAMalformedMayflyTuningDoesNotClaimTheFitSlot(t *testing.T) {
+	handler := newFitServer(t).Handler()
+	reference := referenceWAV(t, testReferenceLength, testSampleRate)
+
+	rejected := startFitWithFiles(t, handler, reference, shortMayflyFit(),
+		map[string][]byte{"mayflyTuning": []byte(`{"npop": 8`)})
+	if rejected.Code != http.StatusBadRequest {
+		t.Fatalf("malformed tuning = %d, want 400: %s", rejected.Code, rejected.Body.String())
+	}
+
+	// 409 here would mean the refused request took the slot with it.
+	accepted := startFitWithReference(t, handler, reference, shortFit())
+	if accepted.Code != http.StatusAccepted {
+		t.Fatalf("the start after a refused one = %d, want 202: %s", accepted.Code, accepted.Body.String())
+	}
+
+	waitForTerminalState(t, handler, 60*time.Second)
+}
+
+// Every way a tuning document or a tuning field can be wrong, each of them
+// answered before a job slot is claimed.
+func TestStartRejectsBadMayflyTuning(t *testing.T) {
+	handler := newFitServer(t).Handler()
+	reference := referenceWAV(t, testReferenceLength, testSampleRate)
+
+	tests := []struct {
+		name     string
+		fields   map[string]string
+		tuning   []byte
+		wantText string
+	}{
+		{
+			name:     "malformed document",
+			tuning:   []byte(`{"npop": 8`),
+			wantText: "decode tuning",
+		},
+		{
+			// The message has to name the key, or a typo in a forty-knob
+			// document is a hunt rather than a correction.
+			name:     "unknown key",
+			tuning:   []byte(`{"population": 8}`),
+			wantText: "population",
+		},
+		{
+			name:     "value outside the knob's range",
+			tuning:   []byte(`{"g": 4.5}`),
+			wantText: "g",
+		},
+		{
+			// Only the first object would be applied, so the fit would run
+			// against a configuration the client never asked for.
+			name:     "document followed by a second one",
+			tuning:   []byte(`{"npop": 8}{"npop": 4}`),
+			wantText: "unexpected content after the tuning object",
+		},
+		{
+			name:     "zero epochs",
+			fields:   map[string]string{"mayflyEpochs": "0"},
+			wantText: "mayflyEpochs",
+		},
+		{
+			name:     "epochs above the cap",
+			fields:   map[string]string{"mayflyEpochs": "1001"},
+			wantText: "mayflyEpochs",
+		},
+		{
+			name:     "negative restarts",
+			fields:   map[string]string{"mayflyRestarts": "-1"},
+			wantText: "mayflyRestarts",
+		},
+		{
+			name:     "restarts above the cap",
+			fields:   map[string]string{"mayflyRestarts": "1001"},
+			wantText: "mayflyRestarts",
+		},
+		{
+			// -1 is mayfly.NCAuto, so it is the floor rather than zero.
+			name:     "offspring count below NCAuto",
+			fields:   map[string]string{"mayflyNc": "-2"},
+			wantText: "mayflyNc",
+		},
+		{
+			name:     "negative offspring ratio",
+			fields:   map[string]string{"mayflyNcRatio": "-0.5"},
+			wantText: "mayflyNcRatio",
+		},
+		{
+			name:     "target cost that is not a number",
+			fields:   map[string]string{"mayflyTargetCost": "NaN"},
+			wantText: "mayflyTargetCost",
+		},
+		{
+			name:     "unknown selection strategy",
+			fields:   map[string]string{"mayflySelection": "coin toss"},
+			wantText: "selection",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			fields := shortMayflyFit()
+			for name, value := range testCase.fields {
+				fields[name] = value
+			}
+
+			var files map[string][]byte
+			if testCase.tuning != nil {
+				files = map[string][]byte{"mayflyTuning": testCase.tuning}
+			}
+
+			response := startFitWithFiles(t, handler, reference, fields, files)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
+			}
+
+			if !strings.Contains(response.Body.String(), testCase.wantText) {
+				t.Fatalf("body %q does not name %q", response.Body.String(), testCase.wantText)
+			}
+
+			status := httptest.NewRecorder()
+			handler.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/api/fit", nil))
+
+			if status.Code != http.StatusNotFound {
+				t.Fatalf("a rejected request left a job behind: GET /api/fit = %d", status.Code)
+			}
+		})
+	}
+}
+
+// mayflyNc carries three distinct requests, which is why it is a pointer over
+// an int that already has a sentinel. Absent keeps whatever the variant factory
+// chose, -1 is mayfly.NCAuto and derives the count from the ratio, and a
+// written 0 disables crossover entirely -- which mayfly refuses while mutants
+// are drawn from the offspring, and which is therefore visible from outside as
+// the one of the three that is not accepted.
+func TestMayflyOffspringCountDistinguishesAbsentFromZero(t *testing.T) {
+	reference := referenceWAV(t, testReferenceLength, testSampleRate)
+
+	tests := []struct {
+		name       string
+		value      string
+		present    bool
+		wantStatus int
+	}{
+		{name: "absent", present: false, wantStatus: http.StatusAccepted},
+		{name: "NCAuto", value: "-1", present: true, wantStatus: http.StatusAccepted},
+		{name: "written zero", value: "0", present: true, wantStatus: http.StatusBadRequest},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			// A fresh server per case: two of these start a run, and the slot
+			// is single.
+			handler := newFitServer(t).Handler()
+
+			fields := shortMayflyFit()
+			if testCase.present {
+				fields["mayflyNc"] = testCase.value
+			}
+
+			response := startFitWithReference(t, handler, reference, fields)
+			if response.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", response.Code, testCase.wantStatus, response.Body.String())
+			}
+
+			if testCase.wantStatus == http.StatusAccepted {
+				waitForTerminalState(t, handler, 120*time.Second)
+			}
+		})
+	}
+}
+
+// The seed and the dialect a run settled on have to come back, or a run cannot
+// be repeated: a zero seed is resolved inside the optimizer, and "auto" chooses
+// a dialect from the objective. The seed is a string because it is an int64 and
+// this is JSON.
+func TestSnapshotEchoesTheResolvedMayflySettings(t *testing.T) {
+	handler := newFitServer(t).Handler()
+
+	fields := shortMayflyFit()
+	fields["mayflyVariant"] = "ma"
+	fields["mayflySeed"] = "9007199254740993"
+
+	response := startFitWithReference(t, handler, referenceWAV(t, testReferenceLength, testSampleRate), fields)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("start = %d, want 202: %s", response.Code, response.Body.String())
+	}
+
+	final := waitForTerminalState(t, handler, 120*time.Second)
+	if final.State != "succeeded" {
+		t.Fatalf("state = %q (error %q), want succeeded", final.State, final.Error)
+	}
+
+	if final.MayflyVariant != "ma" {
+		t.Fatalf("mayflyVariant = %q, want ma", final.MayflyVariant)
+	}
+
+	// Verbatim, low bits and all: 2^53+1 is exactly the value a JavaScript
+	// Number cannot hold, which is why the field is a string.
+	if final.MayflySeed != "9007199254740993" {
+		t.Fatalf("mayflySeed = %q, want the seed that was sent back verbatim", final.MayflySeed)
+	}
+
+	if final.MayflyRecommendation != "" {
+		t.Fatalf("mayflyRecommendation = %q, want empty: the dialect was named, not chosen",
+			final.MayflyRecommendation)
+	}
+}
+
+// "auto" measures the landscape and picks a dialect. Without the echo the
+// client that asked for it could never learn what ran.
+func TestSnapshotEchoesTheAutomaticallyChosenVariant(t *testing.T) {
+	handler := newFitServer(t).Handler()
+
+	fields := shortMayflyFit()
+	fields["mayflyVariant"] = "auto"
+
+	response := startFitWithReference(t, handler, referenceWAV(t, testReferenceLength, testSampleRate), fields)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("start = %d, want 202: %s", response.Code, response.Body.String())
+	}
+
+	final := waitForTerminalState(t, handler, 120*time.Second)
+	if final.State != "succeeded" {
+		t.Fatalf("state = %q (error %q), want succeeded", final.State, final.Error)
+	}
+
+	if final.MayflyVariant == "" || final.MayflyVariant == "auto" {
+		t.Fatalf("mayflyVariant = %q, want the dialect that was chosen", final.MayflyVariant)
+	}
+
+	if final.MayflyRecommendation == "" {
+		t.Fatal("an automatically chosen dialect comes back without the reason it was chosen")
 	}
 }

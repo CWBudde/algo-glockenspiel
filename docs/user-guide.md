@@ -128,9 +128,69 @@ glockenspiel fit \
 - `--checkpoint-interval`: checkpoint write interval in progress reports; `0` disables checkpointing entirely, including the final checkpoint
 - `--work-dir`: stores checkpoints and `fitted_output.wav`, resolved relative to the current directory (default `out/fit`)
 - `--resume`: restart from the latest `checkpoint_*.json` in `work-dir`
-- `--mayfly-variant`: Mayfly variant selector
-- `--mayfly-pop`: Mayfly male/female population size
-- `--mayfly-seed`: random seed for Mayfly
+- `--mayfly-variant`: which of Mayfly's seven dialects to run, or `auto` to measure the landscape and choose one. `auto` spends part of the budget on that measurement, and the effect of the choice was measured as small, so that budget is usually better spent on iterations
+- `--mayfly-pop`: Mayfly male/female population size. Bigger is not better at a fixed budget: larger populations were measured as _worse_, because each iteration costs more
+- `--mayfly-seed`: random seed for Mayfly. `0` picks a seed, prints it, and records it, so the run stays reproducible and a resume continues the same stream
+- `--mayfly-preset`: start from one of Mayfly's named configurations, which pick a dialect and its knobs together. Cannot be combined with `--mayfly-variant`, and does not override `--max-iter` or `--mayfly-pop`
+- `--mayfly-tuning`: JSON file setting individual Mayfly knobs, see [Tuning Mayfly](#tuning-mayfly)
+- `--mayfly-epochs`: split the run into this many warm rounds, each reseeded from the best result so far (default `1`)
+- `--mayfly-restarts`: append this many cold rounds, each starting from a fresh random population (default `0`)
+- `--mayfly-stagnation`: stop a round after this many iterations without progress; `0` disables it. Must be narrower than a round, or it could never fire
+- `--mayfly-target-cost`: stop once the best cost reaches this value
+- `--mayfly-nc`: crossover offspring per iteration; `-1` derives it from the ratio, `0` disables crossover
+- `--mayfly-nc-ratio`: offspring count as a multiple of the population
+- `--mayfly-selection`: `rank` or `tournament` parent selection
+
+### Tuning Mayfly
+
+`--mayfly-variant` and `--mayfly-pop` cover the common cases. Everything else
+Mayfly exposes — the swarm coefficients, each dialect's own knobs, early
+stopping, and the round schedule — is written in a JSON document, the same way
+`--bounds` narrows the search box:
+
+```bash
+cat > tuning.json <<'JSON'
+{
+  "cooling_rate": 0.97,
+  "cooling_schedule": "linear",
+  "nc_ratio": 0.5,
+  "convergence": { "stagnation_iterations": 40 },
+  "schedule": { "epochs": 4 }
+}
+JSON
+
+glockenspiel fit \
+  --reference recordings/a4.wav \
+  --output out/fit/a4.json \
+  --optimizer mayfly --mayfly-variant gsasma \
+  --mayfly-tuning tuning.json \
+  --max-iter 2000 --time-budget 5m
+```
+
+Every key is optional, and an omitted key keeps whatever the dialect already
+chose, so an empty document changes nothing. Unknown keys are rejected rather
+than ignored: a misspelled knob that was silently dropped would run the fit at
+the default while you believed you had tuned it. The full key list, with the
+range each is validated against, is in [mayfly-tuning.md](mayfly-tuning.md).
+
+A knob belonging to a different dialect is an error rather than a no-op, because
+Mayfly ignores the fields of variants it is not running — the value would land
+on the configuration, change nothing, and leave you believing otherwise.
+
+The document is applied after the scalar flags, so a key written in both places
+takes its value from the file.
+
+#### Rounds
+
+`--mayfly-epochs 4` runs four shorter searches instead of one long one, each
+reseeded from the best result so far. `--mayfly-restarts` appends cold rounds
+that start from a fresh random population instead. `--max-iter` stays the total
+across every round, and one `--time-budget` covers them all.
+
+Warm rounds are the ones worth reaching for: measured against the sibling
+`algo-piano` project's audio objectives, round length was the dominant setting
+and warm starting the second-largest effect, while cold restarts cost more than
+they bought at typical budgets.
 
 ### Narrowing The Search With `--bounds`
 
