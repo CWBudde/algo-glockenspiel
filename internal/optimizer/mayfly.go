@@ -136,7 +136,8 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 
 	if resolved.Variant == mayflyAutoVariant {
 		measured, recommendation, spent := classifyMayfly(
-			runCtx, tracker, len(initial), o.classifyEvaluations(), opts.TimeBudget)
+			runCtx, tracker, len(initial), o.classifyEvaluations(), opts.TimeBudget,
+		)
 
 		characteristics = &measured
 		resolved.Variant = strings.ToLower(recommendation.Variant.Name())
@@ -197,7 +198,8 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 			}
 
 			options = append(options, mayfly.WithInitialPopulation(
-				[][]float64{warmSeed}, [][]float64{warmSeed}))
+				[][]float64{warmSeed}, [][]float64{warmSeed},
+			))
 		}
 
 		res, runErr := mayfly.OptimizeContext(runCtx, cfg, options...)
@@ -278,7 +280,8 @@ func (o *MayflyOptimizer) resolve() (ResolvedMayfly, error) {
 	if resolved.Preset != "" && resolved.Variant != "" {
 		return ResolvedMayfly{}, fmt.Errorf(
 			"mayfly preset %q already selects a variant, so it cannot be combined with variant %q",
-			resolved.Preset, resolved.Variant)
+			resolved.Preset, resolved.Variant,
+		)
 	}
 
 	if resolved.Preset == "" && resolved.Variant == "" {
@@ -521,14 +524,16 @@ func validateConvergenceWindow(cfg *mayfly.Config, iters int) error {
 		return fmt.Errorf(
 			"convergence stagnation_iterations %d can never fire inside a round of %d iterations: "+
 				"lower it, raise the iteration budget, or use fewer rounds",
-			window, iters)
+			window, iters,
+		)
 	}
 
 	if minimum := cfg.Convergence.MinIterations; minimum > iters {
 		return fmt.Errorf(
 			"convergence min_iterations %d exceeds the %d iterations of a round: "+
 				"lower it, raise the iteration budget, or use fewer rounds",
-			minimum, iters)
+			minimum, iters,
+		)
 	}
 
 	return nil

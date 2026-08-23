@@ -177,3 +177,89 @@ func TestLoadCheckpointRejectsOlderFormat(t *testing.T) {
 		t.Errorf("error should name the offending version, got %q", err)
 	}
 }
+
+func TestCheckpointCarriesMayflyTuning(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "checkpoint_0001.json")
+
+	epochs := 3
+	selection := "rank"
+
+	want := &Checkpoint{
+		Version:    CheckpointVersion,
+		Iteration:  4,
+		BestCost:   0.5,
+		BestParams: []float64{0.25},
+		Optimizer:  "mayfly",
+		Metric:     "rms",
+		State: &OptimizerState{
+			Kind: "mayfly",
+			Mayfly: &MayflyCheckpointEnv{
+				Variant:    "desma",
+				Preset:     "balanced",
+				Population: 8,
+				Seed:       17,
+				Epochs:     epochs,
+				Restarts:   2,
+				Tuning: &MayflyTuning{
+					Selection: &selection,
+					Schedule:  &MayflySchedule{Epochs: &epochs},
+				},
+			},
+		},
+	}
+	if err := SaveCheckpoint(path, want); err != nil {
+		t.Fatalf("SaveCheckpoint failed: %v", err)
+	}
+
+	got, err := LoadCheckpoint(path)
+	if err != nil {
+		t.Fatalf("LoadCheckpoint failed: %v", err)
+	}
+
+	env := got.State.Mayfly
+	if env == nil {
+		t.Fatal("expected the checkpoint to carry mayfly state")
+	}
+
+	if env.Preset != "balanced" || env.Epochs != 3 || env.Restarts != 2 {
+		t.Fatalf("unexpected mayfly environment round-trip: %#v", env)
+	}
+
+	if env.Tuning == nil || env.Tuning.Selection == nil || *env.Tuning.Selection != selection {
+		t.Fatalf("expected the tuning document to round-trip, got %#v", env.Tuning)
+	}
+
+	if env.Tuning.Schedule == nil || env.Tuning.Schedule.Epochs == nil || *env.Tuning.Schedule.Epochs != epochs {
+		t.Fatalf("expected the schedule block to round-trip, got %#v", env.Tuning.Schedule)
+	}
+}
+
+func TestLoadCheckpointWithoutTuningStaysReadable(t *testing.T) {
+	// The tuning fields are additive: they describe how the search was
+	// configured, not how BestParams is encoded, so CheckpointVersion does not
+	// move and a checkpoint written before they existed still resumes.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "checkpoint_0001.json")
+
+	legacy := `{"version":"2.0","iteration":5,"best_cost":0.25,"best_params":[0.1,0.2],` +
+		`"optimizer":"mayfly","metric":"rms",` +
+		`"state":{"kind":"mayfly","mayfly":{"variant":"desma","population":10,"seed":1}}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write checkpoint fixture: %v", err)
+	}
+
+	cp, err := LoadCheckpoint(path)
+	if err != nil {
+		t.Fatalf("LoadCheckpoint failed: %v", err)
+	}
+
+	if cp.Version != CheckpointVersion {
+		t.Fatalf("checkpoint format version should still be %s, got %s", CheckpointVersion, cp.Version)
+	}
+
+	env := cp.State.Mayfly
+	if env.Tuning != nil || env.Preset != "" || env.Epochs != 0 || env.Restarts != 0 {
+		t.Fatalf("expected the tuning fields to stay empty, got %#v", env)
+	}
+}

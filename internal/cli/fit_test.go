@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -478,6 +479,37 @@ func TestFitCmdFlags(t *testing.T) {
 		t.Fatal("expected a --bounds flag")
 	}
 
+	if got := cmd.Flags().Lookup("mayfly-variant").Usage; !strings.Contains(got, "auto") {
+		t.Fatalf("expected mayfly-variant usage to document auto, got %q", got)
+	}
+
+	for name, want := range map[string]string{
+		"mayfly-tuning":     "",
+		"mayfly-preset":     "",
+		"mayfly-epochs":     "1",
+		"mayfly-restarts":   "0",
+		"mayfly-stagnation": "0",
+		// Three-way flags: their sentinel defaults are legal values, so
+		// "not given" is read off Changed rather than off the value.
+		"mayfly-target-cost": "0",
+		"mayfly-nc":          "-1",
+		"mayfly-nc-ratio":    "0",
+		"mayfly-selection":   "",
+	} {
+		flag := cmd.Flags().Lookup(name)
+		if flag == nil {
+			t.Fatalf("expected a --%s flag", name)
+		}
+
+		if flag.DefValue != want {
+			t.Errorf("unexpected --%s default: got %q want %q", name, flag.DefValue, want)
+		}
+
+		if flag.Usage == "" {
+			t.Errorf("expected --%s to document itself", name)
+		}
+	}
+
 	if cmd.Example == "" {
 		t.Fatal("expected fit to document examples")
 	}
@@ -928,5 +960,259 @@ func TestRunFitResumeIgnoresReportCountForBudget(t *testing.T) {
 
 	if !strings.Contains(out.String(), "remaining-iter=1") {
 		t.Fatalf("expected the resumed budget to stay at one iteration, got %q", out.String())
+	}
+}
+
+// writeTuningFile writes a tuning document and returns its path.
+func writeTuningFile(t *testing.T, dir, name, content string) string {
+	t.Helper()
+
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write tuning file: %v", err)
+	}
+
+	return path
+}
+
+// mayflyFitOptions returns options for a very short Mayfly fit.
+func mayflyFitOptions(referencePath, outputPath, workDir string) fitOptions {
+	options := baseFitOptions(referencePath, outputPath, workDir)
+	options.optimizerName = "mayfly"
+	options.mayflyPop = 2
+	options.mayflySeed = 3
+	options.maxIter = 2
+
+	return options
+}
+
+// latestCheckpointState returns the Mayfly environment of the newest checkpoint.
+func latestCheckpointState(t *testing.T, workDir string) *optimizer.MayflyCheckpointEnv {
+	t.Helper()
+
+	path, err := optimizer.FindLatestCheckpoint(workDir)
+	if err != nil {
+		t.Fatalf("FindLatestCheckpoint failed: %v", err)
+	}
+
+	cp, err := optimizer.LoadCheckpoint(path)
+	if err != nil {
+		t.Fatalf("LoadCheckpoint failed: %v", err)
+	}
+
+	if cp.State == nil || cp.State.Mayfly == nil {
+		t.Fatalf("expected checkpoint %s to carry mayfly state", path)
+	}
+
+	return cp.State.Mayfly
+}
+
+func TestRunFitAppliesMayflyTuningDocument(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+	workDir := filepath.Join(dir, "work")
+
+	tuningPath := writeTuningFile(t, dir, "tuning.json",
+		`{"selection": "rank", "convergence": {"stagnation_iterations": 2}, "schedule": {"epochs": 2}}`)
+
+	cmd := &cobra.Command{}
+
+	var out bytes.Buffer
+
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+
+	options := mayflyFitOptions(referencePath, filepath.Join(dir, "fitted.json"), workDir)
+	options.mayflyTuningPath = tuningPath
+	// The budget has to leave a round long enough for the stagnation window,
+	// which the optimizer checks against the shortest round rather than the
+	// total.
+	options.maxIter = 6
+
+	if err := runFit(cmd, options); err != nil {
+		t.Fatalf("runFit failed: %v", err)
+	}
+
+	// Two epochs over a six-iteration budget is two rounds of three, and the
+	// resolve line is where a caller can see that the document was read.
+	if text := out.String(); !strings.Contains(text, "rounds=2x3") {
+		t.Fatalf("expected the schedule from the tuning document in the output, got %q", text)
+	}
+
+	state := latestCheckpointState(t, workDir)
+	if state.Tuning == nil || state.Tuning.Selection == nil || *state.Tuning.Selection != "rank" {
+		t.Fatalf("expected the checkpoint to carry the tuning document, got %#v", state.Tuning)
+	}
+}
+
+func TestRunFitTuningDocumentWinsOverFlags(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+	workDir := filepath.Join(dir, "work")
+
+	tuningPath := writeTuningFile(t, dir, "tuning.json", `{"selection": "rank"}`)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	options := mayflyFitOptions(referencePath, filepath.Join(dir, "fitted.json"), workDir)
+	options.mayflyTuningPath = tuningPath
+	options.mayflySelection = "tournament"
+
+	if err := runFit(cmd, options); err != nil {
+		t.Fatalf("runFit failed: %v", err)
+	}
+
+	state := latestCheckpointState(t, workDir)
+	if state.Tuning == nil || state.Tuning.Selection == nil {
+		t.Fatalf("expected the checkpoint to carry a merged tuning document, got %#v", state.Tuning)
+	}
+
+	if *state.Tuning.Selection != "rank" {
+		t.Fatalf("expected the document to win over the flag, got selection %q", *state.Tuning.Selection)
+	}
+}
+
+func TestRunFitRejectsMalformedTuningDocument(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+
+	tuningPath := writeTuningFile(t, dir, "broken.json", `{"npop": `)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	options := mayflyFitOptions(referencePath, filepath.Join(dir, "fitted.json"), filepath.Join(dir, "work"))
+	options.mayflyTuningPath = tuningPath
+
+	err := runFit(cmd, options)
+	if err == nil {
+		t.Fatal("expected a malformed tuning document to fail")
+	}
+
+	if !strings.Contains(err.Error(), tuningPath) {
+		t.Fatalf("error should name the tuning file, got %q", err)
+	}
+}
+
+func TestRunFitRejectsUnknownTuningKey(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+
+	tuningPath := writeTuningFile(t, dir, "unknown.json", `{"npopp": 12}`)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	options := mayflyFitOptions(referencePath, filepath.Join(dir, "fitted.json"), filepath.Join(dir, "work"))
+	options.mayflyTuningPath = tuningPath
+
+	err := runFit(cmd, options)
+	if err == nil {
+		t.Fatal("expected an unknown tuning key to fail")
+	}
+
+	// A misspelled knob that was silently ignored would run at the factory
+	// default while the caller believed it had tuned something, so the message
+	// has to name the key.
+	if !strings.Contains(err.Error(), "npopp") {
+		t.Fatalf("error should name the offending key, got %q", err)
+	}
+}
+
+func TestRunFitRejectsNonPositiveMayflyEpochs(t *testing.T) {
+	cmd := newFitCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	if err := cmd.Flags().Set("mayfly-epochs", "0"); err != nil {
+		t.Fatalf("set mayfly-epochs: %v", err)
+	}
+
+	options := baseFitOptions("dummy.wav", "dummy.json", t.TempDir())
+	options.optimizerName = "mayfly"
+	options.mayflyPop = 4
+	options.mayflyEpochs = 0
+
+	err := runFit(cmd, options)
+	if err == nil {
+		t.Fatal("expected mayfly-epochs 0 to fail")
+	}
+
+	if !strings.Contains(err.Error(), "mayfly-epochs") {
+		t.Fatalf("error should name the flag, got %q", err)
+	}
+}
+
+func TestRunFitRejectsPresetWithVariant(t *testing.T) {
+	cmd := newFitCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	if err := cmd.Flags().Set("mayfly-variant", "olce"); err != nil {
+		t.Fatalf("set mayfly-variant: %v", err)
+	}
+
+	options := baseFitOptions("dummy.wav", "dummy.json", t.TempDir())
+	options.optimizerName = "mayfly"
+	options.mayflyPop = 4
+	options.mayflyVariant = "olce"
+	options.mayflyPreset = "balanced"
+
+	err := runFit(cmd, options)
+	if err == nil {
+		t.Fatal("expected a preset combined with a variant to fail")
+	}
+
+	if !strings.Contains(err.Error(), "mayfly-preset") {
+		t.Fatalf("error should name the flags, got %q", err)
+	}
+}
+
+func TestRunFitResumeRestoresEffectiveMayflySeed(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+	outputPath := filepath.Join(dir, "fitted.json")
+	workDir := filepath.Join(dir, "work")
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	options := mayflyFitOptions(referencePath, outputPath, workDir)
+	// Zero means "pick one and report it", so the resolved value is the only
+	// record of the stream the run used.
+	options.mayflySeed = 0
+
+	if err := runFit(cmd, options); err != nil {
+		t.Fatalf("runFit failed: %v", err)
+	}
+
+	effective := latestCheckpointState(t, workDir).Seed
+	if effective == 0 {
+		t.Fatal("expected the checkpoint to record a resolved, non-zero seed")
+	}
+
+	resume := newFitCmd()
+
+	var out bytes.Buffer
+
+	resume.SetOut(&out)
+	resume.SetErr(io.Discard)
+
+	resumed := mayflyFitOptions(referencePath, outputPath, workDir)
+	resumed.maxIter = 4
+	resumed.resume = true
+	resumed.mayflySeed = 0
+
+	if err := runFit(resume, resumed); err != nil {
+		t.Fatalf("resumed runFit failed: %v", err)
+	}
+
+	if want := fmt.Sprintf("seed=%d", effective); !strings.Contains(out.String(), want) {
+		t.Fatalf("expected the resumed run to continue %s, got %q", want, out.String())
 	}
 }

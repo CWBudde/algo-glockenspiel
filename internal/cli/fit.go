@@ -39,9 +39,28 @@ type fitOptions struct {
 	resume          bool
 	metric          string
 	mayflyVariant   string
+	mayflyPreset    string
 	mayflyPop       int
 	mayflySeed      int64
 	cpuProfilePath  string
+
+	// mayflyTuningPath names an optional tuning document. The scalar flags
+	// below are folded into a document of their own and the file is overlaid on
+	// top, so every knob is written in exactly one place.
+	mayflyTuningPath string
+
+	mayflyEpochs     int
+	mayflyRestarts   int
+	mayflyStagnation int
+	mayflyTargetCost float64
+	mayflyNC         int
+	mayflyNCRatio    float64
+	mayflySelection  string
+
+	// mayflyTuning is the document a resumed checkpoint carried. It is not a
+	// flag: it is the base the current flags and --mayfly-tuning are overlaid
+	// on, so a resumed run keeps the tuning it was started with.
+	mayflyTuning *optimizer.MayflyTuning
 }
 
 func newFitCmd() *cobra.Command {
@@ -62,6 +81,9 @@ func newFitCmd() *cobra.Command {
 		mayflyVariant:   "desma",
 		mayflyPop:       10,
 		mayflySeed:      1,
+		mayflyEpochs:    1,
+		mayflyRestarts:  0,
+		mayflyNC:        -1,
 	}
 
 	cmd := &cobra.Command{
@@ -108,9 +130,33 @@ func newFitCmd() *cobra.Command {
 		"Divide out the scalar gain that best matches the reference level. Use when the "+
 			"reference level is unknown; it makes the model's amplitude parameters "+
 			"unidentifiable, so leave it off when the level is meaningful")
-	flags.StringVar(&options.mayflyVariant, "mayfly-variant", options.mayflyVariant, "Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa")
+	flags.StringVar(&options.mayflyVariant, "mayfly-variant", options.mayflyVariant,
+		"Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa|auto. \"auto\" spends part of "+
+			"the budget measuring the landscape before it picks one; the measured effect of the "+
+			"dialect is small, so that budget usually buys more spent on iterations")
+	flags.StringVar(&options.mayflyPreset, "mayfly-preset", options.mayflyPreset,
+		"Mayfly configuration preset. A preset already selects a variant, so it cannot be "+
+			"combined with --mayfly-variant")
 	flags.IntVar(&options.mayflyPop, "mayfly-pop", options.mayflyPop, "Male/female population size for Mayfly")
 	flags.Int64Var(&options.mayflySeed, "mayfly-seed", options.mayflySeed, "Random seed for Mayfly")
+	flags.StringVar(&options.mayflyTuningPath, "mayfly-tuning", options.mayflyTuningPath, mayflyTuningFlagHelp)
+	flags.IntVar(&options.mayflyEpochs, "mayfly-epochs", options.mayflyEpochs,
+		"Number of warm rounds, each reseeded from the running best")
+	flags.IntVar(&options.mayflyRestarts, "mayfly-restarts", options.mayflyRestarts,
+		"Number of cold rounds appended after the warm ones, each from a fresh population")
+	flags.IntVar(&options.mayflyStagnation, "mayfly-stagnation", options.mayflyStagnation,
+		"Stop a round after this many iterations without progress (0 disables the rule)")
+	flags.Float64Var(&options.mayflyTargetCost, "mayfly-target-cost", options.mayflyTargetCost,
+		"Stop once the best cost reaches this value. Leaving the flag out disables the target, "+
+			"which is why zero is a usable target rather than \"off\"")
+	flags.IntVar(&options.mayflyNC, "mayfly-nc", options.mayflyNC,
+		"Crossover offspring per iteration: -1 derives the count from --mayfly-nc-ratio, "+
+			"0 disables crossover, a positive value is taken literally")
+	flags.Float64Var(&options.mayflyNCRatio, "mayfly-nc-ratio", options.mayflyNCRatio,
+		"Offspring count as a multiple of the male population, used only when --mayfly-nc is -1 "+
+			"(0 keeps the variant's own ratio)")
+	flags.StringVar(&options.mayflySelection, "mayfly-selection", options.mayflySelection,
+		"How crossover pairs parents: rank|tournament")
 	flags.StringVar(&options.cpuProfilePath, "cpu-profile", options.cpuProfilePath, "Write a CPU profile for the fit command to this path")
 	_ = flags.MarkHidden("cpu-profile")
 
@@ -192,8 +238,10 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return err
 	}
 
-	if options.optimizerName == "mayfly" && options.mayflyPop < 2 {
-		return fmt.Errorf("mayfly-pop must be >= 2, got %d", options.mayflyPop)
+	if options.optimizerName == "mayfly" {
+		if err := validateMayflyOptions(cmd, options); err != nil {
+			return err
+		}
 	}
 
 	stopCPUProfile, err := startCPUProfile(options.cpuProfilePath)
@@ -224,6 +272,22 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	// The scalar --mayfly-* flags and the tuning document are not two ways of
+	// configuring the same run: the flags become a document, the file is
+	// overlaid on it, and one applier writes the result. Precedence is one
+	// sentence -- the document wins over the flags, and both win over whatever
+	// tuning a resumed checkpoint carried.
+	tuning := options.mayflyTuning.Overlay(tuningFromFlags(cmd, options))
+
+	if options.mayflyTuningPath != "" {
+		document, err := optimizer.LoadMayflyTuning(options.mayflyTuningPath)
+		if err != nil {
+			return err
+		}
+
+		tuning = tuning.Overlay(document)
 	}
 
 	objectiveConfig := optimizer.DefaultObjectiveConfig(metric)
@@ -287,7 +351,7 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 			BestParams:          append([]float64(nil), params...),
 			Optimizer:           options.optimizerName,
 			Metric:              options.metric,
-			State:               checkpointStateForOptions(options),
+			State:               checkpointStateForOptions(options, tuning),
 		})
 	}
 
@@ -308,9 +372,11 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		selectedOptimizer = &optimizer.SimpleOptimizer{}
 	case "mayfly":
 		selectedOptimizer = &optimizer.MayflyOptimizer{
-			Variant:    options.mayflyVariant,
+			Variant:    mayflyVariantFor(options),
+			Preset:     options.mayflyPreset,
 			Population: options.mayflyPop,
 			Seed:       options.mayflySeed,
+			Tuning:     tuning,
 			OnResolve: func(resolved optimizer.ResolvedMayfly) {
 				// Record the effective seed before the search starts, so every
 				// checkpoint carries the stream the run actually used. With
@@ -318,9 +384,9 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 				// continuing the original stream and starting a new one.
 				options.mayflySeed = resolved.Seed
 				options.mayflyVariant = resolved.Variant
+				options.mayflyPreset = resolved.Preset
 
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-					"Mayfly: variant=%s seed=%d\n", resolved.Variant, resolved.Seed)
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), formatResolvedMayfly(resolved))
 			},
 		}
 	}
@@ -546,15 +612,181 @@ func clampInitialPoint(
 	return clamped, nil
 }
 
-func checkpointStateForOptions(options fitOptions) *optimizer.OptimizerState {
+// validateMayflyOptions rejects the flag combinations the CLI can see before
+// anything is loaded.
+//
+// It only covers what the engine cannot judge on its own or would reject too
+// late to be useful. Every range on a tuning knob, and a stagnation window
+// wider than a round, are checked by the optimizer against the budget it is
+// actually given, so restating them here would be a second place for them to
+// drift.
+func validateMayflyOptions(cmd *cobra.Command, options fitOptions) error {
+	if options.mayflyPop < 2 {
+		return fmt.Errorf("mayfly-pop must be >= 2, got %d", options.mayflyPop)
+	}
+
+	// --mayfly-variant has a default, so only a written one is a real conflict.
+	// The engine refuses the pair as well; catching it here means the run is
+	// rejected before a reference file is read.
+	if options.mayflyPreset != "" && flagChanged(cmd, "mayfly-variant") {
+		return fmt.Errorf("mayfly-preset %q already selects a variant, so it cannot be combined with mayfly-variant %q",
+			options.mayflyPreset, options.mayflyVariant)
+	}
+
+	// The flag defaults to one, so only a written value can be below it.
+	// Callers that build fitOptions directly leave it zero to mean "unset".
+	if flagChanged(cmd, "mayfly-epochs") && options.mayflyEpochs < 1 {
+		return fmt.Errorf("mayfly-epochs must be >= 1, got %d", options.mayflyEpochs)
+	}
+
+	if options.mayflyRestarts < 0 {
+		return fmt.Errorf("mayfly-restarts must be >= 0, got %d", options.mayflyRestarts)
+	}
+
+	return nil
+}
+
+// mayflyVariantFor picks the variant the optimizer is configured with.
+//
+// A preset selects a dialect of its own, and the variant flag always carries a
+// default, so passing both through would make every --mayfly-preset run look
+// like the conflict validateMayflyOptions rejects. An explicitly written
+// variant never reaches here alongside a preset.
+func mayflyVariantFor(options fitOptions) string {
+	if options.mayflyPreset != "" {
+		return ""
+	}
+
+	return options.mayflyVariant
+}
+
+// tuningFromFlags renders the scalar --mayfly-* flags as a tuning document.
+//
+// It returns nil when nothing was set, which is what keeps an untuned run
+// identical to one configured before tuning existed. The three-way flags --
+// --mayfly-nc and --mayfly-target-cost, where "not given" differs from a
+// written -1 or 0 -- are read through flagChanged rather than compared against
+// a sentinel, because both sentinels are legal values.
+func tuningFromFlags(cmd *cobra.Command, options fitOptions) *optimizer.MayflyTuning {
+	tuning := &optimizer.MayflyTuning{}
+	written := false
+
+	if options.mayflySelection != "" {
+		selection := options.mayflySelection
+		tuning.Selection = &selection
+		written = true
+	}
+
+	if flagChanged(cmd, "mayfly-nc") {
+		count := options.mayflyNC
+		tuning.NC = &count
+		written = true
+	}
+
+	if options.mayflyNCRatio != 0 {
+		ratio := options.mayflyNCRatio
+		tuning.NCRatio = &ratio
+		written = true
+	}
+
+	if options.mayflyStagnation > 0 {
+		stagnation := options.mayflyStagnation
+		tuning.Convergence = &optimizer.MayflyConvergence{StagnationIterations: &stagnation}
+		written = true
+	}
+
+	if flagChanged(cmd, "mayfly-target-cost") {
+		cost := options.mayflyTargetCost
+
+		if tuning.Convergence == nil {
+			tuning.Convergence = &optimizer.MayflyConvergence{}
+		}
+
+		tuning.Convergence.TargetCost = &cost
+		written = true
+	}
+
+	// One epoch and no restarts is what a single search already is, so writing
+	// them would turn an untouched flag into a schedule block for nothing.
+	if options.mayflyEpochs > 1 {
+		epochs := options.mayflyEpochs
+		tuning.Schedule = &optimizer.MayflySchedule{Epochs: &epochs}
+		written = true
+	}
+
+	if options.mayflyRestarts > 0 {
+		restarts := options.mayflyRestarts
+
+		if tuning.Schedule == nil {
+			tuning.Schedule = &optimizer.MayflySchedule{}
+		}
+
+		tuning.Schedule.Restarts = &restarts
+		written = true
+	}
+
+	if !written {
+		return nil
+	}
+
+	return tuning
+}
+
+// formatResolvedMayfly renders what a run actually settled on.
+//
+// variant= and seed= stay first and keep their spelling: they were the whole
+// line before the tuning surface existed, and a reader -- human or script --
+// already looks for them there.
+func formatResolvedMayfly(resolved optimizer.ResolvedMayfly) string {
+	line := fmt.Sprintf("Mayfly: variant=%s seed=%d", resolved.Variant, resolved.Seed)
+
+	if resolved.Preset != "" {
+		line += " preset=" + resolved.Preset
+	}
+
+	line += fmt.Sprintf(" rounds=%dx%d", resolved.Rounds, resolved.IterationsPerRound)
+
+	// Recommendation is filled in only when the dialect was measured rather
+	// than named, so it is what tells an auto run from a plain one.
+	if resolved.Recommendation != "" {
+		line += fmt.Sprintf(" (auto: %s, confidence=%0.2f, classify-evals=%d)",
+			resolved.Recommendation, resolved.Confidence, resolved.ClassifyEvaluations)
+	}
+
+	return line
+}
+
+func checkpointStateForOptions(options fitOptions, tuning *optimizer.MayflyTuning) *optimizer.OptimizerState {
 	state := &optimizer.OptimizerState{
 		Kind: options.optimizerName,
 	}
 	if options.optimizerName == "mayfly" {
+		// The schedule the run was given, not the one the flags asked for: a
+		// tuning document may have overridden either, and the checkpoint should
+		// describe what happened.
+		epochs, restarts := options.mayflyEpochs, options.mayflyRestarts
+
+		if tuning != nil && tuning.Schedule != nil {
+			if tuning.Schedule.Epochs != nil {
+				epochs = *tuning.Schedule.Epochs
+			}
+
+			if tuning.Schedule.Restarts != nil {
+				restarts = *tuning.Schedule.Restarts
+			}
+		}
+
 		state.Mayfly = &optimizer.MayflyCheckpointEnv{
 			Variant:    options.mayflyVariant,
+			Preset:     options.mayflyPreset,
 			Population: options.mayflyPop,
 			Seed:       options.mayflySeed,
+			Epochs:     epochs,
+			Restarts:   restarts,
+			// The merged document rather than the flags: it is what the run was
+			// actually configured with, so a resume reproduces it without
+			// needing the tuning file to still be on disk.
+			Tuning: tuning,
 		}
 	}
 
@@ -594,6 +826,23 @@ func applyCheckpointResume(cmd *cobra.Command, options *fitOptions, cp *optimize
 		if !flagChanged(cmd, "mayfly-seed") {
 			options.mayflySeed = cp.State.Mayfly.Seed
 		}
+
+		if !flagChanged(cmd, "mayfly-preset") && cp.State.Mayfly.Preset != "" {
+			options.mayflyPreset = cp.State.Mayfly.Preset
+		}
+
+		if !flagChanged(cmd, "mayfly-epochs") && cp.State.Mayfly.Epochs > 0 {
+			options.mayflyEpochs = cp.State.Mayfly.Epochs
+		}
+
+		if !flagChanged(cmd, "mayfly-restarts") && cp.State.Mayfly.Restarts > 0 {
+			options.mayflyRestarts = cp.State.Mayfly.Restarts
+		}
+
+		// The document becomes the base the current flags are overlaid on, so a
+		// resumed run keeps every knob it was started with while a flag written
+		// on the resume command still wins.
+		options.mayflyTuning = cp.State.Mayfly.Tuning
 	}
 }
 
