@@ -358,7 +358,7 @@ export const MAYFLY_TUNING_FIELDS: readonly MayflyTuningField[] = [
     variant: "aoblmoa",
     min: 0,
     max: 1,
-    help: "Probability that an individual takes an Aquila step instead of a mayfly step.",
+    help: "Probability that an individual takes an Aquila step instead of a mayfly step. Deprecated: the published algorithm has no such knob, and omitting the key lets mayfly decide the branch by its fitness test instead.",
   },
   {
     key: "opposition_probability",
@@ -367,7 +367,7 @@ export const MAYFLY_TUNING_FIELDS: readonly MayflyTuningField[] = [
     variant: "aoblmoa",
     min: 0,
     max: 1,
-    help: "Probability that a solution receives opposition-based learning.",
+    help: "Probability that a solution receives opposition-based learning. Read only by the pre-paper branch draw: AOBLMOA itself opposes every offspring, ungated.",
   },
   {
     key: "archive_size",

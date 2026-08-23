@@ -96,9 +96,9 @@ See [optimizer.md](optimizer.md) for how the document fits into a run.
 
 ## AOBLMOA
 
-| Key                      | Type  | Range  | Description                                                                                                                      |
-| ------------------------ | ----- | ------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `aquila_weight`          | float | [0, 1] | Probability that an individual takes an Aquila step instead of a mayfly step.                                                    |
-| `opposition_probability` | float | [0, 1] | Probability that a solution receives opposition-based learning.                                                                  |
-| `archive_size`           | int   | >= 0   | Capacity of the caller-managed Pareto archive.                                                                                   |
-| `strategy_switch`        | int   | >= 0   | Iteration at which Aquila switches from exploration to exploitation. Zero lets mayfly derive two thirds of the iteration budget. |
+| Key                      | Type  | Range  | Description                                                                                                                                                                                                         |
+| ------------------------ | ----- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `aquila_weight`          | float | [0, 1] | Probability that an individual takes an Aquila step instead of a mayfly step. Deprecated: the published algorithm has no such knob, and omitting the key lets mayfly decide the branch by its fitness test instead. |
+| `opposition_probability` | float | [0, 1] | Probability that a solution receives opposition-based learning. Read only by the pre-paper branch draw: AOBLMOA itself opposes every offspring, ungated.                                                            |
+| `archive_size`           | int   | >= 0   | Capacity of the caller-managed Pareto archive.                                                                                                                                                                      |
+| `strategy_switch`        | int   | >= 0   | Iteration at which Aquila switches from exploration to exploitation. Zero lets mayfly derive two thirds of the iteration budget.                                                                                    |

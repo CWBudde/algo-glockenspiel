@@ -503,6 +503,7 @@ func TestMayflyTuningApply(t *testing.T) {
 				check: func(t *testing.T, cfg *mayfly.Config) {
 					t.Helper()
 
+					//nolint:staticcheck // SA1019: the knob is deprecated upstream and still carried; see applyTuning.
 					if cfg.AquilaWeight != 0.9 || cfg.OppositionProbability != 0.35 ||
 						cfg.ArchiveSize != 64 || cfg.StrategySwitch != 500 {
 						t.Fatalf("unexpected aoblmoa config: %+v", cfg)

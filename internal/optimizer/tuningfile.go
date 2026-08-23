@@ -394,12 +394,15 @@ func MayflyTuningFields() []MayflyTuningField {
 		{
 			Key: "aquila_weight", Label: "Aquila weight", Kind: "float", Variant: "aoblmoa",
 			Min: tuningBound(0), Max: tuningBound(1),
-			Help: "Probability that an individual takes an Aquila step instead of a mayfly step.",
+			Help: "Probability that an individual takes an Aquila step instead of a mayfly step. " +
+				"Deprecated: the published algorithm has no such knob, and omitting the key lets " +
+				"mayfly decide the branch by its fitness test instead.",
 		},
 		{
 			Key: "opposition_probability", Label: "Opposition probability", Kind: "float", Variant: "aoblmoa",
 			Min: tuningBound(0), Max: tuningBound(1),
-			Help: "Probability that a solution receives opposition-based learning.",
+			Help: "Probability that a solution receives opposition-based learning. " +
+				"Read only by the pre-paper branch draw: AOBLMOA itself opposes every offspring, ungated.",
 		},
 		{
 			Key: "archive_size", Label: "Archive size", Kind: "int", Variant: "aoblmoa",
@@ -706,6 +709,13 @@ func (t *MayflyTuning) knobs() []tuningKnob {
 		cfg.UseWeightedMedian = value
 	})
 
+	// The deprecated field is still written, and only when the key is present:
+	// it is the one way back to the branch draw AOBLMOA used before mayfly
+	// v0.6.0 reimplemented it after its paper, and a document that leaves the
+	// key out leaves the sentinel the library defaults to, which is the paper's
+	// fitness test. Dropping the knob would silently retune every tuning
+	// document that names it.
+	//nolint:staticcheck // SA1019: deprecated on purpose, see above.
 	addFloat("aquila_weight", t.AquilaWeight, func(cfg *mayfly.Config, value float64) { cfg.AquilaWeight = value })
 	addFloat("opposition_probability", t.OppositionProbability, func(cfg *mayfly.Config, value float64) {
 		cfg.OppositionProbability = value
