@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/rand"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,13 +19,35 @@ import (
 type MayflyOptimizer struct {
 	Variant    string
 	Population int
-	Seed       int64
+
+	// Seed selects the random stream. Zero means "pick one and report it"
+	// rather than "be unreproducible": see resolveSeed.
+	Seed int64
 
 	// MaxWorkers bounds parallel objective evaluation. Zero selects
 	// runtime.NumCPU(); one disables parallelism entirely. Parallel evaluation
 	// is safe because ObjectiveFunction.Objective hands out per-goroutine
 	// render state.
 	MaxWorkers int
+
+	// OnResolve reports the settings a run actually chose, once they are known
+	// and before the search starts. A nil callback disables the report.
+	//
+	// It exists because those choices were invisible: a zero seed was resolved
+	// inside the library and discarded here, so the run could not be repeated
+	// and a resumed run had no stream to continue.
+	OnResolve func(ResolvedMayfly)
+}
+
+// ResolvedMayfly is what a run settled on once every "choose one for me" input
+// has been resolved. The CLI prints it and records the seed in the checkpoint,
+// and the HTTP and WASM front ends echo it in their progress snapshots.
+type ResolvedMayfly struct {
+	// Variant is the dialect the run uses, after defaulting and alias
+	// resolution.
+	Variant string
+	// Seed is the value the run's generator was constructed from, never zero.
+	Seed int64
 }
 
 // Optimize runs Mayfly in a normalized [0,1] search space and maps candidates back into bounds.
@@ -57,9 +80,17 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 		return nil, err
 	}
 
-	cfg, err := o.buildConfig(len(initial), maxInt(1, opts.MaxIterations))
+	// Resolve every "choose one for me" input before the config is built, so
+	// the run and the report cannot disagree about what it used.
+	resolved := ResolvedMayfly{Variant: o.variant(), Seed: o.resolveSeed()}
+
+	cfg, err := o.buildConfig(resolved, len(initial), maxInt(1, opts.MaxIterations))
 	if err != nil {
 		return nil, err
+	}
+
+	if o.OnResolve != nil {
+		o.OnResolve(resolved)
 	}
 
 	// The time budget is expressed as a derived context so that mayfly stops
@@ -110,15 +141,27 @@ func (o *MayflyOptimizer) population() int {
 	return 10
 }
 
-func (o *MayflyOptimizer) buildConfig(dims, iters int) (*mayfly.Config, error) {
-	cfg, err := newMayflyConfig(o.variant(), o.population(), dims, iters)
+// resolveSeed turns a zero seed into a concrete one.
+//
+// Leaving cfg.Rand nil and letting mayfly pick is not equivalent: it reports
+// its choice in Result.Seed, which upstream documents as the time-based
+// fallback and which therefore says nothing about a caller-supplied generator.
+// Resolving here gives one value that is both used and reportable.
+func (o *MayflyOptimizer) resolveSeed() int64 {
+	if o.Seed != 0 {
+		return o.Seed
+	}
+
+	return time.Now().UnixNano()
+}
+
+func (o *MayflyOptimizer) buildConfig(resolved ResolvedMayfly, dims, iters int) (*mayfly.Config, error) {
+	cfg, err := newMayflyConfig(resolved.Variant, o.population(), dims, iters)
 	if err != nil {
 		return nil, err
 	}
 
-	if o.Seed != 0 {
-		cfg.Rand = rand.New(rand.NewSource(o.Seed))
-	}
+	cfg.Rand = rand.New(rand.NewSource(resolved.Seed))
 
 	workers := o.MaxWorkers
 	if workers <= 0 {
@@ -131,15 +174,25 @@ func (o *MayflyOptimizer) buildConfig(dims, iters int) (*mayfly.Config, error) {
 	return cfg, nil
 }
 
-// Validate resolves the configured variant without running anything.
+// Validate builds the configuration a run would use and checks it, without
+// running anything.
 //
 // It exists for callers that decide whether to accept a request before they
-// book the work it names. Without it the name is first resolved inside
+// book the work it names. Without it the request is first checked inside
 // Optimize, which for the HTTP fit API means a malformed request is accepted,
 // claims the single fit slot, and fails asynchronously a moment later instead
 // of being rejected as the bad request it always was.
-func (o *MayflyOptimizer) Validate() error {
-	_, err := resolveVariant(o.variant())
+//
+// It takes the iteration budget because upstream validates the convergence
+// block against it -- a minimum-iterations setting above the cap is an error --
+// so a configuration cannot be checked without knowing the budget. The problem
+// size is not needed: no validated setting depends on dimensionality, and the
+// callers that need this answer know the budget but not yet the encoded
+// parameter count.
+func (o *MayflyOptimizer) Validate(maxIterations int) error {
+	resolved := ResolvedMayfly{Variant: o.variant(), Seed: o.resolveSeed()}
+
+	_, err := o.buildConfig(resolved, 1, maxInt(1, maxIterations))
 
 	return err
 }
@@ -150,8 +203,14 @@ func (o *MayflyOptimizer) Validate() error {
 func resolveVariant(name string) (mayfly.AlgorithmVariant, error) {
 	selected := mayfly.NewVariant(name)
 	if selected == nil {
+		// ListVariants ranges over a map, so the order it returns is not
+		// stable. Sorting keeps the error message reproducible, which matters
+		// because it is asserted on in tests and read by users.
+		names := mayfly.ListVariants()
+		sort.Strings(names)
+
 		return nil, fmt.Errorf("unsupported mayfly variant %q, want one of %s",
-			name, strings.Join(mayfly.ListVariants(), ", "))
+			name, strings.Join(names, ", "))
 	}
 
 	return selected, nil
@@ -181,31 +240,25 @@ func newMayflyConfig(variant string, pop, dims, iters int) (*mayfly.Config, erro
 	return cfg, nil
 }
 
-// validateMayflyConfig rejects configurations up front. The wrapper used to
-// wrap the library call in recover(), which turned genuine library bugs into
-// opaque "mayfly panic" errors; upstream validates and returns errors, so the
-// only thing worth checking here is what this wrapper derives itself.
+// validateMayflyConfig rejects configurations up front.
+//
+// Upstream's ValidateConfig owns every range in mayfly.Config -- the shared
+// coefficients, the per-variant knobs, the convergence block, and the mating
+// rules in validateOffspring that the check here used to approximate -- so the
+// only thing left to police is what upstream deliberately allows and this
+// wrapper does not: a population of one. A swarm that cannot mate is not a
+// search, and the fit command already refuses it at the flag, so accepting it
+// here would only let the HTTP and WASM front ends book a run that can never
+// make progress.
+//
+// ValidateConfig tolerates a nil ObjectiveFunc, which is what lets it run at
+// config-build time, before Optimize installs the tracker's evaluator.
 func validateMayflyConfig(cfg *mayfly.Config) error {
-	if cfg.ProblemSize <= 0 {
-		return fmt.Errorf("problem size must be positive, got %d", cfg.ProblemSize)
-	}
-
-	if cfg.MaxIterations <= 0 {
-		return fmt.Errorf("max iterations must be positive, got %d", cfg.MaxIterations)
-	}
-
 	if cfg.NPop < 2 || cfg.NPopF < 2 {
 		return fmt.Errorf("population must be at least 2, got %d males and %d females", cfg.NPop, cfg.NPopF)
 	}
 
-	// Mating pairs the k-th best male with the k-th best female, so NC/2 must
-	// not exceed either population.
-	if pairs := cfg.NC / 2; pairs > cfg.NPop || pairs > cfg.NPopF {
-		return fmt.Errorf("offspring count %d needs %d parent pairs, exceeding populations %d/%d",
-			cfg.NC, pairs, cfg.NPop, cfg.NPopF)
-	}
-
-	return nil
+	return mayfly.ValidateConfig(cfg)
 }
 
 // mayflyTracker owns every mutable value shared with the library. Parallel

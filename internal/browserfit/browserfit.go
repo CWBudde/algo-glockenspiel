@@ -371,7 +371,7 @@ func selectOptimizer(request Request, seed int64) (optimizer.Optimizer, error) {
 			MaxWorkers: 1,
 		}
 
-		if err := backend.Validate(); err != nil {
+		if err := backend.Validate(request.MaxIterations); err != nil {
 			return nil, err
 		}
 

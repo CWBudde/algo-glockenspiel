@@ -311,6 +311,17 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 			Variant:    options.mayflyVariant,
 			Population: options.mayflyPop,
 			Seed:       options.mayflySeed,
+			OnResolve: func(resolved optimizer.ResolvedMayfly) {
+				// Record the effective seed before the search starts, so every
+				// checkpoint carries the stream the run actually used. With
+				// --mayfly-seed 0 that is the difference between a resumed run
+				// continuing the original stream and starting a new one.
+				options.mayflySeed = resolved.Seed
+				options.mayflyVariant = resolved.Variant
+
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"Mayfly: variant=%s seed=%d\n", resolved.Variant, resolved.Seed)
+			},
 		}
 	}
 

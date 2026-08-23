@@ -3,6 +3,7 @@ package optimizer
 import (
 	"context"
 	"math"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -349,5 +350,116 @@ func TestMayflyOptimizerImprovesLegacyReference(t *testing.T) {
 	finalRMS := ComputeRMSError(rendered, reference)
 	if !(finalRMS < initialRMS) {
 		t.Fatalf("expected rendered RMS to improve: initial=%g final=%g", initialRMS, finalRMS)
+	}
+}
+
+// TestMayflyZeroSeedIsReportedAndReproducible pins the difference between "pick
+// a seed" and "be unreproducible". A zero seed used to leave cfg.Rand nil, so
+// the library chose a seed, reported it in a field this wrapper discarded, and
+// the run could never be repeated. Resolving it here makes the same run
+// repeatable by feeding the reported seed back in.
+func TestMayflyZeroSeedIsReportedAndReproducible(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	initial := []float64{5, 5}
+	objective := func(x []float64) float64 { return square(x[0]-1.25) + square(x[1]+2.5) }
+
+	run := func(seed int64) (int64, float64) {
+		t.Helper()
+
+		var resolved ResolvedMayfly
+
+		opt := &MayflyOptimizer{
+			Variant:    "desma",
+			Population: 6,
+			Seed:       seed,
+			MaxWorkers: 1,
+			OnResolve:  func(r ResolvedMayfly) { resolved = r },
+		}
+
+		result, err := opt.Optimize(context.Background(), objective, initial, bounds, OptimizeOptions{
+			MaxIterations: 20,
+		})
+		if err != nil {
+			t.Fatalf("Optimize failed: %v", err)
+		}
+
+		if resolved.Seed == 0 {
+			t.Fatal("expected a non-zero resolved seed to be reported")
+		}
+
+		if resolved.Variant != "desma" {
+			t.Fatalf("unexpected resolved variant: got %q", resolved.Variant)
+		}
+
+		return resolved.Seed, result.BestCost
+	}
+
+	chosen, first := run(0)
+
+	replayed, second := run(chosen)
+	if replayed != chosen {
+		t.Fatalf("explicit seed was not honoured: got %d want %d", replayed, chosen)
+	}
+
+	if first != second {
+		t.Fatalf("replaying the reported seed changed the result: got %g want %g", second, first)
+	}
+}
+
+// TestMayflyValidateChecksTheWholeConfiguration guards the property the HTTP and
+// WASM front ends rely on: a request that cannot run is refused before it books
+// the single fit slot. Validate now builds the real configuration, so it
+// catches far more than an unknown variant name.
+func TestMayflyValidateChecksTheWholeConfiguration(t *testing.T) {
+	tests := []struct {
+		name    string
+		opt     MayflyOptimizer
+		iters   int
+		wantErr bool
+	}{
+		{name: "default is valid", opt: MayflyOptimizer{}, iters: 100},
+		{name: "explicit variant is valid", opt: MayflyOptimizer{Variant: "gsasma"}, iters: 100},
+		{name: "alias is valid", opt: MayflyOptimizer{Variant: "olce-ma"}, iters: 100},
+		{name: "unknown variant", opt: MayflyOptimizer{Variant: "nope"}, iters: 100, wantErr: true},
+		// A Population below two is not an error here: population() normalises
+		// it to the default. The NPop guard in validateMayflyConfig covers the
+		// path that can genuinely set it, which is the tuning document.
+		{name: "population below two is normalised", opt: MayflyOptimizer{Population: 1}, iters: 100},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.opt.Validate(test.iters)
+			if test.wantErr && err == nil {
+				t.Fatal("expected an error")
+			}
+
+			if !test.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestMayflyUnknownVariantListsTheAlternativesInOrder pins the sorted list.
+// ListVariants ranges over a map, so without sorting the message differs
+// between runs and cannot be asserted on or usefully read.
+func TestMayflyUnknownVariantListsTheAlternativesInOrder(t *testing.T) {
+	_, err := resolveVariant("nope")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+
+	first := err.Error()
+
+	for range 20 {
+		_, err = resolveVariant("nope")
+		if err.Error() != first {
+			t.Fatalf("variant list is not stable:\n%s\n%s", first, err.Error())
+		}
+	}
+
+	if !strings.Contains(first, "aoblmoa, desma, eobbma, gsasma, ma, mpma, olce") {
+		t.Fatalf("expected a sorted variant list, got %q", first)
 	}
 }

@@ -619,10 +619,10 @@ func selectOptimizer(settings fitRequest) (optimizer.Optimizer, error) {
 			Seed:       settings.MayflySeed,
 		}
 
-		// The variant is resolved here rather than left to Optimize, so an
-		// unknown name is a 400 on the start request instead of a job that is
-		// accepted, takes the single fit slot, and then fails.
-		if err := backend.Validate(); err != nil {
+		// The configuration is built and checked here rather than left to
+		// Optimize, so a bad request is a 400 on the start request instead of a
+		// job that is accepted, takes the single fit slot, and then fails.
+		if err := backend.Validate(settings.MaxIterations); err != nil {
 			return nil, err
 		}
 
