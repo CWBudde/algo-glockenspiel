@@ -47,6 +47,21 @@ export type EngineCommand =
     }
   | { type: "noteOn"; note: number; velocity: number }
   | { type: "setMasterGain"; gain: number }
+  | {
+      /**
+       * Choose which built-in sound the engine plays. An empty id is the
+       * engine's own default, so the page never has to know its name.
+       *
+       * It is accepted before the engine has started, because it will be: the
+       * AudioContext cannot be created until the first strike, so the picker is
+       * reachable for as long as the user likes before "start" ever runs. The
+       * worker holds the last id and hands it to init, which is why choosing a
+       * sound and then striking a bar plays that sound rather than the default
+       * followed by a swap.
+       */
+      type: "setPreset";
+      presetId: string;
+    }
   /** Drop the consumer and rebuild the pool, so a restart begins from a known state. */
   | { type: "stop" };
 
@@ -61,6 +76,24 @@ export interface RenderedBlock {
   type: "block";
   buffer: Float32Array;
 }
+
+/**
+ * Worker -> consumer, warning that the producer is about to go quiet on
+ * purpose.
+ *
+ * Rebuilding the engine for a new sound takes far longer than the queue is
+ * deep, so the consumer runs dry. That silence is deliberate and must not be
+ * counted as a dropout: the counter is permanent and is shown in the deck, so
+ * without this a change of sound would leave the page reporting a fault that
+ * never happened. The queue re-primes itself on the next block, so there is no
+ * matching resume.
+ */
+export interface TransportPause {
+  type: "pause";
+}
+
+/** Everything the worker sends down the render channel. */
+export type TransportMessage = RenderedBlock | TransportPause;
 
 /** Consumer -> worker, the same buffer travelling back to be filled again. */
 export interface RecycledBuffer {

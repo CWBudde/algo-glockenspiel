@@ -10,7 +10,7 @@ The same engine also ships as a CLI for rendering notes to WAV and for fitting p
 
 ## The Web App
 
-The browser build compiles the Go engine to WebAssembly and drives it from a small JavaScript mixer. It gives you a piano-aligned instrument view spanning MIDI 36 to 96, playable by pointer or by computer keyboard, with a volume dial and a wood-species selector.
+The browser build compiles the Go engine to WebAssembly and drives it from a small JavaScript mixer. It gives you a piano-aligned instrument view spanning MIDI 36 to 96, playable by pointer or by computer keyboard, with a sound picker, a volume dial and a velocity dial. The sounds are the presets in `assets/presets`, embedded in the module: adding a file there adds an option -- see [that directory's notes](assets/presets/README.md) for what a preset has to satisfy.
 
 Run it locally:
 

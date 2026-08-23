@@ -12,6 +12,13 @@ export interface EngineClient {
   noteOn(note: number, velocity: number): void;
   setMasterGain(gain: number): void;
   /**
+   * Chooses which built-in sound the engine plays. Safe to call before the
+   * first strike: the worker holds the id until there is an engine to give it
+   * to. Notes ringing at the moment of a live change stop, because the engine
+   * is rebuilt around the new bar rather than retuned underneath the old one.
+   */
+  setPreset(presetId: string): void;
+  /**
    * Prepares the engine for a sample rate and starts it rendering into `port`,
    * which is transferred to the worker. Resolves once the engine reports that
    * it is running, rejects with what went wrong instead.
@@ -96,6 +103,9 @@ export function useEngineWorker(): EngineWorker {
       },
       setMasterGain(gain) {
         send({ type: "setMasterGain", gain });
+      },
+      setPreset(presetId) {
+        send({ type: "setPreset", presetId });
       },
       start(sampleRate, port) {
         return new Promise<void>((resolve, reject) => {

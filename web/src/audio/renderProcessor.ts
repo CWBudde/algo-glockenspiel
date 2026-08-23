@@ -11,8 +11,8 @@ import { PROCESSOR_NAME } from "./protocol";
 import type {
   ConsumePort,
   RecycledBuffer,
-  RenderedBlock,
   RenderStats,
+  TransportMessage,
 } from "./protocol";
 
 // The AudioWorkletGlobalScope, declared here because it is in neither the DOM
@@ -49,8 +49,14 @@ class RenderProcessor extends AudioWorkletProcessor {
       }
 
       this.producer = event.data.port;
-      this.producer.onmessage = (block: MessageEvent<RenderedBlock>) => {
-        this.queue.push(block.data.buffer);
+      this.producer.onmessage = (message: MessageEvent<TransportMessage>) => {
+        if (message.data.type === "pause") {
+          this.queue.unprime();
+
+          return;
+        }
+
+        this.queue.push(message.data.buffer);
       };
       this.producer.start();
     };

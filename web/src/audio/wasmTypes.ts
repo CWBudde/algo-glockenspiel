@@ -16,10 +16,19 @@ export const WASM_READY_TIMEOUT_MS = 10000;
 
 /** The exports the module publishes on globalThis once it is up. */
 export interface GlockenspielAudioWasm {
-  /** Prepares the engine for a sample rate; returns a non-empty error string on failure. */
-  init(sampleRate: number): string | undefined;
+  /**
+   * Prepares the engine for a sample rate; returns a non-empty error string on
+   * failure. presetId names a built-in sound; omitted or empty is the default.
+   */
+  init(sampleRate: number, presetId?: string): string | undefined;
   noteOn(note: number, velocity: number): void;
   setMasterGain(gain: number): void;
+  /**
+   * Rebuilds the engine around another built-in sound, keeping the master gain.
+   * Returns a non-empty error string on failure, and leaves the engine playing
+   * the sound it already had.
+   */
+  setPreset(presetId: string): string | undefined;
   /** Renders one block and returns a pointer into the Go heap, or 0. */
   processBlock(frames: number): number;
 }
@@ -79,7 +88,8 @@ export function hasAudioExports(api: unknown): api is GlockenspielAudioWasm {
     typeof candidate.init === "function" &&
     typeof candidate.noteOn === "function" &&
     typeof candidate.processBlock === "function" &&
-    typeof candidate.setMasterGain === "function"
+    typeof candidate.setMasterGain === "function" &&
+    typeof candidate.setPreset === "function"
   );
 }
 

@@ -45,24 +45,38 @@ func shippedPresets(t *testing.T) []string {
 	return paths
 }
 
-func TestShippedPresetsLoadAsV1(t *testing.T) {
+// TestShippedPresetsMatchTheirDeclaredSchema holds every tracked preset to the
+// rules of the version it claims, rather than to one version's rules.
+//
+// It used to assert that every shipped preset was v1, which was true for as
+// long as there was one of them. A v2 document is not a relaxation of v1: the
+// point of the two versions is that a v1 file which quietly grew a variable
+// mode count or an output-stage shaper is a bug, and that check has to survive
+// the arrival of files that legitimately use both.
+func TestShippedPresetsMatchTheirDeclaredSchema(t *testing.T) {
 	for _, path := range shippedPresets(t) {
 		loaded, err := preset.Load(path)
 		if err != nil {
 			t.Fatalf("load %s: %v", path, err)
 		}
 
-		if loaded.Version != preset.VersionV1 {
-			t.Fatalf("%s: version = %q, want %q", path, loaded.Version, preset.VersionV1)
-		}
+		switch loaded.Version {
+		case preset.VersionV1:
+			if len(loaded.Parameters.Modes) != v1ModeCount {
+				t.Fatalf("%s: %d modes, want %d", path, len(loaded.Parameters.Modes), v1ModeCount)
+			}
 
-		if len(loaded.Parameters.Modes) != v1ModeCount {
-			t.Fatalf("%s: %d modes, want %d", path, len(loaded.Parameters.Modes), v1ModeCount)
-		}
-
-		if loaded.Parameters.Chebyshev.ResolvedStage() != model.ChebyshevStageExcitation {
-			t.Fatalf("%s: stage = %q, want the v1 excitation placement",
-				path, loaded.Parameters.Chebyshev.ResolvedStage())
+			if loaded.Parameters.Chebyshev.ResolvedStage() != model.ChebyshevStageExcitation {
+				t.Fatalf("%s: stage = %q, want the v1 excitation placement",
+					path, loaded.Parameters.Chebyshev.ResolvedStage())
+			}
+		case preset.VersionV2:
+			if len(loaded.Parameters.Modes) == 0 {
+				t.Fatalf("%s: no modes", path)
+			}
+		default:
+			t.Fatalf("%s: version = %q, want %q or %q",
+				path, loaded.Version, preset.VersionV1, preset.VersionV2)
 		}
 	}
 }

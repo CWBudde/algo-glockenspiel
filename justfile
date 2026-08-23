@@ -107,8 +107,16 @@ gen-mayfly-tuning:
 check-mayfly-tuning:
     go run ./cmd/gen-mayfly-tuning --check
 
+# Regenerate the TypeScript mirror of the built-in sound list
+gen-presets:
+    go run ./cmd/gen-presets
+
+# Verify the generated sound list matches assets/presets
+check-presets:
+    go run ./cmd/gen-presets --check
+
 # Run all checks (formatting, linting, tests, tidiness, generated files)
-ci: check-formatted test lint check-tidy check-mayfly-tuning
+ci: check-formatted test lint check-tidy check-mayfly-tuning check-presets
 
 # Clean build artifacts
 clean:

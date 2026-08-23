@@ -19,7 +19,7 @@ web/
   src/
     App.tsx           the tab bar, the hash router, and the audio engine
     routes/           PlayPage, OptimizePage
-    components/       Topbar, PresetStrip, ControlRail, Dial, Rack, Keyboard
+    components/       Topbar, ControlDeck, Dial, StatusPanel, Playfield, Rack, Keyboard
     audio/            the engine worker, the worklet, and the AudioContext graph
     features/optimize/  the fit form, the event stream, the chart, the audition
     api/              the typed fit-API client and the wire types
@@ -64,9 +64,59 @@ sends including the ones no component reads yet.
 
 Each Go module publishes exactly one global, `glockenspielWasm`, inside the
 worker that owns it. `cmd/glockenspiel-wasm` supplies `init`, `noteOn`,
-`setMasterGain` and `processBlock`; `cmd/glockenspiel-fit-wasm` supplies
-`fitStart`, `fitCancel`, `fitPreset` and `fitRender`. The workers have separate
-global scopes, and one namespace per module makes ownership visible at a glance.
+`setMasterGain`, `setPreset` and `processBlock`; `cmd/glockenspiel-fit-wasm`
+supplies `fitStart`, `fitCancel`, `fitPreset` and `fitRender`. The workers have
+separate global scopes, and one namespace per module makes ownership visible at
+a glance.
+
+### Changing the sound
+
+`setPreset` swaps in another engine rather than retuning the one that exists.
+`RealtimeEngine` has no preset API, and giving it one would mean reconfiguring
+oscillator banks underneath a running audio callback for a change someone made
+once, by hand, in a menu. Notes ringing at that moment stop, which is what a
+patch change does on any sampler. The master gain is replayed onto the new
+engine in Go, because nothing on the page knows the volume changed and nothing
+would put it back.
+
+Building an engine is expensive, and expensive on the wrong thread.
+`NewRealtimeEngine` measures the preset once per playable note to build its level
+trims: 44 ms natively for the shipped preset, and **165 to 190 ms measured in
+the browser**. The transport carries four 128-frame buffers, about 11.6 ms at
+44.1 kHz, so a rebuild on the worker that also feeds that transport outlasts the
+queue by more than an order of magnitude. Two things follow.
+
+**The engines are cached, one per preset id.** A sound is calibrated the first
+time it is chosen and never again: measured, the first swap costs 156 ms and
+every later one 0.2 ms. A cached engine is `Silence`d on the way back in,
+because retirement only happens in `ProcessBlock` and an engine nothing has been
+processing comes back holding whatever was ringing when it was set aside.
+
+**The transport is told the gap is deliberate.** Before the swap the worker
+posts a `pause` down the render channel and the consumer calls
+`BlockQueue.unprime`, which puts the queue back in the state it starts in, where
+silence is not yet a dropout -- the same reasoning `primed` already carried for
+the silence before the engine has ever delivered. The next block re-primes it,
+so there is no resume to send. Without it a first swap records **72 dropouts**
+in the deck's status line, permanently, for a fault that never happened; with it,
+none. Both consumers implement it: the worklet and the `ScriptProcessorNode`
+fallback.
+
+The choice reaches the module twice over, which is deliberate. `init` takes the
+preset id as an optional second argument and `setPreset` takes it on its own,
+because the picker is reachable long before the engine exists: an `AudioContext`
+cannot be created until the first user gesture, so a sound chosen on a freshly
+loaded page has to survive until the first strike. `engine.worker.ts` holds the
+last id and hands it to `init`, and only applies it live once `init` has run.
+
+The option list does **not** come from the module. `cmd/gen-presets` writes
+`src/api/presets.generated.ts` from the documents in `assets/presets`, checked
+by `just check-presets` in CI, for the same reasons the Mayfly tuning table is
+generated: the deck renders long before the module finishes loading, and a
+static host has no service to ask, so a picker fed from the engine would be
+empty exactly when someone first looks at it -- and empty in the Playwright
+baselines. An unknown id is still refused in Go, so the generated list is a
+convenience rather than the authority.
 
 ### The ready handshake
 

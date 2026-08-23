@@ -16,6 +16,7 @@ import type {
   EngineEvent,
   RecycledBuffer,
   RenderedBlock,
+  TransportPause,
 } from "./protocol";
 import { loadWasm } from "./loadWasm";
 import { hasAudioExports, type GlockenspielAudioWasm } from "./wasmTypes";
@@ -43,6 +44,17 @@ let consumer: MessagePort | null = null;
 
 /** True once init has been given a sample rate and rendering may begin. */
 let rendering = false;
+
+/**
+ * The built-in sound the engine should play. Empty means the module's own
+ * default, so the worker never has to name it.
+ *
+ * It is remembered rather than forwarded straight through, because the picker
+ * is reachable before there is an engine to tell: the AudioContext only exists
+ * after the first strike, so a sound chosen on a freshly loaded page has to
+ * survive until init runs. Once init has run, a change is applied immediately.
+ */
+let presetId = "";
 
 /**
  * The buffers not currently in flight. postMessage transfers a buffer away and
@@ -216,7 +228,7 @@ function startRendering(sampleRate: number, port: MessagePort): void {
     return;
   }
 
-  const initError = api.init(sampleRate);
+  const initError = api.init(sampleRate, presetId);
   if (typeof initError === "string" && initError.length > 0) {
     post({ type: "error", message: initError });
 
@@ -270,6 +282,40 @@ scope.onmessage = (event: MessageEvent<EngineCommand>) => {
     case "setMasterGain":
       api?.setMasterGain(command.gain);
       break;
+
+    case "setPreset": {
+      presetId = command.presetId;
+
+      // Before the engine exists there is nothing to swap and nothing to
+      // report: the id above is what init will be given. Applying it twice --
+      // here and again at init -- would pay for a calibration sweep the first
+      // strike is about to pay for anyway.
+      if (!rendering || api === null) {
+        break;
+      }
+
+      // Building an engine for a sound that has not been chosen before takes
+      // 165-190 ms in the browser, against a queue four blocks deep -- about
+      // 11.6 ms at 44.1 kHz. The consumer therefore runs dry, and it has to be
+      // told that the silence is deliberate or it will record more than a
+      // dozen dropouts for a fault that never happened. Sent unconditionally,
+      // because whether this particular swap is the cheap cached one is a fact
+      // on the Go side and not worth a round trip to learn.
+      const pause: TransportPause = { type: "pause" };
+      consumer?.postMessage(pause);
+
+      const presetError = api.setPreset(presetId);
+      if (typeof presetError === "string" && presetError.length > 0) {
+        post({ type: "error", message: presetError });
+      }
+
+      // The queue is empty and every buffer is back here, so nothing restarts
+      // the render loop on its own: the recycle messages that normally ask for
+      // the next block have all been delivered already.
+      pump();
+
+      break;
+    }
 
     case "stop":
       stopRendering();

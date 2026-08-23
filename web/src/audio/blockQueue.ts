@@ -48,6 +48,21 @@ export class BlockQueue {
   }
 
   /**
+   * unprime puts the queue back in the state it starts in, where silence is not
+   * yet a dropout.
+   *
+   * It is for a producer that is about to stop on purpose and for long enough
+   * to matter -- rebuilding the engine around another sound. The reasoning is
+   * the one `primed` already carries: silence nobody could have heard as a
+   * fault should not be counted as one. The next block re-primes the queue, so
+   * a producer that never comes back is silent and uncounted, which is the same
+   * thing it looks like before it has started.
+   */
+  unprime(): void {
+    this.primed = false;
+  }
+
+  /**
    * fill writes `frames` frames into left and right, taking them from the head
    * of the queue and handing each exhausted buffer to `recycle` so it can be
    * transferred back to the worker and filled again.

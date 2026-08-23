@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { DEFAULT_SOUND_PRESET_ID } from "./api/presets.generated";
 import { useAudioEngine } from "./audio/useAudioEngine";
 import { useEngineWorker } from "./audio/useEngineWorker";
 import { Topbar } from "./components/Topbar";
@@ -19,6 +20,7 @@ export function App() {
     parseRoute(window.location.hash),
   );
   const [gainPercent, setGainPercent] = useState(70);
+  const [presetId, setPresetId] = useState(DEFAULT_SOUND_PRESET_ID);
 
   useEffect(() => {
     const onHashChange = () => {
@@ -37,6 +39,14 @@ export function App() {
   // should die because the user looked at another tab.
   const engine = useEngineWorker();
   const audio = useAudioEngine(engine.client, gainFromPercent(gainPercent));
+
+  // The chosen sound is pushed rather than passed to start(), for the same
+  // reason the engine lives here: it has to survive a tab switch, and it is
+  // choosable before the engine exists. The worker holds it until init runs.
+  useEffect(() => {
+    engine.client?.setPreset(presetId);
+  }, [engine.client, presetId]);
+
   const fitApi = useApiAvailable(route === "optimize");
   const wasmFit = useWasmFitWorker(
     route === "optimize" && fitApi.availability === "unavailable",
@@ -52,6 +62,8 @@ export function App() {
           audio={audio}
           gain={gainPercent}
           onGainChange={setGainPercent}
+          presetId={presetId}
+          onPresetChange={setPresetId}
         />
       ) : (
         <OptimizePage api={fitApi} wasm={wasmFit} />

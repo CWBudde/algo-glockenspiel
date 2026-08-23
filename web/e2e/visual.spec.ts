@@ -977,15 +977,55 @@ test("performance deck keeps native controls and live engine status", async ({
   await expect(velocity).toHaveValue("110");
   await expect(deck.locator('output[for="velocity"]')).toHaveText("110");
 
+  // The wood species is decor, not a performance control, and stays absent.
+  // The sound is a performance control and is present -- the two assertions sit
+  // together so the deck's contents are one decision rather than two.
   await expect(deck.getByRole("combobox", { name: "Wood" })).toHaveCount(0);
   await expect(page.locator("html")).toHaveAttribute(
     "data-wood-species",
     "walnut",
   );
 
+  const sound = deck.getByRole("combobox", { name: "Sound" });
+  await expect(sound).toBeVisible();
+  await expect(sound).toHaveValue("default");
+  await expect(sound.locator("option")).toHaveText([
+    "Default Glockenspiel",
+    "Recorded Bar",
+  ]);
+
+  await sound.selectOption("recorded-bar");
+  await expect(sound).toHaveValue("recorded-bar");
+
   await expect(status).toHaveAttribute("aria-live", "polite");
   await expect(status).toHaveAttribute("data-error", "false");
   await expect(status).toHaveText(ENGINE_READY);
+});
+
+// The engine outlives a tab switch, and so must the sound it was told to play.
+// Optimize unmounts the whole play surface, so a picker that kept its own state
+// would come back on the default while the engine went on playing the other
+// bar -- a disagreement nothing on screen could explain.
+test("the chosen sound survives a trip through Optimize", async ({ page }) => {
+  await installStableEngine(page);
+  await page.goto("/#/play");
+
+  const sound = page
+    .getByRole("region", { name: "Performance controls" })
+    .getByRole("combobox", { name: "Sound" });
+
+  await sound.selectOption("recorded-bar");
+  await expect(sound).toHaveValue("recorded-bar");
+
+  // Navigated by clicking the tabs rather than by goto, because that is the
+  // trip being tested: the router is a hashchange listener, and a fresh goto
+  // would reload the document and reset the state whether or not App holds it.
+  const tabs = page.getByRole("navigation", { name: "Sections" });
+  await tabs.getByRole("link", { name: "Optimize" }).click();
+  await expect(sound).toHaveCount(0);
+
+  await tabs.getByRole("link", { name: "Play" }).click();
+  await expect(sound).toHaveValue("recorded-bar");
 });
 
 test("play surface uses distinct walnut, maple, and beech layers", async ({

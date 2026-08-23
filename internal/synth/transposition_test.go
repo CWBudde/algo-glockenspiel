@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cwbudde/algo-glockenspiel/assets"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/cwbudde/algo-glockenspiel/model"
 )
@@ -54,24 +55,43 @@ func peakOf(samples []float32) float64 {
 // A dropped note comes back as a nil slice from RenderNoteWithOptions, because
 // the voice could not be built; a note whose bar was built but never excited
 // comes back as digital silence. Both are what this catches.
+//
+// It sweeps every embedded preset, not only the default one. The top of the
+// keyboard is the mirror of the failure this file was written for and is
+// guarded by nothing else: transposing up multiplies mode frequencies, so a
+// preset whose highest mode passes model.FrequencyMaxHz at note 96 fails
+// NewBar and is dropped exactly as the low register was. Nothing in preset
+// validation catches it -- ValidateAuthoredBarParams transposes to the bottom
+// key and looks only at the decay ceiling -- so a preset authored at note 69
+// may not carry a mode above roughly 10.5 kHz, and this is where that is felt.
 func TestEveryKeyboardNoteRendersAudio(t *testing.T) {
-	p := loadTestPreset(t)
-
-	synthesizer, err := NewSynthesizer(p, 48000)
+	ids, err := assets.IDs()
 	if err != nil {
-		t.Fatalf("NewSynthesizer failed: %v", err)
+		t.Fatalf("assets.IDs failed: %v", err)
 	}
 
-	for note := KeyboardFirstNote; note <= KeyboardLastNote; note++ {
-		rendered := synthesizer.RenderNote(note, 100, 1.0)
-		if len(rendered) == 0 {
-			t.Errorf("note %d rendered nothing: the voice could not be built", note)
-
-			continue
+	for _, id := range ids {
+		p, err := assets.Preset(id)
+		if err != nil {
+			t.Fatalf("load preset %q: %v", id, err)
 		}
 
-		if peak := peakOf(rendered); peak < silenceThreshold {
-			t.Errorf("note %d rendered silence: peak %g", note, peak)
+		synthesizer, err := NewSynthesizer(p, 48000)
+		if err != nil {
+			t.Fatalf("NewSynthesizer(%q) failed: %v", id, err)
+		}
+
+		for note := KeyboardFirstNote; note <= KeyboardLastNote; note++ {
+			rendered := synthesizer.RenderNote(note, 100, 1.0)
+			if len(rendered) == 0 {
+				t.Errorf("preset %q note %d rendered nothing: the voice could not be built", id, note)
+
+				continue
+			}
+
+			if peak := peakOf(rendered); peak < silenceThreshold {
+				t.Errorf("preset %q note %d rendered silence: peak %g", id, note, peak)
+			}
 		}
 	}
 }
