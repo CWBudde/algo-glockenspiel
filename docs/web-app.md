@@ -230,6 +230,52 @@ Pages hands out (`https://cwbudde.github.io/algo-glockenspiel/`); an absolute
 base would work at exactly one of the two. Every fetch the app makes — the
 manifest, the module, `api/fit/events` — is relative for the same reason.
 
+## The color theme
+
+Three choices — auto, light, dark — with auto the default and the other two
+remembered in `localStorage`. The choice is written to `data-theme` on `<html>`,
+and auto is spelled as the _absence_ of the attribute rather than as the string
+`"auto"`. That is what lets the stylesheet express all three with two selectors:
+
+```css
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    /* auto-on-a-dark-system, and dark */
+  }
+}
+:root[data-theme="dark"] {
+  /* dark, whatever the system says */
+}
+```
+
+A third state would otherwise need a `[data-theme="auto"]` branch that repeated
+the media query anyway.
+
+`index.html` applies the stored choice in a blocking inline script before the
+bundle loads. Waiting for React to mount would show a dark visitor a full frame
+of the light palette and then swap it. That script is the only place the storage
+key is spelled twice; `src/lib/theme.test.ts` reads the file and asserts the two
+copies still agree.
+
+Every color the theme owns is a custom property declared in bare `:root`, and
+the dark blocks only _redeclare_ them. A color written literally into a rule
+cannot follow the switch, and a token first defined inside the media query would
+be missing for a visitor with no dark preference and no stored choice.
+
+What flips is the lighting, not the materials. The canvas, the cards, the panel
+washes, the form fields and the ink all change; the instrument's own surfaces —
+the metal bars, the aged brass of the dials, the piano keys, the brass buttons —
+do not, because they are objects in the room. That also keeps the strike targets
+and the primary actions the brightest things on a dark page. The ink that sits
+on those permanently bright surfaces is `--ink-on-bright`, spelled separately
+from `--charcoal` so that flipping the body text to a pale cream does not write
+pale cream onto brass.
+
+The cost chart is the one thing the stylesheet cannot reach: a canvas inherits
+no custom properties. `useResolvedTheme` watches the same two inputs the CSS
+does — the root attribute and the media query — through `useSyncExternalStore`,
+and the chart re-reads the palette off the computed style when either moves.
+
 ## The Optimize loop
 
 The tab has two backends with one UI contract. When `glockenspiel serve` is

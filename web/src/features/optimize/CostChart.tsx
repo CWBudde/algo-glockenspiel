@@ -14,6 +14,7 @@ import {
 import { useEffect, useMemo, useRef } from "react";
 import { Line } from "react-chartjs-2";
 
+import { useResolvedTheme, type ResolvedTheme } from "../../lib/theme";
 import type { CostPoint } from "./useFitEvents";
 
 /*
@@ -55,6 +56,26 @@ function cssColor(name: string, fallback: string): string {
     .trim();
 
   return value === "" ? fallback : value;
+}
+
+/**
+ * Reads the palette the stylesheet is currently painting with.
+ *
+ * The theme does not choose any of the values -- they all come from the
+ * computed style -- but it is stamped onto the result, because it is what says
+ * when the reading is stale: the memo around this call re-runs when the switch
+ * moves, and a chart holding a palette from the other theme is a bug that is
+ * otherwise invisible in the object.
+ */
+function readPalette(theme: ResolvedTheme) {
+  return {
+    theme,
+    best: cssColor("--copper-accent", "#8d562d"),
+    current: cssColor("--brass", "#e3bb7a"),
+    ink: cssColor("--charcoal", "#3d2415"),
+    muted: cssColor("--charcoal-muted", "#6b5442"),
+    grid: cssColor("--chart-grid", "rgba(85, 52, 24, 0.16)"),
+  };
 }
 
 /**
@@ -132,25 +153,25 @@ export function CostChart({ points, revision }: CostChartProps) {
   );
 
   // The palette lives in :root as custom properties so the chart matches the
-  // instrument rather than carrying a second, drifting set of hexes.
-  const palette = useMemo(
-    () => ({
-      best: cssColor("--accent", "#8d562d"),
-      current: cssColor("--gold", "#e3bb7a"),
-      ink: cssColor("--ink", "#3d2415"),
-      muted: cssColor("--muted", "#6b5442"),
-    }),
-    [],
-  );
+  // instrument rather than carrying a second, drifting set of hexes. A canvas
+  // inherits none of them, so the resolved theme is the dependency that makes
+  // the line, the ticks and the grid follow the switch.
+  const theme = useResolvedTheme();
+  const palette = useMemo(() => readPalette(theme), [theme]);
 
+  /*
+   * The shape of the chart, once. It deliberately carries no colors and never
+   * changes identity: react-chartjs-2 reconciles the `data` prop into the live
+   * chart, and a new object here would hand the datasets these empty arrays
+   * back and wipe a curve that is mid-fit. The palette is pushed onto the live
+   * datasets by the effect below instead.
+   */
   const initialData = useMemo<ChartData<"line", Point[]>>(
     () => ({
       datasets: [
         {
           label: "best cost",
           data: [],
-          borderColor: palette.best,
-          backgroundColor: palette.best,
           borderWidth: 2,
           pointRadius: 0,
           tension: 0,
@@ -158,16 +179,33 @@ export function CostChart({ points, revision }: CostChartProps) {
         {
           label: "current cost",
           data: [],
-          borderColor: palette.current,
-          backgroundColor: palette.current,
           borderWidth: 1,
           pointRadius: 0,
           tension: 0,
         },
       ],
     }),
-    [palette],
+    [],
   );
+
+  // Dataset colors are chart state, not options, so they are assigned rather
+  // than re-declared. This runs on mount and again whenever the theme moves.
+  useEffect(() => {
+    const chart = chartRef.current;
+
+    if (chart === null) {
+      return;
+    }
+
+    const [best, current] = chart.data.datasets;
+
+    best.borderColor = palette.best;
+    best.backgroundColor = palette.best;
+    current.borderColor = palette.current;
+    current.backgroundColor = palette.current;
+
+    chart.update("none");
+  }, [palette]);
 
   const options = useMemo<ChartOptions<"line">>(
     () => ({
@@ -193,13 +231,13 @@ export function CostChart({ points, revision }: CostChartProps) {
             color: palette.muted,
           },
           ticks: { color: palette.muted },
-          grid: { color: "rgba(85, 52, 24, 0.16)" },
+          grid: { color: palette.grid },
         },
         y: {
           type: "logarithmic",
           title: { display: true, text: "cost", color: palette.muted },
           ticks: { color: palette.muted },
-          grid: { color: "rgba(85, 52, 24, 0.16)" },
+          grid: { color: palette.grid },
         },
       },
 

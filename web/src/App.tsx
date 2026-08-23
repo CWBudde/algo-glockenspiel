@@ -6,6 +6,7 @@ import { useEngineWorker } from "./audio/useEngineWorker";
 import { Topbar } from "./components/Topbar";
 import { OptimizePage } from "./routes/OptimizePage";
 import { PlayPage } from "./routes/PlayPage";
+import { useTheme } from "./lib/theme";
 import { parseRoute, type Route } from "./routes/routes";
 import { useApiAvailable } from "./features/optimize/useApiAvailable";
 import { useWasmFitWorker } from "./features/optimize/useWasmFitWorker";
@@ -21,6 +22,7 @@ export function App() {
   );
   const [gainPercent, setGainPercent] = useState(70);
   const [presetId, setPresetId] = useState(DEFAULT_SOUND_PRESET_ID);
+  const theme = useTheme();
 
   useEffect(() => {
     const onHashChange = () => {
@@ -54,7 +56,11 @@ export function App() {
 
   return (
     <main className="studio-shell">
-      <Topbar route={route} />
+      <Topbar
+        route={route}
+        theme={theme.preference}
+        onThemeChange={theme.setPreference}
+      />
 
       {route === "play" ? (
         <PlayPage

@@ -21,6 +21,79 @@
   --surface-border: rgba(85, 52, 24, 0.35);
   --surface-border-strong: #89572e;
 
+  /*
+   * Surfaces, edges and fills the theme repaints. Everything below this line
+   * is redeclared by the dark block at the end of this section; a color that
+   * is written literally in a rule instead cannot follow the switch, so a new
+   * surface belongs here rather than in the rule that paints it.
+   */
+  --color-scheme: light;
+  --canvas-glow: radial-gradient(
+    circle at 18% 0,
+    rgba(255, 253, 247, 0.72),
+    rgba(255, 253, 247, 0) 34%
+  );
+  --canvas-sheen: linear-gradient(
+    180deg,
+    rgba(245, 242, 235, 0.58) 0%,
+    rgba(229, 222, 210, 0.58) 58%,
+    rgba(207, 196, 180, 0.58) 100%
+  );
+  --topbar-tint: linear-gradient(
+    90deg,
+    rgba(42, 31, 23, 0.78),
+    rgba(72, 52, 36, 0.62)
+  );
+  --surface-card: #f3eee6;
+  --surface-deck: #eee7dc;
+  --surface-keyboard: #ece7df;
+  --surface-deck-status: rgba(255, 250, 241, 0.48);
+  --border-card: rgba(72, 55, 39, 0.24);
+  --border-deck: rgba(72, 55, 39, 0.18);
+  --border-deck-status: rgba(72, 55, 39, 0.13);
+  --border-keyboard: rgba(72, 55, 39, 0.12);
+  --rack-tint: linear-gradient(
+    180deg,
+    rgba(255, 245, 228, 0.1),
+    rgba(42, 29, 20, 0.18)
+  );
+  --rack-back-tint: linear-gradient(
+    180deg,
+    rgba(255, 251, 243, 0.58),
+    rgba(232, 218, 198, 0.48)
+  );
+  --rack-back-border: rgba(77, 59, 43, 0.14);
+  --rack-back-sheen:
+    inset 0 1px 0 rgba(255, 252, 244, 0.66),
+    inset 0 0 20px rgba(109, 76, 43, 0.08);
+  --support-stroke: #6d675f;
+  --panel-fill: rgba(255, 250, 240, 0.5);
+  --panel-fill-strong: rgba(255, 250, 240, 0.72);
+  --panel-fill-mid: rgba(255, 250, 240, 0.58);
+  --panel-fill-soft: rgba(255, 250, 240, 0.38);
+  --panel-fill-faint: rgba(255, 250, 240, 0.32);
+  --pill-fill: rgba(255, 250, 240, 0.62);
+  --chip-fill: rgba(75, 65, 58, 0.09);
+  --input-surface: var(--parchment-light);
+  --input-surface-soft: rgba(255, 250, 240, 0.9);
+  --input-border: rgba(85, 52, 24, 0.45);
+  --tab-active-fill: rgba(247, 238, 222, 0.94);
+  --button-face: linear-gradient(180deg, #f7e7cb, #dcae74);
+  --button-face-secondary: linear-gradient(180deg, #f0e2cd, #cbb69a);
+  --error-border: #a32c1c;
+  --error-text: #8f2313;
+  --state-idle: #a67b43;
+  --state-ready: #477359;
+  --chart-grid: rgba(85, 52, 24, 0.16);
+
+  /*
+   * The ink for surfaces that stay bright in both themes: the brass controls
+   * and the selected tab's pill. It is the light theme's --charcoal, spelled
+   * separately so that flipping --charcoal to a pale cream does not write pale
+   * cream onto brass.
+   */
+  --ink-on-bright: #3d2415;
+
   /* Material recipes keep texture subordinate to readable flat surfaces. */
   --wood-panel-texture: url("../../assets/wood/walnut.png");
   --rack-back-texture: url("../../assets/wood/maple.png");
@@ -81,8 +154,199 @@
     0 28px 62px var(--shadow-strong-color);
 }
 
+/* ------------------------------------------------------------------ */
+/* Dark theme                                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The switch writes `data-theme="light"` or `data-theme="dark"` onto <html>
+ * and removes the attribute for "auto"; see src/lib/theme.ts. So the system
+ * preference is honoured by the media query below narrowed to "not explicitly
+ * light", and the explicit choice by the attribute selector after it. The two
+ * carry the same declarations because a token may only be redefined, never
+ * defined for the first time, outside bare :root -- a page whose viewer has no
+ * dark preference and no stored choice must still find every token.
+ *
+ * What flips is the workshop's lighting, not its materials: the canvas, the
+ * cards, the panel washes, the form fields and the ink. The instrument's own
+ * surfaces -- the metal bars, the aged brass of the dials, the piano keys, the
+ * brass buttons -- are objects, and they stay the colour they are, which is
+ * also what keeps the strike targets and the primary actions the brightest
+ * things on a dark page.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-scheme: dark;
+
+    --canvas: #16110d;
+    --parchment: #241c15;
+    --parchment-light: #2c2219;
+    --charcoal: #f3e7d6;
+    --charcoal-muted: #bfab94;
+    --focus: #9db8ff;
+    --error: #ff9d86;
+    --error-strong: #ff8f74;
+    --surface-border: rgba(236, 208, 168, 0.22);
+    --surface-border-strong: #7a5734;
+
+    --parchment-material:
+      linear-gradient(180deg, rgba(60, 46, 33, 0.82), rgba(35, 27, 19, 0.92)),
+      var(--parchment);
+
+    --canvas-glow: radial-gradient(
+      circle at 18% 0,
+      rgba(150, 112, 66, 0.18),
+      rgba(150, 112, 66, 0) 34%
+    );
+    --canvas-sheen: linear-gradient(
+      180deg,
+      rgba(30, 23, 17, 0.78) 0%,
+      rgba(20, 15, 11, 0.84) 58%,
+      rgba(11, 8, 6, 0.88) 100%
+    );
+    --topbar-tint: linear-gradient(
+      90deg,
+      rgba(15, 11, 8, 0.86),
+      rgba(43, 31, 21, 0.76)
+    );
+    --surface-card: #1e1811;
+    --surface-deck: #241d15;
+    --surface-keyboard: #1a1510;
+    --surface-deck-status: rgba(255, 240, 214, 0.05);
+    --border-card: rgba(255, 238, 214, 0.12);
+    --border-deck: rgba(255, 238, 214, 0.09);
+    --border-deck-status: rgba(255, 238, 214, 0.07);
+    --border-keyboard: rgba(255, 238, 214, 0.08);
+    --rack-tint: linear-gradient(
+      180deg,
+      rgba(36, 25, 16, 0.52),
+      rgba(9, 6, 4, 0.68)
+    );
+    --rack-back-tint: linear-gradient(
+      180deg,
+      rgba(48, 34, 22, 0.62),
+      rgba(23, 16, 11, 0.74)
+    );
+    --rack-back-border: rgba(255, 238, 214, 0.08);
+    --rack-back-sheen:
+      inset 0 1px 0 rgba(255, 244, 222, 0.07),
+      inset 0 0 24px rgba(0, 0, 0, 0.34);
+    --support-stroke: #8e8880;
+    --panel-fill: rgba(255, 240, 214, 0.05);
+    --panel-fill-strong: rgba(255, 240, 214, 0.08);
+    --panel-fill-mid: rgba(255, 240, 214, 0.06);
+    --panel-fill-soft: rgba(255, 240, 214, 0.04);
+    --panel-fill-faint: rgba(255, 240, 214, 0.03);
+    --pill-fill: rgba(255, 240, 214, 0.07);
+    --chip-fill: rgba(255, 240, 214, 0.11);
+    --input-surface-soft: rgba(255, 240, 214, 0.08);
+    --input-border: rgba(236, 208, 168, 0.3);
+    --error-border: #ff8f74;
+    --error-text: #ff9d86;
+    --state-idle: #cf9c56;
+    --state-ready: #74b892;
+    --chart-grid: rgba(236, 208, 168, 0.16);
+
+    --shadow-strong-color: rgba(0, 0, 0, 0.62);
+    --shadow-soft-color: rgba(0, 0, 0, 0.42);
+    --shadow-shell:
+      inset 0 1px 0 rgba(255, 247, 234, 0.07), 0 8px 20px rgba(0, 0, 0, 0.46);
+    --shadow-panel:
+      inset 0 1px 0 rgba(255, 247, 233, 0.07),
+      0 28px 62px var(--shadow-strong-color);
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-scheme: dark;
+
+  --canvas: #16110d;
+  --parchment: #241c15;
+  --parchment-light: #2c2219;
+  --charcoal: #f3e7d6;
+  --charcoal-muted: #bfab94;
+  --focus: #9db8ff;
+  --error: #ff9d86;
+  --error-strong: #ff8f74;
+  --surface-border: rgba(236, 208, 168, 0.22);
+  --surface-border-strong: #7a5734;
+
+  --parchment-material:
+    linear-gradient(180deg, rgba(60, 46, 33, 0.82), rgba(35, 27, 19, 0.92)),
+    var(--parchment);
+
+  --canvas-glow: radial-gradient(
+    circle at 18% 0,
+    rgba(150, 112, 66, 0.18),
+    rgba(150, 112, 66, 0) 34%
+  );
+  --canvas-sheen: linear-gradient(
+    180deg,
+    rgba(30, 23, 17, 0.78) 0%,
+    rgba(20, 15, 11, 0.84) 58%,
+    rgba(11, 8, 6, 0.88) 100%
+  );
+  --topbar-tint: linear-gradient(
+    90deg,
+    rgba(15, 11, 8, 0.86),
+    rgba(43, 31, 21, 0.76)
+  );
+  --surface-card: #1e1811;
+  --surface-deck: #241d15;
+  --surface-keyboard: #1a1510;
+  --surface-deck-status: rgba(255, 240, 214, 0.05);
+  --border-card: rgba(255, 238, 214, 0.12);
+  --border-deck: rgba(255, 238, 214, 0.09);
+  --border-deck-status: rgba(255, 238, 214, 0.07);
+  --border-keyboard: rgba(255, 238, 214, 0.08);
+  --rack-tint: linear-gradient(
+    180deg,
+    rgba(36, 25, 16, 0.52),
+    rgba(9, 6, 4, 0.68)
+  );
+  --rack-back-tint: linear-gradient(
+    180deg,
+    rgba(48, 34, 22, 0.62),
+    rgba(23, 16, 11, 0.74)
+  );
+  --rack-back-border: rgba(255, 238, 214, 0.08);
+  --rack-back-sheen:
+    inset 0 1px 0 rgba(255, 244, 222, 0.07), inset 0 0 24px rgba(0, 0, 0, 0.34);
+  --support-stroke: #8e8880;
+  --panel-fill: rgba(255, 240, 214, 0.05);
+  --panel-fill-strong: rgba(255, 240, 214, 0.08);
+  --panel-fill-mid: rgba(255, 240, 214, 0.06);
+  --panel-fill-soft: rgba(255, 240, 214, 0.04);
+  --panel-fill-faint: rgba(255, 240, 214, 0.03);
+  --pill-fill: rgba(255, 240, 214, 0.07);
+  --chip-fill: rgba(255, 240, 214, 0.11);
+  --input-surface-soft: rgba(255, 240, 214, 0.08);
+  --input-border: rgba(236, 208, 168, 0.3);
+  --error-border: #ff8f74;
+  --error-text: #ff9d86;
+  --state-idle: #cf9c56;
+  --state-ready: #74b892;
+  --chart-grid: rgba(236, 208, 168, 0.16);
+
+  --shadow-strong-color: rgba(0, 0, 0, 0.62);
+  --shadow-soft-color: rgba(0, 0, 0, 0.42);
+  --shadow-shell:
+    inset 0 1px 0 rgba(255, 247, 234, 0.07), 0 8px 20px rgba(0, 0, 0, 0.46);
+  --shadow-panel:
+    inset 0 1px 0 rgba(255, 247, 233, 0.07),
+    0 28px 62px var(--shadow-strong-color);
+}
+
 * {
   box-sizing: border-box;
+}
+
+html {
+  /*
+   * Tells the browser which way its own furniture goes -- scrollbars, the
+   * default form-control chrome, and the canvas behind an overscroll.
+   */
+  color-scheme: var(--color-scheme);
 }
 
 html,
@@ -94,18 +358,7 @@ body {
 body {
   background-color: var(--canvas);
   background-image:
-    radial-gradient(
-      circle at 18% 0,
-      rgba(255, 253, 247, 0.72),
-      rgba(255, 253, 247, 0) 34%
-    ),
-    linear-gradient(
-      180deg,
-      rgba(245, 242, 235, 0.58) 0%,
-      rgba(229, 222, 210, 0.58) 58%,
-      rgba(207, 196, 180, 0.58) 100%
-    ),
-    var(--canvas-wood-texture);
+    var(--canvas-glow), var(--canvas-sheen), var(--canvas-wood-texture);
   background-position: center top;
   background-size:
     auto,
@@ -133,7 +386,7 @@ body {
   border-radius: var(--radius-panel) var(--radius-panel) var(--radius-control)
     var(--radius-control);
   background:
-    linear-gradient(90deg, rgba(42, 31, 23, 0.78), rgba(72, 52, 36, 0.62)),
+    var(--topbar-tint),
     linear-gradient(180deg, rgba(255, 248, 235, 0.1), rgba(28, 20, 15, 0.1)),
     var(--wood-panel-texture) center/cover no-repeat;
   box-shadow: var(--shadow-shell);
@@ -172,9 +425,9 @@ h1 {
 .instrument-card {
   overflow: hidden;
   margin-top: var(--space-xl);
-  border: 1px solid rgba(72, 55, 39, 0.24);
+  border: 1px solid var(--border-card);
   border-radius: var(--radius-panel);
-  background: #f3eee6;
+  background: var(--surface-card);
   box-shadow: 0 12px 30px rgba(49, 37, 28, 0.14);
 }
 
@@ -184,8 +437,8 @@ h1 {
   align-items: center;
   gap: var(--space-4xl);
   padding: var(--space-lg) var(--space-4xl);
-  border-bottom: 1px solid rgba(72, 55, 39, 0.18);
-  background: #eee7dc;
+  border-bottom: 1px solid var(--border-deck);
+  background: var(--surface-deck);
   box-shadow: 0 4px 12px rgba(49, 37, 28, 0.06);
 }
 
@@ -216,9 +469,9 @@ h1 {
   max-width: 100%;
   min-height: 44px;
   padding: 7px 9px;
-  border: 1px solid rgba(85, 52, 24, 0.45);
+  border: 1px solid var(--input-border);
   border-radius: var(--radius-control);
-  background: var(--parchment-light);
+  background: var(--input-surface);
   color: var(--charcoal);
   font: inherit;
   font-size: var(--type-control);
@@ -227,9 +480,9 @@ h1 {
 .control-deck-status {
   min-width: 0;
   padding: var(--space-lg) var(--space-xl);
-  border: 1px solid rgba(72, 55, 39, 0.13);
+  border: 1px solid var(--border-deck-status);
   border-radius: var(--radius-group);
-  background: rgba(255, 250, 241, 0.48);
+  background: var(--surface-deck-status);
 }
 
 .control-deck-status {
@@ -409,7 +662,7 @@ h1 {
   min-height: 382px;
   border-radius: 22px;
   background:
-    linear-gradient(180deg, rgba(255, 245, 228, 0.1), rgba(42, 29, 20, 0.18)),
+    var(--rack-tint),
     var(--wood-panel-texture) center/cover no-repeat;
   box-shadow:
     inset 0 0 0 1px rgba(67, 43, 26, 0.26),
@@ -421,18 +674,12 @@ h1 {
   content: "";
   position: absolute;
   inset: 28px 24px 24px 24px;
-  border: 1px solid rgba(77, 59, 43, 0.14);
+  border: 1px solid var(--rack-back-border);
   border-radius: 16px;
   background:
-    linear-gradient(
-      180deg,
-      rgba(255, 251, 243, 0.58),
-      rgba(232, 218, 198, 0.48)
-    ),
+    var(--rack-back-tint),
     var(--rack-back-texture) center/cover no-repeat;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 252, 244, 0.66),
-    inset 0 0 20px rgba(109, 76, 43, 0.08);
+  box-shadow: var(--rack-back-sheen);
 }
 
 .rack::after {
@@ -451,7 +698,7 @@ h1 {
 
 .row-support polyline {
   fill: none;
-  stroke: #6d675f;
+  stroke: var(--support-stroke);
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 7px;
@@ -621,8 +868,8 @@ h1 {
 
 .keyboard-panel {
   position: relative;
-  border-top: 1px solid rgba(72, 55, 39, 0.12);
-  background: #ece7df;
+  border-top: 1px solid var(--border-keyboard);
+  background: var(--surface-keyboard);
   padding: var(--space-sm) var(--space-3xl) var(--space-lg);
 }
 
@@ -923,8 +1170,16 @@ h1 {
 }
 
 /* ------------------------------------------------------------------ */
-/* Tabs                                                                */
+/* Tabs and the theme switch                                           */
 /* ------------------------------------------------------------------ */
+
+/* The right-hand end of the masthead: the theme switch, then the sections. */
+.topbar-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  min-width: 0;
+}
 
 .tab-bar {
   display: flex;
@@ -955,11 +1210,76 @@ h1 {
 
 .tab[aria-current="page"] {
   border-color: rgba(255, 255, 255, 0.26);
-  background: rgba(247, 238, 222, 0.94);
+  background: var(--tab-active-fill);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.62),
     0 1px 3px rgba(17, 11, 8, 0.2);
-  color: var(--charcoal);
+  color: var(--ink-on-bright);
+}
+
+/*
+ * The theme switch borrows the tab bar's chrome, because it sits beside it and
+ * is the same kind of thing: one of a small set, currently chosen. A fieldset
+ * is the grouping element a radio set asks for, and arrives with a border, a
+ * padding and a min-width that have to go.
+ */
+.theme-switch {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  padding: 3px;
+  border: 1px solid rgba(255, 244, 227, 0.16);
+  border-radius: var(--radius-button);
+  background: rgba(29, 21, 16, 0.38);
+  box-shadow: inset 0 1px 2px rgba(16, 10, 7, 0.18);
+}
+
+.theme-option {
+  position: relative;
+  display: flex;
+}
+
+/*
+ * The radio keeps its place in the tab order and its native arrow-key
+ * traversal; the label is what is seen. The input is therefore made
+ * transparent and stretched over the label rather than hidden -- `display:
+ * none` and `visibility: hidden` would both take it out of the tab order and
+ * out of the accessibility tree -- and it stays the thing that is clicked, so
+ * the pointer target and the accessible control are one element.
+ */
+.theme-option input {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.theme-option label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 var(--space-md);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: rgba(249, 241, 228, 0.78);
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 0.74rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.theme-option input:checked + label {
+  border-color: rgba(255, 255, 255, 0.26);
+  background: var(--tab-active-fill);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    0 1px 3px rgba(17, 11, 8, 0.2);
+  color: var(--ink-on-bright);
 }
 
 /* ------------------------------------------------------------------ */
@@ -972,6 +1292,7 @@ h1 {
  * rather than `:focus` keeps the ring off a bar that was struck with the mouse.
  */
 .tab:focus-visible,
+.theme-option input:focus-visible + label,
 .bar:focus-visible,
 .piano-key:focus-visible,
 .dial-input:focus-visible + .dial-face,
@@ -1043,7 +1364,7 @@ h1 {
   padding: var(--space-xs) var(--space-lg);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-pill);
-  background: rgba(255, 250, 240, 0.62);
+  background: var(--pill-fill);
   color: var(--charcoal-muted);
   font-size: var(--type-sm);
   font-weight: 600;
@@ -1055,12 +1376,12 @@ h1 {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #a67b43;
+  background: var(--state-idle);
   box-shadow: 0 0 0 3px rgba(166, 123, 67, 0.14);
 }
 
 .optimize-api-status[data-state="available"]::before {
-  background: #477359;
+  background: var(--state-ready);
   box-shadow: 0 0 0 3px rgba(71, 115, 89, 0.14);
 }
 
@@ -1123,7 +1444,7 @@ h1 {
   padding: var(--space-lg) var(--space-2xl) var(--space-2xl);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-group);
-  background: rgba(255, 250, 240, 0.5);
+  background: var(--panel-fill);
 }
 
 .fit-group legend {
@@ -1146,7 +1467,7 @@ h1 {
   border: 1px solid var(--structural-wood-border);
   border-radius: 50%;
   background: var(--brass-material);
-  color: var(--charcoal);
+  color: var(--ink-on-bright);
   font-size: 0.78rem;
   line-height: 1;
 }
@@ -1177,16 +1498,16 @@ h1 {
 .fit-field input,
 .fit-field select {
   padding: 7px 9px;
-  border: 1px solid rgba(85, 52, 24, 0.45);
+  border: 1px solid var(--input-border);
   border-radius: var(--radius-control);
-  background: var(--parchment-light);
+  background: var(--input-surface);
   color: var(--charcoal);
   font: inherit;
   font-size: var(--type-control);
 }
 
 .fit-field input[aria-invalid="true"] {
-  border-color: #a32c1c;
+  border-color: var(--error-border);
 }
 
 .fit-hint {
@@ -1199,7 +1520,7 @@ h1 {
 .fit-field-error,
 .fit-form-error {
   margin: 0;
-  color: #8f2313;
+  color: var(--error-text);
   font-size: 0.82rem;
   font-weight: 600;
 }
@@ -1232,7 +1553,7 @@ h1 {
   margin-top: var(--space-xl);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-control);
-  background: rgba(255, 250, 240, 0.38);
+  background: var(--panel-fill-soft);
 }
 
 .fit-advanced summary {
@@ -1259,7 +1580,7 @@ h1 {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: rgba(75, 65, 58, 0.09);
+  background: var(--chip-fill);
   color: var(--charcoal-muted);
   font-size: 1rem;
   line-height: 1;
@@ -1318,7 +1639,7 @@ h1 {
   padding: var(--space-lg);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-group);
-  background: rgba(255, 250, 240, 0.58);
+  background: var(--panel-fill-mid);
 }
 
 .fit-job-state {
@@ -1333,8 +1654,8 @@ h1 {
   padding: var(--space-md) var(--space-4xl);
   border: 1px solid var(--surface-border-strong);
   border-radius: var(--radius-button);
-  background: linear-gradient(180deg, #f7e7cb, #dcae74);
-  color: var(--charcoal);
+  background: var(--button-face);
+  color: var(--ink-on-bright);
   cursor: pointer;
   font-family: var(--font-display);
   font-size: 0.98rem;
@@ -1343,7 +1664,7 @@ h1 {
 }
 
 .fit-button-secondary {
-  background: linear-gradient(180deg, #f0e2cd, #cbb69a);
+  background: var(--button-face-secondary);
 }
 
 .fit-button[disabled] {
@@ -1383,7 +1704,7 @@ h1 {
   padding: var(--space-2xl);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-group);
-  background: rgba(255, 250, 240, 0.5);
+  background: var(--panel-fill);
 }
 
 .fit-results-header h2 {
@@ -1403,7 +1724,7 @@ h1 {
   padding: var(--space-3xl);
   border: 1px dashed var(--surface-border);
   border-radius: var(--radius-group);
-  background: rgba(255, 250, 240, 0.32);
+  background: var(--panel-fill-faint);
   color: var(--charcoal-muted);
   text-align: center;
 }
@@ -1424,7 +1745,7 @@ h1 {
   height: 280px;
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-group);
-  background: rgba(255, 250, 240, 0.72);
+  background: var(--panel-fill-strong);
 }
 
 .fit-status h3,
@@ -1494,9 +1815,9 @@ h1 {
 .audition-field input {
   padding: 6px 8px;
   width: 8ch;
-  border: 1px solid rgba(85, 52, 24, 0.45);
+  border: 1px solid var(--input-border);
   border-radius: var(--radius-control);
-  background: rgba(255, 250, 240, 0.9);
+  background: var(--input-surface-soft);
   color: var(--charcoal);
   font: inherit;
   font-size: var(--type-control);
@@ -1509,7 +1830,7 @@ h1 {
   border: 1px solid var(--structural-wood-border);
   border-radius: var(--radius-button);
   background: var(--brass-material);
-  color: var(--charcoal);
+  color: var(--ink-on-bright);
   font: inherit;
   font-size: var(--type-body);
   text-decoration: none;
@@ -1571,8 +1892,14 @@ h1 {
     line-height: 1.05;
   }
 
+  .topbar-controls {
+    flex: 1 1 100%;
+    gap: var(--space-xs);
+  }
+
   .tab-bar {
-    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
     padding: 2px;
   }
 
@@ -1581,6 +1908,17 @@ h1 {
     justify-content: center;
     min-height: 44px;
     font-size: 0.76rem;
+  }
+
+  .theme-switch {
+    padding: 2px;
+  }
+
+  .theme-option label {
+    justify-content: center;
+    min-height: 44px;
+    padding: 0 var(--space-sm);
+    font-size: 0.68rem;
   }
 
   .fit-field input,

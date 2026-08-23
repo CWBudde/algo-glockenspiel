@@ -10,6 +10,30 @@
     />
   </head>
   <body data-ui-surface="web">
+    <script>
+      /*
+        The theme, before the first paint.
+
+        The stylesheet reads data-theme off <html>, and the bundle only gets to
+        write it once the module has loaded and React has mounted -- long
+        enough for a dark visitor to be shown a full-brightness page and then
+        have it swapped underneath them. This does the same read the switch
+        does, inline and blocking, so the first paint is already right.
+
+        The key and the three values are src/lib/theme.ts's; the assertion that
+        they still agree is in src/lib/theme.test.ts.
+      */
+      try {
+        var theme = localStorage.getItem("algo-glockenspiel:theme");
+        if (theme === "light" || theme === "dark") {
+          document.documentElement.setAttribute("data-theme", theme);
+        }
+      } catch (error) {
+        // Blocked site data means the visitor gets the system preference,
+        // which is what "auto" would have given them anyway.
+      }
+    </script>
+
     <div id="root"></div>
 
     <!--

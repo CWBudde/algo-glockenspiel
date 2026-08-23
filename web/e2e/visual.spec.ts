@@ -164,9 +164,22 @@ async function waitForStablePaint(page: Page): Promise<void> {
 }
 
 /** Returns visible, enabled controls in the order the browser tabs to them. */
+/*
+ * A radio group is one tab stop, not one per option: only the checked radio is
+ * in the tab order, and the arrow keys move within the group. The theme switch
+ * is the only radio group on the page, and listing all three of its inputs
+ * here would have the traversal expect three stops the browser will not make.
+ */
 function tabbableControls(page: Page) {
   return page.locator(
-    "a[href]:visible, button:not([disabled]):visible, input:not([disabled]):visible, select:not([disabled]):visible, summary:visible",
+    [
+      "a[href]:visible",
+      "button:not([disabled]):visible",
+      'input:not([disabled]):not([type="radio"]):visible',
+      'input[type="radio"]:not([disabled]):checked:visible',
+      "select:not([disabled]):visible",
+      "summary:visible",
+    ].join(", "),
   );
 }
 
@@ -184,7 +197,12 @@ async function expectFullKeyboardTraversal(page: Page): Promise<void> {
     await expect(control).toBeFocused();
 
     const focusStyle = await control.evaluate((element) => {
-      const focusTarget = element.classList.contains("dial-input")
+      // Both the dials and the theme switch keep a transparent native control
+      // and draw its focus ring on the visible element that follows it.
+      const drawsRingOnSibling =
+        element.classList.contains("dial-input") ||
+        element.matches('input[type="radio"]');
+      const focusTarget = drawsRingOnSibling
         ? element.nextElementSibling
         : element;
 
@@ -246,7 +264,9 @@ async function expectTouchTargets(page: Page): Promise<void> {
   for (const control of controls) {
     let target = control;
 
-    if ((await control.getAttribute("type")) === "checkbox") {
+    const type = await control.getAttribute("type");
+
+    if (type === "checkbox" || type === "radio") {
       const id = await control.getAttribute("id");
       expect(id).not.toBeNull();
       target = page.locator(`label[for="${id}"]`);
@@ -1556,4 +1576,185 @@ test("Optimize at 1440x1000", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Start fit" })).toBeVisible();
   await waitForStablePaint(page);
   await expect(page).toHaveScreenshot("optimize-1440x1000.png");
+});
+
+/* ------------------------------------------------------------------ */
+/* Theme                                                               */
+/* ------------------------------------------------------------------ */
+
+async function readRootTheme(page: Page): Promise<string | null> {
+  return page.evaluate(() =>
+    document.documentElement.getAttribute("data-theme"),
+  );
+}
+
+async function readColorScheme(page: Page): Promise<string> {
+  return page.evaluate(
+    () => getComputedStyle(document.documentElement).colorScheme,
+  );
+}
+
+test("the theme switch writes the choice onto the document and keeps it", async ({
+  page,
+}) => {
+  await installStableEngine(page);
+  await page.goto("/#/play");
+
+  const auto = page.getByRole("radio", { name: "Auto" });
+  const dark = page.getByRole("radio", { name: "Dark" });
+
+  await expect(auto).toBeChecked();
+  expect(await readRootTheme(page)).toBeNull();
+
+  await dark.check();
+  expect(await readRootTheme(page)).toBe("dark");
+  expect(await readColorScheme(page)).toBe("dark");
+
+  // The choice has to survive a reload, and it has to be applied by the
+  // blocking script in index.html rather than by React: the attribute is
+  // already on the root when the document has only just been parsed.
+  await page.reload();
+  expect(await readRootTheme(page)).toBe("dark");
+  await expect(page.getByRole("radio", { name: "Dark" })).toBeChecked();
+
+  // Back to auto, which is stored as the absence of a choice.
+  await page.getByRole("radio", { name: "Auto" }).check();
+  expect(await readRootTheme(page)).toBeNull();
+  expect(
+    await page.evaluate(() => localStorage.getItem("algo-glockenspiel:theme")),
+  ).toBeNull();
+});
+
+test("auto follows the system, and an explicit light overrides it", async ({
+  page,
+}) => {
+  await installStableEngine(page);
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto("/#/play");
+
+  await expect(page.getByRole("radio", { name: "Auto" })).toBeChecked();
+  expect(await readColorScheme(page)).toBe("dark");
+
+  await page.getByRole("radio", { name: "Light" }).check();
+  expect(await readColorScheme(page)).toBe("light");
+
+  // A system flip while an explicit choice stands must not move the page.
+  await page.emulateMedia({ colorScheme: "light" });
+  expect(await readColorScheme(page)).toBe("light");
+
+  await page.getByRole("radio", { name: "Auto" }).check();
+  expect(await readColorScheme(page)).toBe("light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  expect(await readColorScheme(page)).toBe("dark");
+});
+
+/*
+ * The palette is what the dark theme changes, so it is the palette that is
+ * checked: every surface the theme owns has to actually be darker than the ink
+ * on it, and a token that was added to the light block and forgotten in the
+ * dark one shows up here as a cream panel that never changed.
+ */
+test("dark repaints the page surfaces without touching the instrument", async ({
+  page,
+}) => {
+  await installStableEngine(page);
+  await page.goto("/#/play");
+
+  const sample = async () =>
+    page.evaluate(() => {
+      const read = (selector: string, property: string) => {
+        const element = document.querySelector(selector);
+        if (element === null) {
+          throw new Error(`no ${selector} to sample`);
+        }
+        return getComputedStyle(element).getPropertyValue(property).trim();
+      };
+
+      return {
+        body: read("body", "background-color"),
+        ink: read("body", "color"),
+        card: read(".instrument-card", "background-color"),
+        deck: read(".control-deck", "background-color"),
+        keyboard: read(".keyboard-panel", "background-color"),
+        whiteKey: read(".piano-key.white", "background-image"),
+      };
+    });
+
+  const light = await sample();
+
+  await page.getByRole("radio", { name: "Dark" }).check();
+  const dark = await sample();
+
+  for (const surface of ["body", "card", "deck", "keyboard"] as const) {
+    expect(dark[surface], `${surface} is unchanged by the dark theme`).not.toBe(
+      light[surface],
+    );
+    expect(luminance(dark[surface])).toBeLessThan(luminance(light[surface]));
+    // Ink over surface, both from the same theme, has to stay legible.
+    expect(luminance(dark.ink)).toBeGreaterThan(luminance(dark[surface]) + 0.4);
+  }
+
+  // The instrument is an object in the room, not part of the lighting.
+  expect(dark.whiteKey).toBe(light.whiteKey);
+});
+
+/** Rough perceptual lightness of an `rgb()` string, 0..1. */
+function luminance(color: string): number {
+  const parts = color.match(/[\d.]+/g);
+
+  if (parts === null || parts.length < 3) {
+    throw new Error(`not a color: ${color}`);
+  }
+
+  const [red, green, blue] = parts.map(Number);
+
+  return (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
+}
+
+test("dark Play and dark Optimize have no serious Axe violations", async ({
+  page,
+}) => {
+  await installStableEngine(page);
+  await page.goto("/#/play");
+  await expect(page.getByText(ENGINE_READY, { exact: true })).toBeVisible();
+  await page.getByRole("radio", { name: "Dark" }).check();
+  await expectNoSeriousAxeViolations(page);
+
+  await installStableFitApi(page);
+  await page.goto("/#/optimize");
+  await expect(
+    page.getByRole("status", {
+      name: "Fit service connected \u00b7 visual-test",
+    }),
+  ).toBeVisible();
+  await exposeAllOptimizeControls(page);
+  await expectNoSeriousAxeViolations(page);
+});
+
+test("Play at 1440x1000 in dark", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await installStableEngine(page);
+  await page.goto("/#/play");
+
+  await expect(page.getByText(ENGINE_READY, { exact: true })).toBeVisible();
+  await page.getByRole("radio", { name: "Dark" }).check();
+  await waitForStablePaint(page);
+  await expect(page).toHaveScreenshot("play-dark-1440x1000.png");
+});
+
+test("Optimize at 1440x1000 in dark", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await installStableEngine(page);
+  await installStableFitApi(page);
+  await page.goto("/#/optimize");
+
+  await expect(
+    page.getByRole("status", {
+      name: "Fit service connected \u00b7 visual-test",
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start fit" })).toBeVisible();
+  await page.getByRole("radio", { name: "Dark" }).check();
+  await waitForStablePaint(page);
+  await expect(page).toHaveScreenshot("optimize-dark-1440x1000.png");
 });

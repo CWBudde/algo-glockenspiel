@@ -18,11 +18,11 @@ web/
   src/
     App.tsx           tab bar, hash router and the audio engine
     routes/           PlayPage, OptimizePage
-    components/       Topbar, ControlDeck, Dial, Rack, Keyboard
+    components/       Topbar, ThemeSwitch, ControlDeck, Dial, Rack, Keyboard
     audio/            the engine worker, the worklet, and the AudioContext graph
     api/              the typed fit-API client and the wire types
     features/optimize/  the fit form, the event stream, the chart, the audition
-    lib/              note geometry and shared wood-species presets
+    lib/              note geometry, the color theme, shared wood presets
     styles/           the stylesheet
   assets/             SVG source assets and baked procedural wood textures
   scripts/            deterministic Node asset generators
@@ -196,4 +196,9 @@ lands in the output buffer as NaN. See the comment on `interleavedFrames`.
 - Adjust `Volume` for overall output gain, including while a note rings
 - The status line reports the sample rate, and the number of dropouts once
   there has been one
+- The masthead switch chooses the color theme: **Auto** follows the operating
+  system, **Light** and **Dark** override it and are remembered for the next
+  visit. Dark repaints the page -- canvas, panels, fields and ink -- and leaves
+  the instrument's own materials alone, so the bars, the brass dials and the
+  piano keys are the same objects under different lighting
 - Switch to **Optimize** to fit a preset against a recording; see above
