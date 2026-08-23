@@ -56,6 +56,18 @@ const (
 	minReferenceSampleRate = 4000
 	maxReferenceSampleRate = 192000
 
+	// maxMayflyPopulation caps the population and everything derived from it.
+	// Mating pairs the k-th best male with the k-th best female, so the
+	// population also caps the usable offspring count -- which is why the
+	// offspring knobs are held to the same number rather than to one of their
+	// own that could drift away from it.
+	maxMayflyPopulation = 4096
+
+	// maxFitTargetCost bounds the convergence target. A cost is whatever the
+	// metric produces, so there is no meaningful ceiling; the bound exists only
+	// to keep the value finite and inside a range the engine can validate.
+	maxFitTargetCost = 1e12
+
 	// fitEventHeartbeat is how often an idle SSE stream emits a comment. It
 	// keeps an intermediary from reaping a quiet connection, and it is also
 	// what makes the server notice a client that vanished without closing --
@@ -82,8 +94,28 @@ type fitRequest struct {
 	NormalizeGain bool `json:"normalizeGain"`
 
 	MayflyVariant    string `json:"mayflyVariant"`
+	MayflyPreset     string `json:"mayflyPreset"`
 	MayflyPopulation int    `json:"mayflyPopulation"`
 	MayflySeed       int64  `json:"mayflySeed"`
+
+	MayflyEpochs     int    `json:"mayflyEpochs"`
+	MayflyRestarts   int    `json:"mayflyRestarts"`
+	MayflyStagnation int    `json:"mayflyStagnation"`
+	MayflySelection  string `json:"mayflySelection"`
+
+	// MayflyTargetCost and MayflyNC are pointers because absent and written
+	// are different requests. A target cost of zero is a usable target rather
+	// than "off", and mayfly.NCAuto is -1 while a written zero means "no
+	// crossover at all" -- so collapsing either onto its zero value would turn
+	// a field the client left out into a setting it never asked for.
+	MayflyTargetCost *float64 `json:"mayflyTargetCost"`
+	MayflyNC         *int     `json:"mayflyNc"`
+	MayflyNCRatio    *float64 `json:"mayflyNcRatio"`
+
+	// MayflyTuning is the uploaded tuning document. It arrives as a multipart
+	// file part rather than as a scalar field -- exactly as the bounds
+	// document does -- so it is never part of the JSON form of a request.
+	MayflyTuning *optimizer.MayflyTuning `json:"-"`
 }
 
 // timeBudget returns the request's wall-clock budget.
@@ -107,6 +139,9 @@ func defaultFitRequest() fitRequest {
 		MayflyVariant:    "desma",
 		MayflyPopulation: 10,
 		MayflySeed:       1,
+		MayflyEpochs:     1,
+		MayflyRestarts:   0,
+		MayflyStagnation: 0,
 	}
 }
 
@@ -172,7 +207,19 @@ func (s *Server) handleFitStart(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
-	fitSettings, err := parseFitRequest(request)
+	tuning, err := readMayflyTuningPart(request)
+	if err != nil {
+		writeJSONError(writer, http.StatusBadRequest, err.Error())
+
+		return
+	}
+
+	// The document is decoded and handed to the parser before anything is
+	// started, so a malformed one is a 400 on this request rather than a job
+	// that claims the single fit slot and then fails: parseFitRequest validates
+	// the whole mayfly configuration, document included, through
+	// selectOptimizer.
+	fitSettings, err := parseFitRequest(request, tuning)
 	if err != nil {
 		writeJSONError(writer, http.StatusBadRequest, err.Error())
 
@@ -219,6 +266,14 @@ func (s *Server) runFit(
 		job.finish(fitFailed, nil, nil, err)
 
 		return
+	}
+
+	// The resolution report is attached here rather than in selectOptimizer,
+	// which also runs at parse time to validate a request and has no job to
+	// report into. Without it a run started with variant "auto" or with a zero
+	// seed could never be described back to the client that started it.
+	if mayflyBackend, ok := backend.(*optimizer.MayflyOptimizer); ok {
+		mayflyBackend.OnResolve = job.recordMayfly
 	}
 
 	result, err := backend.Optimize(ctx, objective.Objective(), initial, objective.Codec().EncodedBounds(),
@@ -543,6 +598,44 @@ func readBoundsPart(request *http.Request) (*optimizer.ParamBounds, error) {
 	return &bounds, nil
 }
 
+// readMayflyTuningPart decodes the optional mayfly tuning document, returning
+// nil when the field is absent so the caller keeps whatever the variant factory
+// or the preset already chose.
+//
+// It is a file part rather than a scalar field for the reason the bounds
+// document is one: it is a JSON document a client keeps in a file and uploads
+// unchanged, and one shape for both means one thing to explain. Like the bounds
+// it is read from bytes in memory and the part's filename is never touched;
+// optimizer.LoadMayflyTuning takes a path and is deliberately not reachable
+// from here.
+func readMayflyTuningPart(request *http.Request) (*optimizer.MayflyTuning, error) {
+	file, _, err := request.FormFile("mayflyTuning")
+
+	// Only a missing field means "no tuning". Any other failure -- a part that
+	// cannot be opened, say -- would otherwise be answered with a fit against
+	// the untuned defaults while the client believed its own document was in
+	// force.
+	if errors.Is(err, http.ErrMissingFile) {
+		//nolint:nilnil // an absent field is not an error: the defaults apply.
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("the mayfly tuning could not be read: %w", err)
+	}
+
+	defer func() {
+		_ = file.Close()
+	}()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("the mayfly tuning could not be read: %w", err)
+	}
+
+	return optimizer.DecodeMayflyTuning(data, "the uploaded mayfly tuning")
+}
+
 // buildObjective validates the request against the reference and assembles the
 // objective, returning it with the encoded starting point.
 func buildObjective(
@@ -615,8 +708,10 @@ func selectOptimizer(settings fitRequest) (optimizer.Optimizer, error) {
 	case "mayfly":
 		backend := &optimizer.MayflyOptimizer{
 			Variant:    settings.MayflyVariant,
+			Preset:     settings.MayflyPreset,
 			Population: settings.MayflyPopulation,
 			Seed:       settings.MayflySeed,
+			Tuning:     settings.mayflyTuning(),
 		}
 
 		// The configuration is built and checked here rather than left to
@@ -630,4 +725,49 @@ func selectOptimizer(settings fitRequest) (optimizer.Optimizer, error) {
 	default:
 		return nil, fmt.Errorf("unsupported optimizer %q", settings.Optimizer)
 	}
+}
+
+// mayflyTuning folds the request's scalar mayfly settings into a tuning
+// document and lays the uploaded document on top of it.
+//
+// Nothing here writes a scalar onto a configuration itself. Building one
+// document and handing it to MayflyOptimizer.Tuning is what keeps each knob
+// written in exactly one place, and it makes precedence one sentence: the
+// uploaded document wins over the form fields.
+func (r fitRequest) mayflyTuning() *optimizer.MayflyTuning {
+	// Epochs and restarts are the wrapper's own schedule and their defaults are
+	// the wrapper's own, so writing them always costs nothing and keeps the two
+	// fields readable straight off the request.
+	epochs, restarts := r.MayflyEpochs, r.MayflyRestarts
+
+	scalars := &optimizer.MayflyTuning{
+		NC:      r.MayflyNC,
+		NCRatio: r.MayflyNCRatio,
+		Schedule: &optimizer.MayflySchedule{
+			Epochs:   &epochs,
+			Restarts: &restarts,
+		},
+	}
+
+	if r.MayflySelection != "" {
+		selection := r.MayflySelection
+		scalars.Selection = &selection
+	}
+
+	// Stagnation is written only when it was asked for. Zero is the "no
+	// stagnation rule" default, so writing it unconditionally would silently
+	// switch off a rule a named preset had turned on -- a client that never
+	// mentioned the field would be changing it.
+	if r.MayflyStagnation > 0 || r.MayflyTargetCost != nil {
+		scalars.Convergence = &optimizer.MayflyConvergence{
+			TargetCost: r.MayflyTargetCost,
+		}
+
+		if r.MayflyStagnation > 0 {
+			stagnation := r.MayflyStagnation
+			scalars.Convergence.StagnationIterations = &stagnation
+		}
+	}
+
+	return scalars.Overlay(r.MayflyTuning)
 }

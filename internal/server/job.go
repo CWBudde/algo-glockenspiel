@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -71,6 +72,12 @@ type fitJob struct {
 	finishedAt  time.Time
 	result      *preset.Preset
 	subscribers map[chan struct{}]struct{}
+
+	// resolvedMayfly is what the mayfly backend settled on once every "choose
+	// one for me" input had been resolved. It is recorded from the backend's
+	// OnResolve callback, which runs on the fit goroutine, so it lives behind
+	// mu like every other mutable field.
+	resolvedMayfly optimizer.ResolvedMayfly
 }
 
 // fitSnapshot is the wire form of a job's state, and the only thing that leaves
@@ -107,6 +114,22 @@ type fitSnapshot struct {
 	// It is not simply state == succeeded: a run cancelled after its first
 	// report still leaves the best parameters found so far.
 	HasPreset bool `json:"hasPreset"`
+
+	// MayflyVariant is the dialect the run actually uses, which is not always
+	// the one that was asked for: "auto" measures the landscape and picks one,
+	// and a preset selects one of its own. Without this echo a client that
+	// asked for "auto" could never learn what ran.
+	MayflyVariant string `json:"mayflyVariant,omitempty"`
+
+	// MayflySeed is a string because it is an int64 and this is JSON: a seed
+	// past 2^53 loses its low bits on the way through a JavaScript Number, and
+	// a seed that cannot be sent back verbatim cannot reproduce its run. The
+	// request side spells it the same way for the same reason.
+	MayflySeed string `json:"mayflySeed,omitempty"`
+
+	// MayflyRecommendation is why an automatically chosen dialect was chosen,
+	// and is empty unless the variant was "auto".
+	MayflyRecommendation string `json:"mayflyRecommendation,omitempty"`
 }
 
 func newFitJob(id string, request fitRequest, sampleRate int, referenceSeconds float64, cancel context.CancelFunc) *fitJob {
@@ -149,6 +172,12 @@ func (j *fitJob) snapshot() fitSnapshot {
 		HasPreset:           j.result != nil,
 	}
 
+	if resolved := j.resolvedMayfly; resolved.Variant != "" {
+		snapshot.MayflyVariant = resolved.Variant
+		snapshot.MayflySeed = strconv.FormatInt(resolved.Seed, 10)
+		snapshot.MayflyRecommendation = resolved.Recommendation
+	}
+
 	if !j.finishedAt.IsZero() {
 		finished := j.finishedAt
 		snapshot.FinishedAt = &finished
@@ -162,6 +191,16 @@ func (j *fitJob) snapshot() fitSnapshot {
 	}
 
 	return snapshot
+}
+
+// recordMayfly stores what the mayfly backend resolved. It is passed as
+// MayflyOptimizer.OnResolve and runs once, before the search starts, on the
+// goroutine that owns the run.
+func (j *fitJob) recordMayfly(resolved optimizer.ResolvedMayfly) {
+	j.mu.Lock()
+	j.resolvedMayfly = resolved
+	j.notifyLocked()
+	j.mu.Unlock()
 }
 
 // report records one optimizer progress callback and wakes every subscriber.

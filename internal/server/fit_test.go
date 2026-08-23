@@ -42,6 +42,10 @@ type fitSnapshot struct {
 	Optimizer           string  `json:"optimizer"`
 	Metric              string  `json:"metric"`
 	HasPreset           bool    `json:"hasPreset"`
+
+	MayflyVariant        string `json:"mayflyVariant"`
+	MayflySeed           string `json:"mayflySeed"`
+	MayflyRecommendation string `json:"mayflyRecommendation"`
 }
 
 // The reference used throughout. 8000 Hz keeps a render cheap while staying a
@@ -74,6 +78,20 @@ func endlessFit() map[string]string {
 		"maxIterations":    "100000",
 		"reportEvery":      "1",
 		"timeBudget":       "30m",
+	}
+}
+
+// shortMayflyFit is a mayfly run that finishes on its own within a test's
+// patience. The population is large enough that mayfly's default mutant count
+// -- five percent of it, rounded -- is at least one, which is what makes a
+// written offspring count of zero an error the API can be seen to reject.
+func shortMayflyFit() map[string]string {
+	return map[string]string{
+		"optimizer":        "mayfly",
+		"mayflyPopulation": "20",
+		"maxIterations":    "2",
+		"reportEvery":      "1",
+		"timeBudget":       "60s",
 	}
 }
 
