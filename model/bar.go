@@ -11,6 +11,16 @@ import (
 
 const velocityScale = 1.0 / 128.0
 
+// Oscillator is the rotor configuration one mode contributes to the bank: an
+// amplitude, a fundamental and a decay, plus the integer-multiple partials that
+// ride on it. It is what [Bar.BankOscillators] hands out.
+//
+// It is an alias rather than a defined type on purpose. BankOscillators returns
+// the bar's own storage without copying, so the bank on the other side has to
+// see the same type; a defined type would put a conversion -- and therefore an
+// allocation -- on the note-on path the accessor exists to keep clear.
+type Oscillator = oscbank.Oscillator
+
 // Bar integrates excitation shaping and modal resonance.
 type Bar struct {
 	bank *oscbank.Bank
@@ -33,7 +43,7 @@ type Bar struct {
 	// waveshaper actually runs at, so the audio path never converts per sample.
 	chebyGains []float32
 
-	oscillators []oscbank.Oscillator
+	oscillators []Oscillator
 }
 
 // NewBar creates a new bar model instance.
@@ -198,7 +208,7 @@ func (b *Bar) FinishBankOutput(bankOut, dst []float32) []float32 {
 // the bar's own storage. Callers must treat it as read-only; it exists so a
 // voice-major bank can be pointed at the same oscillators the bar was retuned
 // with, without copying them through a fresh slice on the audio thread.
-func (b *Bar) BankOscillators() []oscbank.Oscillator {
+func (b *Bar) BankOscillators() []Oscillator {
 	return b.oscillators
 }
 
@@ -262,11 +272,11 @@ func (b *Bar) UpdateParams(params *BarParams) error {
 	if cap(b.oscillators) >= len(b.params.Modes) {
 		b.oscillators = b.oscillators[:len(b.params.Modes)]
 	} else {
-		b.oscillators = make([]oscbank.Oscillator, len(b.params.Modes))
+		b.oscillators = make([]Oscillator, len(b.params.Modes))
 	}
 
 	for i, mode := range b.params.Modes {
-		b.oscillators[i] = oscbank.Oscillator{
+		b.oscillators[i] = Oscillator{
 			Amplitude: mode.Amplitude,
 			Frequency: mode.Frequency,
 			DecayMs:   mode.DecayMs,

@@ -712,6 +712,55 @@ every sounding note going silent at once; transposition scales frequencies and
 decays and never touches the mode or harmonic counts, so once the shape is
 pinned no note-on can move it.
 
+### Nothing allocates and nothing locks
+
+The block callback is the easy half; note-on is where both properties were
+actually won.
+
+**Allocation.** `RealtimeEngine.ProcessBlock` allocates nothing, pinned by
+`TestProcessBlockDoesNotAllocateAfterFirstBlock`. Note-on used to allocate 18
+times per strike, measured by `testing.AllocsPerRun`, because `NoteOn` called
+`synth.NewVoice`, which built a transposed `model.Bar` and every buffer that
+goes with it. Two changes removed all 18:
+
+- `newVoiceSlots` builds the whole voice bank at `maxVoices` capacity at engine
+  construction and cuts every slot's block buffer out of one backing array,
+  with a full slice expression so a slot can never append into its neighbour.
+  `claimSlot` only reslices within that capacity, and retirement swaps a dead
+  voice past the end rather than overwriting it, so a retired voice leaves its
+  buffer in the slot the next note-on picks up. Retrigger and stealing keep the
+  slot's buffer too.
+- Each slot carries a pooled `*Voice`, built and warmed there as well.
+  `NoteOn` restrikes it in place through `Synthesizer.ResetVoice`, which
+  transposes into the voice's own scratch `BarParams` and hands that to
+  `Bar.UpdateParams` — which reuses every slice whose capacity still fits, which
+  is what `BarParams.CopyInto` exists for.
+
+`TestNoteOnAllocatesNothing` asserts zero on all three arms — retrigger, a fresh
+slot, and voice stealing — as an absolute count rather than a comparison.
+
+Reusing a bar for a different note is only correct because `ResetVoice` calls
+`Bar.Reset`. `Bar.setLowpass` deliberately retunes the excitation filter without
+clearing its delay line, so without the reset the previous note's tail would
+leak into the new strike.
+`internal/synth/realtime_pooling_test.go` pins that a reused slot renders a note
+bit-identically to a freshly built voice.
+
+**Locking.** The steady state never took a lock: `cpufeat.Detect()` is an
+`atomic.Pointer` load once the feature set is published, and nothing else on the
+path locks at all. The _first_ block did. `current` starts nil, nothing warmed
+it, and the first caller was `processRotorBlocks` — already on the audio thread
+— so exactly one real audio callback per process serialized on `detectMu`. One
+is one, so it counted.
+
+`internal/cpufeat` now warms the cache from its own `init()`, and package
+initialisation completes before `main` runs, so the audio thread can no longer
+be the first caller. The warm-up is a plain `Detect()` and not a `sync.Once`,
+because `ResetDetection()` has to be able to force a real hardware re-detect:
+that is what lets tests force the portable and SSE2-only kernels, which are the
+numeric oracle the packed kernels are validated against.
+`TestDetectReDetectsAfterReset` pins it.
+
 ### What the engine's correctness tests pin
 
 Two claims, and they are deliberately of different kinds.

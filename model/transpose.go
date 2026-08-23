@@ -11,9 +11,9 @@ import (
 // well-formed if it still describes a buildable bar at every note the player
 // can strike, and that check has to run in the package that owns the bounds.
 //
-// internal/synth re-exports them so the engine keeps its own vocabulary, and
-// they mirror KEYBOARD_FIRST_NOTE and KEYBOARD_LAST_NOTE in
-// web/src/lib/layout.ts.
+// They are the range ValidateAuthoredBarParams and AuthoredDecayMsMax reason
+// over, so a host that lays out a different keyboard should treat them as this
+// instrument's declared span rather than as its own.
 const (
 	KeyboardFirstNote = 36
 	KeyboardLastNote  = 96

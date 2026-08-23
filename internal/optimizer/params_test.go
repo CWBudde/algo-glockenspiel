@@ -262,3 +262,25 @@ func TestDecodeParamsPreservesChebyshevStage(t *testing.T) {
 		t.Fatalf("chebyshev stage = %q, want %q", decoded.Chebyshev.Stage, model.ChebyshevStageOutput)
 	}
 }
+
+// TestDefaultBoundsUseTheAuthoringCeiling guards the half of the decay split
+// that must not move. Raising model.DecayMsValidationMax widens what a preset
+// file may contain once transposed; it must not widen what a fit searches,
+// because the decay dimension is log-encoded into the unit cube and stretching
+// it by an order of magnitude would change every fit's step size for reasons
+// that have nothing to do with transposition.
+//
+// Its sibling, TestSearchBoundIsUnchanged in internal/synth, pins the constant
+// itself. The two halves are apart because internal/optimizer imports
+// internal/synth, so neither package can assert both.
+func TestDefaultBoundsUseTheAuthoringCeiling(t *testing.T) {
+	if got := DefaultParamBounds.DecayMs.Max; got != model.DecayMsSearchMax {
+		t.Fatalf("DefaultParamBounds.DecayMs.Max = %g, want the search bound %g",
+			got, model.DecayMsSearchMax)
+	}
+
+	if DefaultParamBounds.DecayMs.Max >= model.DecayMsValidationMax {
+		t.Fatalf("the search box reaches the validation ceiling %g; it must stay the narrower of the two",
+			model.DecayMsValidationMax)
+	}
+}

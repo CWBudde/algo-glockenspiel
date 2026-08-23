@@ -33,6 +33,19 @@ the model's amplitude parameters unidentifiable.
 mutable render state from a pool while the reference, codec, and alignment plan remain immutable,
 so population-based backends can evaluate candidates in parallel without racing.
 
+## Reading the reference
+
+References are loaded through `internal/wavio`, which exists because the obvious way to read a
+WAV here is wrong. `go-audio/wav` decodes every sample format as an integer, so a 32-bit IEEE
+float file comes back as its own bit patterns divided by 2^31 — a square wave at roughly ±0.5
+for any recording at a sane level. A 32-bit float WAV is what a DAW exports by default, so
+every fit against one was fitting a square wave, silently and plausibly, and so was every
+legacy-reference regression test.
+
+`internal/wavio` is the single loader for the CLI, the server and the tests; there were three
+copies before, which is how the defect survived in all of them at once. The float fixture is
+documented in `testdata/reference/README.md`.
+
 ## Checkpoints and iteration counts
 
 The checkpoint format is version `2.0`. Version `1.0` encoded decay linearly, so loading one under

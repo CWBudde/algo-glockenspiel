@@ -169,15 +169,32 @@ type ParamBounds struct {
 	HarmonicGain  Range
 }
 
+// frequencyMult bounds the multiplier a mode's frequency may take against the
+// preset's base frequency. Unlike every other dimension here it has no model
+// constant behind it: the model validates absolute frequencies, and the
+// multiplier is a search-space device that only the optimizer has an opinion
+// about.
+const (
+	frequencyMultMin = 0.5
+	frequencyMultMax = 10.0
+)
+
 // DefaultParamBounds are the default optimization bounds for model parameters.
+//
+// Every dimension except FrequencyMult is the model's own declared range, so
+// widening one there widens the search here and nowhere else has to be told.
+// DecayMs deliberately takes model.DecayMsSearchMax and not the far wider
+// model.DecayMsValidationMax: the search box is the range a preset is authored
+// in, while the validation ceiling covers what a preset may reach once it has
+// been transposed down to the bottom of the keyboard.
 var DefaultParamBounds = ParamBounds{
-	InputMix:      Range{Min: model.DefaultParamBounds.InputMix[0], Max: model.DefaultParamBounds.InputMix[1]},
-	FilterFreq:    Range{Min: model.DefaultParamBounds.FilterFreq[0], Max: model.DefaultParamBounds.FilterFreq[1]},
+	InputMix:      Range{Min: model.InputMixMin, Max: model.InputMixMax},
+	FilterFreq:    Range{Min: model.FilterFrequencyMinHz, Max: model.FilterFrequencyMaxHz},
 	BaseFrequency: Range{Min: model.FrequencyMinHz, Max: model.FrequencyMaxHz},
-	Amplitude:     Range{Min: model.DefaultParamBounds.Amplitude[0], Max: model.DefaultParamBounds.Amplitude[1]},
-	FrequencyMult: Range{Min: model.DefaultParamBounds.FrequencyMult[0], Max: model.DefaultParamBounds.FrequencyMult[1]},
-	DecayMs:       Range{Min: model.DefaultParamBounds.DecayMs[0], Max: model.DefaultParamBounds.DecayMs[1]},
-	HarmonicGain:  Range{Min: model.DefaultParamBounds.HarmonicGain[0], Max: model.DefaultParamBounds.HarmonicGain[1]},
+	Amplitude:     Range{Min: model.AmplitudeMin, Max: model.AmplitudeMax},
+	FrequencyMult: Range{Min: frequencyMultMin, Max: frequencyMultMax},
+	DecayMs:       Range{Min: model.DecayMsMin, Max: model.DecayMsSearchMax},
+	HarmonicGain:  Range{Min: model.HarmonicGainMin, Max: model.HarmonicGainMax},
 }
 
 // ParamCodec encodes BarParams into a flat optimization vector.

@@ -190,11 +190,16 @@ The signal chain for one note:
 
 The optimizer layer is kept separate from the synthesis engine so new metrics and search strategies can be added without touching the core.
 
-Three documents go deeper:
+`docs/` goes deeper:
 
-- [docs/oscillator-bank.md](docs/oscillator-bank.md) — the recursion, the AoSoA layout, the three packed kernels, the numeric contract they are held to, and measured performance.
-- [docs/optimizer.md](docs/optimizer.md) — parameter encoding, objective evaluation, and checkpoint contracts.
+- [docs/oscillator-bank.md](docs/oscillator-bank.md) — the recursion, the AoSoA layout, the three packed kernels, the numeric contract they are held to, the realtime render path, and measured performance.
+- [docs/optimizer.md](docs/optimizer.md) — parameter encoding, objective evaluation, reading references, and checkpoint contracts.
 - [docs/user-guide.md](docs/user-guide.md) — the full CLI walkthrough, including `--bounds` and how to choose an optimizer and a metric.
+- [docs/web-app.md](docs/web-app.md) — the front end's architecture, the WASM bridge, the two-step build, and the Optimize loop.
+- [docs/serve.md](docs/serve.md) — the `serve` command and the fit API it exposes.
+- [docs/audio-transport.md](docs/audio-transport.md) — why synthesis runs in a Web Worker behind an `AudioWorkletNode`, and the three alternatives that were rejected.
+- [docs/public-api.md](docs/public-api.md) — what the public `model/` package promises to the plugin repository, and the rules that keep it usable from outside this module.
+- [docs/tinygo-evaluation.md](docs/tinygo-evaluation.md) — why the WASM build uses the standard toolchain.
 
 [PLAN.md](PLAN.md) tracks what is done and what is not.
 
