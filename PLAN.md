@@ -41,7 +41,7 @@ Reviewed against the goal above. What exists and works:
   runs the portable kernel, roughly 7x slower on amd64 and 5.3x on arm64.
 - An audio path that neither allocates nor locks, note-on included.
 - Preset schema v1 and v2 side by side, WAV note rendering, offline fitting with three metrics,
-  Nelder-Mead and Mayfly v0.4.0 backends, checkpoint and resume, legacy-reference regression
+  Nelder-Mead and Mayfly v0.5.1 backends, checkpoint and resume, legacy-reference regression
   tests.
 - CI that builds, vets, race-tests on amd64 at `GOAMD64=v1` and `v3` **and** on arm64, lints,
   checks formatting, checks module tidiness, builds the WASM target, and runs the web unit and
@@ -69,7 +69,7 @@ Goal: make CI able to tell you when something breaks, before changing anything e
 `go build`, `go test -race` and `golangci-lint` pass and run on every push and pull request;
 no compiled binaries are tracked; MIT LICENSE with `web/THIRD_PARTY.md` covering the vendored
 `wasm_exec.js`; JS, CSS and HTML are covered by `treefmt` plus a prettier CI job; dependencies
-current at algo-dsp v0.7.0, algo-fft v0.8.0, mayfly v0.4.0, algo-vecmath v0.1.3.
+current at algo-dsp v0.7.0, algo-fft v0.8.0, mayfly v0.5.1, algo-vecmath v0.1.3.
 
 Worth remembering: `golangci-lint` had never passed before this phase, and `varnamelen` is
 configured for DSP names rather than disabled. `check-tidy` was left out of CI because the
