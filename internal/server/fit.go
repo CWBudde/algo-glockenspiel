@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cwbudde/algo-glockenspiel/assets"
+	"github.com/cwbudde/algo-glockenspiel/internal/analysis"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/cwbudde/algo-glockenspiel/internal/synth"
@@ -93,6 +94,18 @@ type fitRequest struct {
 	Align         bool `json:"align"`
 	NormalizeGain bool `json:"normalizeGain"`
 
+	// Downmix and WindowMS are the reference loader's policy, as --downmix
+	// and --window are on the command line: which channel the fit sees, and
+	// a fixed cut length after the onset instead of the strike's own end.
+	Downmix  string `json:"downmix"`
+	WindowMS int64  `json:"windowMs"`
+
+	// Modes is how the starting modes are chosen, as --modes is on the
+	// command line: zero seeds one mode per partial the reference's analysis
+	// lists, a positive count seeds the strongest that many, and -1 keeps the
+	// starting preset's own modes.
+	Modes int `json:"modes"`
+
 	MayflyVariant    string `json:"mayflyVariant"`
 	MayflyPreset     string `json:"mayflyPreset"`
 	MayflyPopulation int    `json:"mayflyPopulation"`
@@ -123,6 +136,14 @@ func (r fitRequest) timeBudget() time.Duration {
 	return time.Duration(r.TimeBudgetMS) * time.Millisecond
 }
 
+// loadOptions is how the request asks the reference to be prepared.
+func (r fitRequest) loadOptions() analysis.LoadOptions {
+	return analysis.LoadOptions{
+		Downmix: analysis.Downmix(r.Downmix),
+		Window:  time.Duration(r.WindowMS) * time.Millisecond,
+	}
+}
+
 // mayflyOptimizerName is the backend name selectOptimizer answers to, spelled
 // once so the cadence default below and the switch cannot drift apart.
 const mayflyOptimizerName = "mayfly"
@@ -140,12 +161,13 @@ func defaultFitRequest() fitRequest {
 		Note:             69,
 		Velocity:         100,
 		Optimizer:        "simple",
-		Metric:           string(optimizer.MetricRMS),
+		Metric:           string(optimizer.MetricBalanced),
 		MaxIterations:    100,
 		TimeBudgetMS:     (30 * time.Second).Milliseconds(),
 		ReportEvery:      10,
 		Align:            true,
 		NormalizeGain:    false,
+		Downmix:          string(analysis.DownmixFirst),
 		MayflyVariant:    "desma",
 		MayflyPopulation: 10,
 		MayflySeed:       1,
@@ -196,13 +218,6 @@ func (s *Server) handleFitStart(writer http.ResponseWriter, request *http.Reques
 		_ = request.MultipartForm.RemoveAll()
 	}()
 
-	reference, referenceRate, err := readReferencePart(request, limit)
-	if err != nil {
-		writeJSONError(writer, http.StatusBadRequest, err.Error())
-
-		return
-	}
-
 	template, err := readPresetPart(request)
 	if err != nil {
 		writeJSONError(writer, http.StatusBadRequest, err.Error())
@@ -236,7 +251,18 @@ func (s *Server) handleFitStart(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
-	objective, initial, err := buildObjective(fitSettings, reference, referenceRate, template, bounds)
+	// The reference is read once the request is parsed, because how it is
+	// prepared -- the channel, the cut -- is part of the request.
+	loaded, err := readReferencePart(request, limit, fitSettings.loadOptions())
+	if err != nil {
+		writeJSONError(writer, http.StatusBadRequest, err.Error())
+
+		return
+	}
+
+	reference, referenceRate := loaded.Samples, loaded.SampleRate
+
+	objective, initial, starting, err := buildObjective(fitSettings, reference, referenceRate, template, bounds)
 	if err != nil {
 		writeJSONError(writer, http.StatusBadRequest, err.Error())
 
@@ -245,9 +271,9 @@ func (s *Server) handleFitStart(writer http.ResponseWriter, request *http.Reques
 
 	referenceSeconds := float64(len(reference)) / float64(referenceRate)
 
-	job, err := s.jobs.start(fitSettings, referenceRate, referenceSeconds,
+	job, err := s.jobs.start(fitSettings, referenceRate, referenceSeconds, starting.modes,
 		func(ctx context.Context, job *fitJob) {
-			s.runFit(ctx, job, objective, initial, template)
+			s.runFit(ctx, job, objective, initial, starting.preset)
 		})
 	if err != nil {
 		writeJSONError(writer, http.StatusConflict, err.Error())
@@ -273,15 +299,15 @@ func (s *Server) runFit(
 
 	backend, err := selectOptimizer(settings)
 	if err != nil {
-		job.finish(fitFailed, nil, nil, err)
+		job.finish(fitFailed, nil, nil, nil, nil, err)
 
 		return
 	}
 
 	// The resolution report is attached here rather than in selectOptimizer,
 	// which also runs at parse time to validate a request and has no job to
-	// report into. Without it a run started with variant "auto" or with a zero
-	// seed could never be described back to the client that started it.
+	// report into. Without it a run started from a preset or with a zero seed
+	// could never be described back to the client that started it.
 	if mayflyBackend, ok := backend.(*optimizer.MayflyOptimizer); ok {
 		mayflyBackend.OnResolve = job.recordMayfly
 	}
@@ -291,17 +317,28 @@ func (s *Server) runFit(
 			MaxIterations: settings.MaxIterations,
 			TimeBudget:    settings.timeBudget(),
 			ReportEvery:   settings.ReportEvery,
-			Report:        job.report,
+			Report: func(progress optimizer.Progress) {
+				// The breakdown of the best point so far rides along with
+				// every report, so a client sees the terms move rather than
+				// one number.
+				var metrics *optimizer.Metrics
+
+				if measured, err := objective.EvaluateMetrics(progress.BestParams); err == nil {
+					metrics = &measured
+				}
+
+				job.report(progress, metrics)
+			},
 		})
 	if err != nil {
-		job.finish(fitFailed, nil, nil, err)
+		job.finish(fitFailed, nil, nil, nil, nil, err)
 
 		return
 	}
 
 	bestParams, err := objective.Codec().DecodeParams(result.BestParams)
 	if err != nil {
-		job.finish(fitFailed, nil, result, err)
+		job.finish(fitFailed, nil, result, nil, nil, err)
 
 		return
 	}
@@ -318,7 +355,17 @@ func (s *Server) runFit(
 		state = fitCanceled
 	}
 
-	job.finish(state, fitted, result, nil)
+	var metrics *optimizer.Metrics
+
+	if measured, err := objective.EvaluateMetrics(result.BestParams); err == nil {
+		metrics = &measured
+	}
+
+	// Which dimensions finished on a bound is part of the result: a pinned
+	// one is where the search wanted to go further than the box allowed.
+	pinned, _ := objective.Codec().Pinned(result.BestParams)
+
+	job.finish(state, fitted, result, metrics, pinned, nil)
 
 	s.logf("fit %s finished: state=%s best=%0.6g stop=%s iterations=%d evals=%d",
 		job.id, state, result.BestCost, result.StopReason, result.Iterations, result.Evaluations)
@@ -496,15 +543,17 @@ func (s *Server) fittedPreset(writer http.ResponseWriter) (*fitJob, *preset.Pres
 	return job, fitted, true
 }
 
-// readReferencePart decodes the uploaded reference WAV.
+// readReferencePart decodes the uploaded reference WAV and prepares it the
+// way the fit command does: one channel, cut to its first strike, and
+// peak-normalised.
 //
 // The bytes stay in memory and the part's filename is never touched: it is
 // attacker-controlled and there is nothing here it could usefully name. The
 // only thing taken from the file is its audio.
-func readReferencePart(request *http.Request, limit int64) ([]float32, int, error) {
+func readReferencePart(request *http.Request, limit int64, options analysis.LoadOptions) (*analysis.Reference, error) {
 	file, header, err := request.FormFile("reference")
 	if err != nil {
-		return nil, 0, errors.New("a reference WAV must be uploaded as the multipart field \"reference\"")
+		return nil, errors.New("a reference WAV must be uploaded as the multipart field \"reference\"")
 	}
 
 	defer func() {
@@ -512,7 +561,7 @@ func readReferencePart(request *http.Request, limit int64) ([]float32, int, erro
 	}()
 
 	if header.Size > limit {
-		return nil, 0, fmt.Errorf("the reference is %d bytes, above the %d byte limit", header.Size, limit)
+		return nil, fmt.Errorf("the reference is %d bytes, above the %d byte limit", header.Size, limit)
 	}
 
 	// io.LimitReader rather than trust in header.Size: the size is taken from
@@ -520,21 +569,19 @@ func readReferencePart(request *http.Request, limit int64) ([]float32, int, erro
 	// limit has to hold whatever the body actually contains.
 	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
-		return nil, 0, fmt.Errorf("the reference could not be read: %w", err)
+		return nil, fmt.Errorf("the reference could not be read: %w", err)
 	}
 
 	if int64(len(data)) > limit {
-		return nil, 0, fmt.Errorf("the reference exceeds the %d byte limit", limit)
+		return nil, fmt.Errorf("the reference exceeds the %d byte limit", limit)
 	}
 
-	samples, sampleRate, err := wavio.DecodeMono(bytes.NewReader(data), "the uploaded reference")
+	reference, err := analysis.DecodeReference(bytes.NewReader(data), "the uploaded reference", options)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
-	if len(samples) == 0 {
-		return nil, 0, errors.New("the reference contains no samples")
-	}
+	sampleRate := reference.SampleRate
 
 	// A WAV header states its sample rate as an unsigned 32-bit number, and
 	// nothing downstream questions it: the rate becomes the job's, and the
@@ -543,11 +590,11 @@ func readReferencePart(request *http.Request, limit int64) ([]float32, int, erro
 	// samples, which is a 480 GB allocation and an unrecoverable
 	// "fatal error: out of memory" rather than a failed request.
 	if sampleRate < minReferenceSampleRate || sampleRate > maxReferenceSampleRate {
-		return nil, 0, fmt.Errorf("the reference declares a sample rate of %d Hz, outside the supported [%d,%d] range",
+		return nil, fmt.Errorf("the reference declares a sample rate of %d Hz, outside the supported [%d,%d] range",
 			sampleRate, minReferenceSampleRate, maxReferenceSampleRate)
 	}
 
-	return samples, sampleRate, nil
+	return reference, nil
 }
 
 // readPresetPart decodes an optional starting preset, falling back to the
@@ -646,22 +693,45 @@ func readMayflyTuningPart(request *http.Request) (*optimizer.MayflyTuning, error
 	return optimizer.DecodeMayflyTuning(data, "the uploaded mayfly tuning")
 }
 
+// startingPreset is the preset a fit starts from and where its modes came
+// from: modes is how many were seeded from the reference's partials, zero
+// when the uploaded preset's own were kept.
+type startingPreset struct {
+	preset *preset.Preset
+	modes  int
+}
+
 // buildObjective validates the request against the reference and assembles the
-// objective, returning it with the encoded starting point.
+// objective, returning it with the encoded starting point and the preset that
+// point encodes.
 func buildObjective(
 	settings fitRequest,
 	reference []float32,
 	referenceRate int,
 	template *preset.Preset,
 	bounds *optimizer.ParamBounds,
-) (*optimizer.ObjectiveFunction, []float64, error) {
+) (*optimizer.ObjectiveFunction, []float64, startingPreset, error) {
 	metric, err := optimizer.ParseMetric(settings.Metric)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, startingPreset{}, err
 	}
+
+	// The same sequence the fit command runs: measure the reference once,
+	// seed the starting modes from it, and draw the frequency box from its
+	// fundamental unless the client sent a box of its own.
+	measurement := optimizer.MeasureReference(reference, referenceRate)
+
+	template, seeded, err := optimizer.SeedPreset(template, measurement, settings.Note, settings.Modes)
+	if err != nil {
+		return nil, nil, startingPreset{}, err
+	}
+
+	starting := startingPreset{preset: template, modes: seeded}
 
 	config := optimizer.DefaultObjectiveConfig(metric)
 	config.Alignment = optimizer.AlignNone
+	config.Analysis = measurement
+	config.Bounds.Frequency = optimizer.FrequencyBoundsFor(measurement, referenceRate, template.Note, settings.Note)
 
 	if bounds != nil {
 		config.Bounds = *bounds
@@ -689,12 +759,12 @@ func buildObjective(
 		reference, template, referenceRate, settings.Note, settings.Velocity, config,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, startingPreset{}, err
 	}
 
 	encoded, err := objective.Codec().EncodeParams(&template.Parameters)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, startingPreset{}, err
 	}
 
 	// The default bounds are widened to contain the template, so the starting
@@ -704,10 +774,10 @@ func buildObjective(
 	// box, and the backend must not be handed an infeasible starting point.
 	clamped, err := objective.Codec().EncodedBounds().Clamp(encoded)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, startingPreset{}, err
 	}
 
-	return objective, clamped, nil
+	return objective, clamped, starting, nil
 }
 
 // selectOptimizer maps the request's backend name onto an implementation.

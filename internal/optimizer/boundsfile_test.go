@@ -18,12 +18,12 @@ func TestDecodeParamBounds(t *testing.T) {
 	}{
 		{
 			name:    "narrows only the given dimensions",
-			content: `{"base_frequency": [430.0, 450.0], "decay_ms": [50.0, 400.0]}`,
+			content: `{"frequency": [430.0, 4500.0], "decay_ms": [50.0, 400.0]}`,
 			check: func(t *testing.T, bounds optimizer.ParamBounds) {
 				t.Helper()
 
-				if bounds.BaseFrequency != (optimizer.Range{Min: 430, Max: 450}) {
-					t.Fatalf("unexpected base frequency bound: %#v", bounds.BaseFrequency)
+				if bounds.Frequency != (optimizer.Range{Min: 430, Max: 4500}) {
+					t.Fatalf("unexpected frequency bound: %#v", bounds.Frequency)
 				}
 
 				if bounds.DecayMs != (optimizer.Range{Min: 50, Max: 400}) {
@@ -37,8 +37,8 @@ func TestDecodeParamBounds(t *testing.T) {
 		},
 		{
 			name: "accepts every key",
-			content: `{"input_mix":[0,1],"filter_freq":[100,9000],"base_frequency":[400,500],` +
-				`"amplitude":[-1,1],"frequency_mult":[0.9,4],"decay_ms":[10,100],"harmonic_gain":[0,1]}`,
+			content: `{"input_mix":[0,1],"filter_freq":[100,9000],` +
+				`"amplitude":[-1,1],"frequency":[400,5000],"decay_ms":[10,100],"harmonic_gain":[0,1]}`,
 			check: func(t *testing.T, bounds optimizer.ParamBounds) {
 				t.Helper()
 
@@ -51,6 +51,16 @@ func TestDecodeParamBounds(t *testing.T) {
 			name:    "rejects inverted range",
 			content: `{"decay_ms": [400.0, 50.0]}`,
 			wantErr: "must be below max",
+		},
+		{
+			name:    "refuses the retired base_frequency with a reason",
+			content: `{"base_frequency": [430.0, 450.0]}`,
+			wantErr: "base_frequency is not searched any more",
+		},
+		{
+			name:    "refuses the retired frequency_mult with its replacement",
+			content: `{"frequency_mult": [0.5, 10.0]}`,
+			wantErr: "frequency_mult was replaced by frequency",
 		},
 		{
 			name:    "rejects empty range",
@@ -142,13 +152,12 @@ func TestBoundsKeysMatchTheDocument(t *testing.T) {
 	// per key because they now have to sit inside the model's domain, and no
 	// single pair fits both input_mix and filter_freq.
 	ranges := map[string]string{
-		"input_mix":      "[0.5, 1.5]",
-		"filter_freq":    "[500.0, 8000.0]",
-		"base_frequency": "[400.0, 500.0]",
-		"amplitude":      "[-1.0, 1.0]",
-		"frequency_mult": "[0.5, 10.0]",
-		"decay_ms":       "[50.0, 400.0]",
-		"harmonic_gain":  "[0.0, 1.0]",
+		"input_mix":     "[0.5, 1.5]",
+		"filter_freq":   "[500.0, 8000.0]",
+		"amplitude":     "[-1.0, 1.0]",
+		"frequency":     "[400.0, 12000.0]",
+		"decay_ms":      "[50.0, 400.0]",
+		"harmonic_gain": "[0.0, 1.0]",
 	}
 
 	for _, key := range optimizer.BoundsKeys {

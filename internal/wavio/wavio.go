@@ -107,8 +107,37 @@ func LoadMono(path string) ([]float32, int, error) {
 // down. The fitting objective compares one rendered voice against the
 // reference, and a stereo recording of a struck bar carries the same event in
 // both channels with a room delay between them -- summing them comb-filters
-// exactly the partials the fit is trying to place.
+// exactly the partials the fit is trying to place. A caller that wants every
+// channel, or a different reduction, reads them through DecodeChannels.
 func DecodeMono(reader io.ReadSeeker, source string) ([]float32, int, error) {
+	channels, sampleRate, err := DecodeChannels(reader, source)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return channels[0], sampleRate, nil
+}
+
+// LoadChannels reads a WAV file from disk and returns every channel it holds,
+// deinterleaved, together with the sample rate the file declares.
+func LoadChannels(path string) ([][]float32, int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, fmt.Errorf("open wav %q: %w", path, err)
+	}
+
+	defer func() {
+		_ = file.Close()
+	}()
+
+	return DecodeChannels(file, path)
+}
+
+// DecodeChannels decodes a WAV stream and returns each of its channels as its
+// own float32 slice, in file order, plus the declared sample rate. The slices
+// are equal in length. Sample scaling and the refusal of ambiguous formats are
+// exactly DecodeMono's: this is the function DecodeMono reads through.
+func DecodeChannels(reader io.ReadSeeker, source string) ([][]float32, int, error) {
 	decoder := wav.NewDecoder(reader)
 	if !decoder.IsValidFile() {
 		return nil, 0, fmt.Errorf("%s: %w", source, ErrInvalidWAV)
@@ -135,25 +164,34 @@ func DecodeMono(reader io.ReadSeeker, source string) ([]float32, int, error) {
 		return nil, 0, err
 	}
 
-	channels := intBuffer.Format.NumChannels
-	if channels <= 0 {
-		channels = 1
+	channelCount := intBuffer.Format.NumChannels
+	if channelCount <= 0 {
+		channelCount = 1
 	}
 
-	samples := make([]float32, len(intBuffer.Data)/channels)
-	for i := range samples {
-		samples[i] = convert(intBuffer.Data[i*channels])
+	frames := len(intBuffer.Data) / channelCount
+	channels := make([][]float32, channelCount)
+
+	for channel := range channels {
+		samples := make([]float32, frames)
+		for i := range samples {
+			samples[i] = convert(intBuffer.Data[i*channelCount+channel])
+		}
+
+		channels[channel] = samples
 	}
 
 	// Only the float path can produce a non-finite sample, so only it pays for
 	// the scan.
 	if decoder.WavAudioFormat == wavFormatIEEEFloat {
-		if err := rejectNonFinite(samples, source); err != nil {
-			return nil, 0, err
+		for _, samples := range channels {
+			if err := rejectNonFinite(samples, source); err != nil {
+				return nil, 0, err
+			}
 		}
 	}
 
-	return samples, intBuffer.Format.SampleRate, nil
+	return channels, intBuffer.Format.SampleRate, nil
 }
 
 // rejectNonFinite fails a decode that produced a NaN or an infinity.

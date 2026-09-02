@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cwbudde/algo-glockenspiel/internal/analysis"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
+	"github.com/cwbudde/algo-glockenspiel/model"
 )
 
 // parseFitRequest folds the multipart form's scalar fields onto the defaults
@@ -40,6 +42,10 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 	}
 
 	if settings.ReportEvery, err = formInt(request, "reportEvery", settings.ReportEvery, 0, maxFitIterations); err != nil {
+		return settings, err
+	}
+
+	if settings.Modes, err = formInt(request, "modes", settings.Modes, optimizer.KeepTemplateModes, model.MaxModes); err != nil {
 		return settings, err
 	}
 
@@ -99,6 +105,21 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 	if settings.NormalizeGain, err = formBool(request, "normalizeGain", settings.NormalizeGain); err != nil {
 		return settings, err
 	}
+
+	if settings.Downmix, err = formDownmix(request, settings.Downmix); err != nil {
+		return settings, err
+	}
+
+	window, err := formDuration(request, "window", time.Duration(settings.WindowMS)*time.Millisecond)
+	if err != nil {
+		return settings, err
+	}
+
+	if window < 0 || window > maxReferenceWindow {
+		return settings, fmt.Errorf("window must be between 0 and %s, got %s", maxReferenceWindow, window)
+	}
+
+	settings.WindowMS = window.Milliseconds()
 
 	if value := request.FormValue("metric"); value != "" {
 		settings.Metric = value
@@ -262,6 +283,27 @@ func formBool(request *http.Request, name string, fallback bool) (bool, error) {
 // formDuration reads an optional Go duration, and -- exactly as the fit
 // command's --time-budget flag does -- reads a bare number as seconds, so the
 // two front ends accept the same spellings.
+// maxReferenceWindow bounds the fixed cut a request may ask for. The loader
+// clamps the window to the file, so the bound only keeps the value finite
+// and sane; an hour is far past what the upload limit can hold.
+const maxReferenceWindow = time.Hour
+
+// formDownmix reads the reference downmix policy, which the analysis package
+// validates because it owns the vocabulary.
+func formDownmix(request *http.Request, fallback string) (string, error) {
+	raw := strings.TrimSpace(request.FormValue("downmix"))
+	if raw == "" {
+		return fallback, nil
+	}
+
+	downmix, err := analysis.ParseDownmix(raw)
+	if err != nil {
+		return fallback, err
+	}
+
+	return string(downmix), nil
+}
+
 func formDuration(request *http.Request, name string, fallback time.Duration) (time.Duration, error) {
 	raw := strings.TrimSpace(request.FormValue(name))
 	if raw == "" {

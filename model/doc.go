@@ -38,8 +38,8 @@
 //
 // [DecayMsValidationMax] is what a BarParams must clear at the moment it
 // reaches NewBar, after [TransposeToNote] has divided every decay by the
-// transposition ratio. [DecayMsSearchMax] is narrower and unrelated to
-// validation: it bounds the optimizer's search box and the plugin's decay
+// transposition ratio. [DecayMsSearchMin] and [DecayMsSearchMax] are unrelated
+// to validation: they bound the optimizer's search box and the plugin's decay
 // knobs, nothing more.
 //
 // The authoring ceiling is not a constant at all. A preset is written at
@@ -50,8 +50,9 @@
 // strictly stronger than ValidateBarParams. Use those two for anything that
 // produces or accepts a preset file.
 //
-// Note the direction of that: above note 75 the authoring ceiling falls below
-// DecayMsSearchMax -- 525 ms at note 75, 496 ms at note 76 -- so a fit run at a
-// high base note can return a preset ValidateAuthoredBarParams refuses. Treating DecayMsSearchMax as an authoring
-// bound is what silenced the bottom 17 keys of the keyboard once already.
+// Note the direction of that: the authoring ceiling falls below
+// DecayMsSearchMax everywhere above note 51, so the optimizer narrows its
+// decay box to AuthoredDecayMsMax for the note it fits at rather than trusting
+// the constant. Treating DecayMsSearchMax as an authoring bound is what
+// silenced the bottom 17 keys of the keyboard once already.
 package model

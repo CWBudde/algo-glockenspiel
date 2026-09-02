@@ -47,7 +47,27 @@ type MayflyOptimizer struct {
 	// inside the library and discarded here, so the run could not be repeated
 	// and a resumed run had no stream to continue.
 	OnResolve func(ResolvedMayfly)
+
+	// SeedFraction and SeedSigma shape a warm round's initial population: the
+	// incumbent itself, then this fraction of each population drawn around it
+	// with a Gaussian of this width in unit-cube units, and the rest uniform
+	// over the box. Zero takes the defaults, defaultSeedFraction and
+	// defaultSeedSigma. This is CircleFit's continuation profile: a single
+	// seeded individual was one in ten of the swarm, and its neighbourhood --
+	// which is where a seed from the analysis says the answer is -- went
+	// unsearched until crossover happened to land there.
+	SeedFraction float64
+	SeedSigma    float64
 }
+
+// The continuation profile's defaults. Half the population around the
+// incumbent keeps the other half free to find a different basin; a width of
+// 0.05 in the unit cube is a few percent of a decade of frequency, which is
+// wider than the analysis's error and narrower than the gap between partials.
+const (
+	defaultSeedFraction = 0.5
+	defaultSeedSigma    = 0.05
+)
 
 // ResolvedMayfly is what a run settled on once every "choose one for me" input
 // has been resolved. The CLI prints it and records the seed in the checkpoint,
@@ -60,14 +80,6 @@ type ResolvedMayfly struct {
 	Preset string
 	// Seed is the value the run's generator was constructed from, never zero.
 	Seed int64
-	// Recommendation is why an automatically chosen dialect was chosen, and is
-	// empty unless the variant was "auto".
-	Recommendation string
-	// Confidence is how sure the selector was, in [0,1].
-	Confidence float64
-	// ClassifyEvaluations is what measuring the landscape cost. Those
-	// evaluations are included in the run's total.
-	ClassifyEvaluations int
 	// Rounds is how many consecutive searches the schedule runs, warm and cold
 	// together. One is a single search, which is the default.
 	Rounds int
@@ -126,25 +138,8 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 		defer cancel()
 	}
 
-	// The tracker is created before the configuration because choosing a
-	// dialect automatically evaluates the objective, and those evaluations have
-	// to be counted like any other.
 	tracker := newMayflyTracker(objective, bounds, start, opts)
 	tracker.seedBaseline(initial)
-
-	var characteristics *mayfly.ProblemCharacteristics
-
-	if resolved.Variant == mayflyAutoVariant {
-		measured, recommendation, spent := classifyMayfly(
-			runCtx, tracker, len(initial), o.classifyEvaluations(), opts.TimeBudget,
-		)
-
-		characteristics = &measured
-		resolved.Variant = strings.ToLower(recommendation.Variant.Name())
-		resolved.Recommendation = recommendation.Reasoning
-		resolved.Confidence = recommendation.Confidence
-		resolved.ClassifyEvaluations = spent
-	}
 
 	// The schedule splits the caller's total budget into consecutive searches.
 	// The config is validated against the shortest of them, because that is the
@@ -152,7 +147,7 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 	schedule := scheduleFor(o.Tuning)
 	budgets := schedule.plan(maxInt(1, opts.MaxIterations))
 
-	cfg, err := o.buildConfig(resolved, len(initial), schedule.shortestRound(maxInt(1, opts.MaxIterations)), characteristics)
+	cfg, err := o.buildConfig(resolved, len(initial), schedule.shortestRound(maxInt(1, opts.MaxIterations)))
 	if err != nil {
 		return nil, err
 	}
@@ -184,6 +179,21 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 		// rather than how long the whole run is.
 		cfg.MaxIterations = budget
 
+		// Each round also needs its own random stream. Mayfly reads
+		// Config.Seed at the start of every OptimizeContext call and builds a
+		// generator from it there, so passing one seed to every round would
+		// replay a single search: two cold restarts would draw the same
+		// uniform population and walk the same trajectory, which is the exact
+		// independence a restart exists to provide.
+		//
+		// Round zero keeps the resolved seed, so the seed that is reported and
+		// checkpointed still reproduces the run from its beginning. Later
+		// rounds count downwards, which keeps them clear of the warm-population
+		// streams below: those count upwards from resolved.Seed + 1, and two
+		// generators built from one seed produce one sequence.
+		roundSeed := resolved.Seed - int64(round)
+		cfg.Seed = &roundSeed
+
 		options := []mayfly.RunOption{mayfly.WithProgressObserver(tracker.observe)}
 
 		// A cold round starts from a uniformly random population on purpose --
@@ -201,8 +211,15 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 				}
 			}
 
+			// The two populations get their own draws so the swarm does not
+			// start as pairs of identical mayflies. The stream is derived from
+			// the run's seed rather than taken from cfg.Rand, which mayfly
+			// owns from here on.
+			rng := rand.New(rand.NewSource(resolved.Seed + int64(round) + 1))
+			fraction, sigma := o.seedProfile()
 			options = append(options, mayfly.WithInitialPopulation(
-				[][]float64{warmSeed}, [][]float64{warmSeed},
+				seedPopulation(warmSeed, cfg.NPop, fraction, sigma, rng),
+				seedPopulation(warmSeed, cfg.NPopF, fraction, sigma, rng),
 			))
 		}
 
@@ -234,22 +251,58 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 // every default fit.
 const defaultMayflyVariant = "desma"
 
-// classifyEvaluations is the cap the tuning document set on automatic dialect
-// selection, or zero to use the default.
-func (o *MayflyOptimizer) classifyEvaluations() int {
-	if o.Tuning == nil || o.Tuning.Schedule == nil || o.Tuning.Schedule.ClassifyEvals == nil {
-		return 0
-	}
-
-	return *o.Tuning.Schedule.ClassifyEvals
-}
-
 func (o *MayflyOptimizer) population() int {
 	if o.Population >= 2 {
 		return o.Population
 	}
 
 	return 10
+}
+
+// seedProfile returns the continuation profile, defaults filled in.
+func (o *MayflyOptimizer) seedProfile() (fraction, sigma float64) {
+	fraction, sigma = o.SeedFraction, o.SeedSigma
+
+	if fraction <= 0 {
+		fraction = defaultSeedFraction
+	}
+
+	if sigma <= 0 {
+		sigma = defaultSeedSigma
+	}
+
+	return math.Min(1, fraction), sigma
+}
+
+// seedPopulation builds the rows of a warm round's initial population in the
+// unit cube: the incumbent first, then enough Gaussian draws around it to
+// fill fraction of a population of size, each clamped into the cube. The
+// rows mayfly is not given it draws uniformly itself, so the rest of the
+// population is left to it.
+func seedPopulation(incumbent []float64, size int, fraction, sigma float64, rng *rand.Rand) [][]float64 {
+	rows := int(math.Ceil(fraction * float64(size)))
+	if rows < 1 {
+		rows = 1
+	}
+
+	if rows > size {
+		rows = size
+	}
+
+	population := make([][]float64, rows)
+
+	population[0] = append([]float64(nil), incumbent...)
+
+	for i := 1; i < rows; i++ {
+		row := make([]float64, len(incumbent))
+		for j, value := range incumbent {
+			row[j] = math.Max(0, math.Min(1, value+sigma*rng.NormFloat64()))
+		}
+
+		population[i] = row
+	}
+
+	return population
 }
 
 // resolveSeed turns a zero seed into a concrete one.
@@ -308,14 +361,18 @@ func (o *MayflyOptimizer) resolve() (ResolvedMayfly, error) {
 func (o *MayflyOptimizer) buildConfig(
 	resolved ResolvedMayfly,
 	dims, iters int,
-	characteristics *mayfly.ProblemCharacteristics,
 ) (*mayfly.Config, error) {
-	cfg, err := newMayflyConfig(resolved, o.population(), dims, iters, o.Tuning, characteristics)
+	cfg, err := newMayflyConfig(resolved, o.population(), dims, iters, o.Tuning)
 	if err != nil {
 		return nil, err
 	}
 
-	cfg.Rand = rand.New(rand.NewSource(resolved.Seed))
+	// Config.Seed rather than Config.Rand: the two are mutually exclusive from
+	// v0.7.0 on, and a seed is what Result.Seed can honestly report back. A
+	// scheduled run overwrites this per round, which is why the pointer is to a
+	// copy rather than into the caller's ResolvedMayfly.
+	seed := resolved.Seed
+	cfg.Seed = &seed
 
 	workers := o.MaxWorkers
 	if workers <= 0 {
@@ -353,14 +410,7 @@ func (o *MayflyOptimizer) Validate(maxIterations int) error {
 	// convergence window has to fit inside a round, not inside the whole
 	// budget, so checking against the total would accept a window that can
 	// never fire.
-	// A request for "auto" is accepted without measuring anything: the dialect
-	// is chosen from the objective, which does not exist yet. Every setting
-	// that is not the dialect is still checked, against the default dialect.
-	if resolved.Variant == mayflyAutoVariant {
-		resolved.Variant = defaultMayflyVariant
-	}
-
-	_, err = o.buildConfig(resolved, 1, scheduleFor(o.Tuning).shortestRound(maxInt(1, maxIterations)), nil)
+	_, err = o.buildConfig(resolved, 1, scheduleFor(o.Tuning).shortestRound(maxInt(1, maxIterations)))
 
 	return err
 }
@@ -403,19 +453,10 @@ func newMayflyConfig(
 	resolved ResolvedMayfly,
 	pop, dims, iters int,
 	tuning *MayflyTuning,
-	characteristics *mayfly.ProblemCharacteristics,
 ) (*mayfly.Config, error) {
 	cfg, variant, err := baseMayflyConfig(resolved)
 	if err != nil {
 		return nil, err
-	}
-
-	// Auto-tuning runs here, between the base and the problem shape, so its
-	// per-dialect adjustments land while its population and iteration
-	// adjustments are overwritten by the run's own budget below. Those two are
-	// not the library's to choose: the caller asked for a budget.
-	if characteristics != nil {
-		mayfly.AutoTuneConfig(cfg, *characteristics)
 	}
 
 	cfg.ProblemSize = dims
@@ -493,6 +534,8 @@ func variantNameForConfig(cfg *mayfly.Config) string {
 		return "eobbma"
 	case cfg.UseGSASMA:
 		return "gsasma"
+	case cfg.UseHMMA:
+		return "hmma"
 	case cfg.UseMPMA:
 		return "mpma"
 	case cfg.UseAOBLMOA:
@@ -622,10 +665,29 @@ func (t *mayflyTracker) seedBaseline(initial []float64) {
 	t.bestCost = cost
 }
 
+// invalidCost is what a non-finite objective value is reported to mayfly as.
+//
+// The objective returns +Inf for a vector that fails to decode or validate, and
+// from v0.7.0 on mayfly aborts a search whose entire initial population is
+// non-finite with ErrNoFiniteObjectiveValue. A single non-finite candidate in
+// an otherwise finite population is harmless -- the library scores it
+// math.MaxFloat64 and it simply never wins -- but a cold restart draws a fresh
+// uniform population, and one that lands wholly inside an invalid region would
+// fail the whole run and discard everything the earlier rounds found.
+//
+// A large finite penalty keeps that round running and losing. The value has to
+// sit strictly below math.MaxFloat64, because that exact value is the sentinel
+// mayfly.go:395 tests for when it decides an initial population produced
+// nothing usable; a quarter of it is far above any cost this objective can
+// return, so a penalised candidate still ranks last against every real one. The
+// best-so-far bookkeeping above compares the raw cost rather than this one, so
+// such a candidate can never be reported as the answer either.
+const invalidCost = math.MaxFloat64 / 4
+
 func (t *mayflyTracker) evaluate(pos []float64) float64 {
 	actual, err := t.bounds.Denormalize(pos)
 	if err != nil {
-		return math.Inf(1)
+		return invalidCost
 	}
 
 	cost := t.objective(actual)
@@ -641,7 +703,7 @@ func (t *mayflyTracker) evaluate(pos []float64) float64 {
 	t.mu.Unlock()
 
 	if !isFinite(cost) {
-		return math.Inf(1)
+		return invalidCost
 	}
 
 	return cost

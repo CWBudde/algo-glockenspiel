@@ -25,6 +25,7 @@ function fitSnapshot(overrides: Partial<FitSnapshot> = {}): FitSnapshot {
     metric: "rms",
     startedAt: "2026-08-22T12:00:00Z",
     hasPreset: false,
+    seededModes: 0,
     ...overrides,
   };
 }

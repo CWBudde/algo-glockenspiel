@@ -50,6 +50,14 @@ type Checkpoint struct {
 type OptimizerState struct {
 	Kind   string               `json:"kind"`
 	Mayfly *MayflyCheckpointEnv `json:"mayfly,omitempty"`
+
+	// Modes is how the run's modes were chosen: the number seeded from the
+	// reference's partials, or KeepTemplateModes for the template's own. A
+	// resumed run must make the same choice or its codec will not fit the
+	// vector. Absent -- zero -- in a checkpoint written before seeding
+	// existed, which is read as the template's modes, because that is what
+	// every such run used.
+	Modes int `json:"modes,omitempty"`
 }
 
 // MayflyCheckpointEnv stores the Mayfly settings needed to resume consistently.

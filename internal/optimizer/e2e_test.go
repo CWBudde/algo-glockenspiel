@@ -154,13 +154,12 @@ func addDeterministicNoise(samples []float32, amplitude float64) []float32 {
 
 func narrowBoundsAroundTarget(target *model.BarParams) ParamBounds {
 	bounds := ParamBounds{
-		InputMix:      Range{Min: math.Max(model.InputMixMin, target.InputMix-0.2), Max: math.Min(model.InputMixMax, target.InputMix+0.2)},
-		FilterFreq:    Range{Min: math.Max(model.FilterFrequencyMinHz, target.FilterFrequency*0.75), Max: math.Min(model.FilterFrequencyMaxHz, target.FilterFrequency*1.25)},
-		BaseFrequency: Range{Min: target.BaseFrequency, Max: target.BaseFrequency},
-		Amplitude:     Range{Min: -0.1, Max: 1.1},
-		FrequencyMult: Range{Min: 0.8, Max: 1.4},
-		DecayMs:       Range{Min: 60, Max: 220},
-		HarmonicGain:  Range{Min: model.HarmonicGainMin, Max: model.HarmonicGainMax},
+		InputMix:     Range{Min: math.Max(model.InputMixMin, target.InputMix-0.2), Max: math.Min(model.InputMixMax, target.InputMix+0.2)},
+		FilterFreq:   Range{Min: math.Max(model.FilterFrequencyMinHz, target.FilterFrequency*0.75), Max: math.Min(model.FilterFrequencyMaxHz, target.FilterFrequency*1.25)},
+		Amplitude:    Range{Min: -0.1, Max: 1.1},
+		Frequency:    Range{Min: target.BaseFrequency * 0.8, Max: target.BaseFrequency * 1.4},
+		DecayMs:      Range{Min: 60, Max: 220},
+		HarmonicGain: Range{Min: model.HarmonicGainMin, Max: model.HarmonicGainMax},
 	}
 
 	return bounds

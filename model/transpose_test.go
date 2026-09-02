@@ -66,8 +66,8 @@ func TestAuthoredCeilingRejectsWhatTheBottomKeyCannotBuild(t *testing.T) {
 
 // TestAuthoredCeilingTracksTheBaseNote is the claim the constant cannot make.
 // A single decay is legal or illegal depending only on where the preset sits,
-// so the same 500 ms mode has to be accepted low on the keyboard and refused
-// high on it.
+// so the same two-second mode has to be accepted low on the keyboard and
+// refused high on it.
 func TestAuthoredCeilingTracksTheBaseNote(t *testing.T) {
 	tests := []struct {
 		baseNote int
@@ -75,12 +75,14 @@ func TestAuthoredCeilingTracksTheBaseNote(t *testing.T) {
 		wantOK   bool
 	}{
 		{baseNote: 36, decayMs: DecayMsSearchMax, wantOK: true},
-		{baseNote: 69, decayMs: DecayMsSearchMax, wantOK: true},
+		{baseNote: 51, decayMs: DecayMsSearchMax, wantOK: true},
+		{baseNote: 52, decayMs: DecayMsSearchMax, wantOK: false},
+		{baseNote: 69, decayMs: DecayMsSearchMax, wantOK: false},
 		{baseNote: 69, decayMs: 743, wantOK: true},
 		{baseNote: 69, decayMs: 744, wantOK: false},
 		{baseNote: 69, decayMs: 1000, wantOK: false},
-		{baseNote: 75, decayMs: DecayMsSearchMax, wantOK: true},
-		{baseNote: 76, decayMs: DecayMsSearchMax, wantOK: false},
+		{baseNote: 75, decayMs: 500, wantOK: true},
+		{baseNote: 76, decayMs: 500, wantOK: false},
 		{baseNote: 100, decayMs: DecayMsSearchMax, wantOK: false},
 		{baseNote: 100, decayMs: 124, wantOK: true},
 		{baseNote: 127, decayMs: DecayMsSearchMax, wantOK: false},
@@ -181,22 +183,24 @@ func TestTransposeToNoteScalesBothDirections(t *testing.T) {
 	}
 }
 
-// TestAuthoredCeilingCrossesTheSearchBoxAtNote76 pins the numbers the package
+// TestAuthoredCeilingCrossesTheSearchBoxAtNote52 pins the numbers the package
 // overview quotes, and the direction of the relationship they illustrate.
 //
 // DecayMsSearchMax is not an authoring bound, and the clearest evidence is that
-// it is on the wrong side of the real one for the upper third of the keyboard:
-// a fit run above note 75 searches a box that reaches past what a preset at that
-// base note may legally carry, so it can return a preset
-// ValidateAuthoredBarParams refuses. A reader who takes the two for the same
-// thing gets a dead low register below the crossover and spurious rejections
-// above it, so both halves are worth failing a build over.
-func TestAuthoredCeilingCrossesTheSearchBoxAtNote76(t *testing.T) {
+// it is on the wrong side of the real one for most of the keyboard: above note
+// 51 the box reaches past what a preset at that base note may legally carry,
+// which is why the optimizer narrows its box to AuthoredDecayMsMax for the
+// note it fits at. A reader who takes the two for the same thing gets a dead
+// low register below the crossover and spurious rejections above it, so both
+// halves are worth failing a build over.
+func TestAuthoredCeilingCrossesTheSearchBoxAtNote52(t *testing.T) {
 	for _, tc := range []struct {
 		note int
 		want float64
 	}{
 		{note: KeyboardFirstNote, want: DecayMsValidationMax},
+		{note: 51, want: 2102.24},
+		{note: 52, want: 1984.25},
 		{note: 69, want: 743.25},
 		{note: 75, want: 525.56},
 		{note: 76, want: 496.06},
@@ -207,13 +211,13 @@ func TestAuthoredCeilingCrossesTheSearchBoxAtNote76(t *testing.T) {
 		}
 	}
 
-	if AuthoredDecayMsMax(75) <= DecayMsSearchMax {
-		t.Errorf("the authoring ceiling at note 75 (%.2f ms) should still exceed the search box (%g ms)",
-			AuthoredDecayMsMax(75), DecayMsSearchMax)
+	if AuthoredDecayMsMax(51) <= DecayMsSearchMax {
+		t.Errorf("the authoring ceiling at note 51 (%.2f ms) should still exceed the search box (%g ms)",
+			AuthoredDecayMsMax(51), DecayMsSearchMax)
 	}
 
-	if AuthoredDecayMsMax(76) >= DecayMsSearchMax {
-		t.Errorf("the authoring ceiling at note 76 (%.2f ms) should have fallen below the search box (%g ms)",
-			AuthoredDecayMsMax(76), DecayMsSearchMax)
+	if AuthoredDecayMsMax(52) >= DecayMsSearchMax {
+		t.Errorf("the authoring ceiling at note 52 (%.2f ms) should have fallen below the search box (%g ms)",
+			AuthoredDecayMsMax(52), DecayMsSearchMax)
 	}
 }

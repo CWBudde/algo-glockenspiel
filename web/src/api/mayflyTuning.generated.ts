@@ -305,15 +305,6 @@ export const MAYFLY_TUNING_FIELDS: readonly MayflyTuningField[] = [
     help: "Shape of the temperature decay.",
   },
   {
-    key: "cauchy_mutation_rate",
-    label: "Cauchy mutation rate",
-    kind: "float",
-    variant: "gsasma",
-    min: 0,
-    max: 1,
-    help: "Share of mutations drawn from a Cauchy rather than a Gaussian distribution.",
-  },
-  {
     key: "golden_factor",
     label: "Golden factor",
     kind: "float",
@@ -321,11 +312,20 @@ export const MAYFLY_TUNING_FIELDS: readonly MayflyTuningField[] = [
     help: "Weight of the golden-sine step.",
   },
   {
+    key: "cauchy_mutation_rate",
+    label: "Cauchy mutation rate",
+    kind: "float",
+    variant: "hmma",
+    min: 0,
+    max: 1,
+    help: "Share of mutations drawn from a Cauchy rather than a Gaussian distribution.",
+  },
+  {
     key: "apply_obl_to_global_best",
     label: "OBL on global best",
     kind: "bool",
-    variant: "gsasma",
-    help: "Apply opposition-based learning to the global best each iteration.",
+    variant: "hmma",
+    help: "Apply opposition-based learning to the global best every tenth iteration.",
   },
   {
     key: "median_weight",
@@ -432,14 +432,6 @@ export const MAYFLY_TUNING_FIELDS: readonly MayflyTuningField[] = [
     min: 0,
     help: "How many times the wrapper restarts from a fresh population.",
   },
-  {
-    key: "classify_evals",
-    label: "Classifier evaluations",
-    kind: "int",
-    variant: "",
-    min: 0,
-    help: "Evaluation budget the wrapper's classification stage may spend.",
-  },
 ] as const;
 
 /**
@@ -458,7 +450,6 @@ export const MAYFLY_CONVERGENCE_KEYS: readonly string[] = [
 export const MAYFLY_SCHEDULE_KEYS: readonly string[] = [
   "epochs",
   "restarts",
-  "classify_evals",
 ] as const;
 
 /** The knobs a dialect can set: the shared ones plus its own. */

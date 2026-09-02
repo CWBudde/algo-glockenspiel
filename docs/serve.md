@@ -105,17 +105,19 @@ and keeps that command's default when it is absent:
 
 | Field                                             | Default            | Notes                                                                                                                                                                                                                                                                                                                                                                                    |
 | ------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reference` (file)                                | required           | Mono or the first channel of a multi-channel file.                                                                                                                                                                                                                                                                                                                                       |
+| `reference` (file)                                | required           | Read as `fit` reads it: one channel, cut to the first strike, peak-normalised.                                                                                                                                                                                                                                                                                                           |
 | `preset` (file)                                   | built-in           | An optional starting preset, as JSON.                                                                                                                                                                                                                                                                                                                                                    |
 | `bounds` (file)                                   | default box        | Optional search bounds, as JSON. See below.                                                                                                                                                                                                                                                                                                                                              |
 | `note`, `velocity`                                | 69, 100            | MIDI, `0`–`127`.                                                                                                                                                                                                                                                                                                                                                                         |
 | `optimizer`                                       | `simple`           | `simple` or `mayfly`.                                                                                                                                                                                                                                                                                                                                                                    |
-| `metric`                                          | `rms`              | `rms`, `log` or `spectral`.                                                                                                                                                                                                                                                                                                                                                              |
+| `metric`                                          | `balanced`         | A composite profile, `balanced`, `placement` or `polish`, or a legacy term, `rms`, `log` or `spectral`.                                                                                                                                                                                                                                                                                  |
+| `downmix`, `window`                               | `first`, none      | As `--downmix` and `--window`: which channel of a multi-channel file, and a fixed cut length after the onset instead of the strike's own end. The window is a duration, at most an hour.                                                                                                                                                                                                 |
+| `modes`                                           | `0`                | As `--modes`: `0` seeds one starting mode per partial the reference's analysis lists, `N` the strongest `N`, `-1` keeps the starting preset's own modes. A seeded fit writes a v2 preset.                                                                                                                                                                                                |
 | `maxIterations`                                   | `100`              | At most 100000.                                                                                                                                                                                                                                                                                                                                                                          |
 | `timeBudget`                                      | `30s`              | A Go duration, or a bare number of seconds. At most `1h`.                                                                                                                                                                                                                                                                                                                                |
 | `reportEvery`                                     | `10`, `1` (mayfly) | How often progress is reported, and therefore streamed. Counted in the backend's own iterations, which is why the default follows it: a mayfly iteration is a whole generation, roughly fifty renders, against about one for a simple iteration, so ten would mean the first report lands after the default time budget has already run out. A value the request names is used as it is. |
 | `align`, `normalizeGain`                          | on, off            | As `--align` and `--normalize-gain`.                                                                                                                                                                                                                                                                                                                                                     |
-| `mayflyVariant`, `mayflyPopulation`, `mayflySeed` | `desma`, `10`, `1` | Only read for `--optimizer mayfly`. `mayflyVariant` also accepts `auto`.                                                                                                                                                                                                                                                                                                                 |
+| `mayflyVariant`, `mayflyPopulation`, `mayflySeed` | `desma`, `10`, `1` | Only read for `--optimizer mayfly`.                                                                                                                                                                                                                                                                                                                 |
 | `mayflyPreset`                                    | none               | A Mayfly preset name. Cannot be combined with `mayflyVariant`.                                                                                                                                                                                                                                                                                                                           |
 | `mayflyEpochs`, `mayflyRestarts`                  | `1`, `0`           | Warm and cold rounds. Each in `[1,1000]` and `[0,1000]`.                                                                                                                                                                                                                                                                                                                                 |
 | `mayflyStagnation`                                | `0`                | Stop a round after N iterations without progress. Must be narrower than a round.                                                                                                                                                                                                                                                                                                         |
@@ -137,10 +139,18 @@ A malformed document is a `400` on the start request. It never claims the single
 fit slot, so the next well-formed request still starts rather than getting a
 `409`.
 
-Progress snapshots carry `mayflyVariant`, `mayflySeed` and, when `auto` was
-requested, `mayflyRecommendation`. Without them a client that asked for `auto`
-could never learn which dialect actually ran. `mayflySeed` is a **string**,
-because a JavaScript `Number` loses integers past 2^53.
+Every snapshot after the first report carries `metrics`, the breakdown of the best point so
+far: each term of the composite objective as a raw number, the gain applied, the alignment lag,
+and how many of the reference's partials the candidate's modes matched, whatever metric the run
+scores by. A term the reference was too short to measure is `null`. Every snapshot carries
+`seededModes`, how many of the starting modes came from the reference's partials, and a
+terminal one carries `pinned`: the dimensions of the result that sit on a bound of the search
+box, each with its name in the preset's own field names, its value and the bound it sits on.
+
+Progress snapshots carry `mayflyVariant` and `mayflySeed`. Without them a client
+that named a preset, which selects a dialect of its own, could never learn which
+dialect actually ran. `mayflySeed` is a **string**, because a JavaScript
+`Number` loses integers past 2^53.
 
 ### Bounds
 
@@ -157,21 +167,26 @@ quietly.
 {
   "input_mix": [0.0, 2.0],
   "filter_freq": [500.0, 8000.0],
-  "base_frequency": [400.0, 500.0],
   "amplitude": [-1.0, 1.0],
-  "frequency_mult": [0.5, 10.0],
+  "frequency": [400.0, 12000.0],
   "decay_ms": [50.0, 400.0],
   "harmonic_gain": [0.0, 1.0]
 }
 ```
+
+`frequency` is a mode's frequency in hertz as the preset writes it. Without the
+part the service narrows it to half the reference's fundamental up to 0.45 of
+the sample rate, and `decay_ms` to what a preset at the starting preset's note
+may carry; a document replaces the whole box. `base_frequency` and
+`frequency_mult`, the keys from before Phase 8.3, are refused with a reason.
 
 Supplied bounds are a **hard constraint**, exactly as on the command line. The
 default box is widened where the starting preset falls outside it; a box the
 client asked for is not, or the fitted preset could violate the very limits that
 were requested. The starting point is clamped into the box instead. Malformed
 JSON, trailing content after the object, an unknown key, an inverted or empty
-range, a range a log-encoded dimension cannot take (`filter_freq`,
-`base_frequency`, `frequency_mult` and `decay_ms` must stay above zero) and a
+range, a range a log-encoded dimension cannot take (`filter_freq`, `frequency`
+and `decay_ms` must stay above zero) and a
 range that leaves the model's own domain (`input_mix` beyond `[0, 2]`, say) are
 each a `400` before a job slot is claimed.
 

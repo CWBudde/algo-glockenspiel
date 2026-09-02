@@ -58,10 +58,11 @@ bench-arm64 *ARGS:
 # before scoring. Two runs an evaluation apart in objective value can differ entirely
 # on the last two.
 #
-# The fit drifts base_frequency, which is harmless and worth normalising back to 440
-# by hand: it never reaches the audio, only the optimizer's frequency encoding, where
-# it is the anchor mode frequencies are expressed against. That is pinned by
+# base_frequency is not searched since Phase 8.3: the fit writes the starting
+# preset's 440 through, because the value never reaches the audio -- pinned by
 # TestBaseFrequencyDoesNotReachTheAudio in internal/synth/transposition_test.go.
+# The modes come from the reference's partials rather than the starting preset,
+# so the result is a v2 preset with as many modes as the analysis lists.
 
 # Re-fit the shipped default preset against its reference recording
 refit-default *ARGS:
@@ -125,3 +126,31 @@ clean:
 fix:
     just lint-fix
     just fmt
+
+# Measure both shipped references: cut, level, partials (see docs/training.md)
+analyze:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for reference in legacy_synth_a4 glockenspiel_c5; do
+        go run ./cmd/glockenspiel analyze --reference testdata/reference/$reference.wav
+        echo
+    done
+
+# Score both shipped presets against both references through the fit objective (see docs/training.md)
+baseline:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    while read -r preset reference note; do
+        echo "== assets/presets/$preset.json vs testdata/reference/$reference.wav at note $note"
+        go run ./cmd/glockenspiel distance \
+            --reference testdata/reference/$reference.wav \
+            --preset assets/presets/$preset.json \
+            --sample-rate 44100 --note $note --velocity 100
+        echo
+    done <<'ROWS'
+    default legacy_synth_a4 69
+    recorded-bar legacy_synth_a4 69
+    default glockenspiel_c5 69
+    recorded-bar glockenspiel_c5 69
+    recorded-bar glockenspiel_c5 60
+    ROWS

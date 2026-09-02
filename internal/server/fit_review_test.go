@@ -83,6 +83,9 @@ func TestTheDefaultRenderDurationHonoursTheCap(t *testing.T) {
 	// test about the render length.
 	fields["align"] = "false"
 	fields["maxIterations"] = "1"
+	// The synthetic strike decays into the floor after a few seconds, where
+	// the loader would cut it; a fixed window keeps the whole file.
+	fields["window"] = "75s"
 
 	reference := referenceWAV(t, referenceSeconds, testSampleRate)
 
@@ -448,9 +451,12 @@ func TestStartRejectsBadMayflyTuning(t *testing.T) {
 // mayflyNc carries three distinct requests, which is why it is a pointer over
 // an int that already has a sentinel. Absent keeps whatever the variant factory
 // chose, -1 is mayfly.NCAuto and derives the count from the ratio, and a
-// written 0 disables crossover entirely -- which mayfly refuses while mutants
-// are drawn from the offspring, and which is therefore visible from outside as
-// the one of the three that is not accepted.
+// written 0 disables crossover entirely.
+//
+// All three are accepted from mayfly v0.7.0 on: mutation draws its candidates
+// from the incumbent populations rather than from the offspring, so a run
+// without crossover still has a mutation stage. Under v0.6.0 a written zero was
+// refused, and this case asserted the rejection.
 func TestMayflyOffspringCountDistinguishesAbsentFromZero(t *testing.T) {
 	reference := referenceWAV(t, testReferenceLength, testSampleRate)
 
@@ -462,7 +468,7 @@ func TestMayflyOffspringCountDistinguishesAbsentFromZero(t *testing.T) {
 	}{
 		{name: "absent", present: false, wantStatus: http.StatusAccepted},
 		{name: "NCAuto", value: "-1", present: true, wantStatus: http.StatusAccepted},
-		{name: "written zero", value: "0", present: true, wantStatus: http.StatusBadRequest},
+		{name: "written zero", value: "0", present: true, wantStatus: http.StatusAccepted},
 	}
 
 	for _, testCase := range tests {
@@ -489,8 +495,8 @@ func TestMayflyOffspringCountDistinguishesAbsentFromZero(t *testing.T) {
 }
 
 // The seed and the dialect a run settled on have to come back, or a run cannot
-// be repeated: a zero seed is resolved inside the optimizer, and "auto" chooses
-// a dialect from the objective. The seed is a string because it is an int64 and
+// be repeated: a zero seed is resolved inside the optimizer, and a preset picks
+// a dialect without naming it. The seed is a string because it is an int64 and
 // this is JSON.
 func TestSnapshotEchoesTheResolvedMayflySettings(t *testing.T) {
 	handler := newFitServer(t).Handler()
@@ -517,37 +523,5 @@ func TestSnapshotEchoesTheResolvedMayflySettings(t *testing.T) {
 	// Number cannot hold, which is why the field is a string.
 	if final.MayflySeed != "9007199254740993" {
 		t.Fatalf("mayflySeed = %q, want the seed that was sent back verbatim", final.MayflySeed)
-	}
-
-	if final.MayflyRecommendation != "" {
-		t.Fatalf("mayflyRecommendation = %q, want empty: the dialect was named, not chosen",
-			final.MayflyRecommendation)
-	}
-}
-
-// "auto" measures the landscape and picks a dialect. Without the echo the
-// client that asked for it could never learn what ran.
-func TestSnapshotEchoesTheAutomaticallyChosenVariant(t *testing.T) {
-	handler := newFitServer(t).Handler()
-
-	fields := shortMayflyFit()
-	fields["mayflyVariant"] = "auto"
-
-	response := startFitWithReference(t, handler, referenceWAV(t, testReferenceLength, testSampleRate), fields)
-	if response.Code != http.StatusAccepted {
-		t.Fatalf("start = %d, want 202: %s", response.Code, response.Body.String())
-	}
-
-	final := waitForTerminalState(t, handler, 120*time.Second)
-	if final.State != "succeeded" {
-		t.Fatalf("state = %q (error %q), want succeeded", final.State, final.Error)
-	}
-
-	if final.MayflyVariant == "" || final.MayflyVariant == "auto" {
-		t.Fatalf("mayflyVariant = %q, want the dialect that was chosen", final.MayflyVariant)
-	}
-
-	if final.MayflyRecommendation == "" {
-		t.Fatal("an automatically chosen dialect comes back without the reason it was chosen")
 	}
 }

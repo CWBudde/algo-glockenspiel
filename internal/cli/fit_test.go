@@ -479,8 +479,8 @@ func TestFitCmdFlags(t *testing.T) {
 		t.Fatal("expected a --bounds flag")
 	}
 
-	if got := cmd.Flags().Lookup("mayfly-variant").Usage; !strings.Contains(got, "auto") {
-		t.Fatalf("expected mayfly-variant usage to document auto, got %q", got)
+	if got := cmd.Flags().Lookup("mayfly-variant").Usage; !strings.Contains(got, "desma") {
+		t.Fatalf("expected mayfly-variant usage to name the dialects, got %q", got)
 	}
 
 	for name, want := range map[string]string{
@@ -567,7 +567,7 @@ func TestRunFitHonorsNarrowedBounds(t *testing.T) {
 	outputPath := filepath.Join(dir, "fitted.json")
 	boundsPath := filepath.Join(dir, "bounds.json")
 
-	if err := os.WriteFile(boundsPath, []byte(`{"base_frequency": [430.0, 450.0]}`), 0o600); err != nil {
+	if err := os.WriteFile(boundsPath, []byte(`{"filter_freq": [400.0, 600.0]}`), 0o600); err != nil {
 		t.Fatalf("write bounds: %v", err)
 	}
 
@@ -587,8 +587,8 @@ func TestRunFitHonorsNarrowedBounds(t *testing.T) {
 		t.Fatalf("load fitted preset: %v", err)
 	}
 
-	if fitted.Parameters.BaseFrequency < 430 || fitted.Parameters.BaseFrequency > 450 {
-		t.Fatalf("expected base frequency inside the narrowed bound, got %g", fitted.Parameters.BaseFrequency)
+	if fitted.Parameters.FilterFrequency < 400-1e-6 || fitted.Parameters.FilterFrequency > 600+1e-6 {
+		t.Fatalf("expected filter frequency inside the narrowed bound, got %g", fitted.Parameters.FilterFrequency)
 	}
 }
 
@@ -1259,5 +1259,122 @@ func TestRunFitResumeRestoresEffectiveMayflySeed(t *testing.T) {
 
 	if want := fmt.Sprintf("seed=%d", effective); !strings.Contains(out.String(), want) {
 		t.Fatalf("expected the resumed run to continue %s, got %q", want, out.String())
+	}
+}
+
+// TestRunFitSeedsTheModesFromTheReference pins Phase 8.3's starting point:
+// the modes come from the reference's partials, not from the template, the
+// checkpoint records that choice so a resume makes it again, and the report
+// says which dimensions ended on a bound.
+func TestRunFitSeedsTheModesFromTheReference(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+	workDir := filepath.Join(dir, "work")
+	outputPath := filepath.Join(dir, "fitted.json")
+
+	options := baseFitOptions(referencePath, outputPath, workDir)
+
+	cmd := &cobra.Command{}
+
+	var out bytes.Buffer
+
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+
+	if err := runFit(cmd, options); err != nil {
+		t.Fatalf("runFit failed: %v", err)
+	}
+
+	fitted, err := preset.Load(outputPath)
+	if err != nil {
+		t.Fatalf("load fitted preset: %v", err)
+	}
+
+	// The minimal preset sounds one mode, so the analysis lists one partial
+	// and the fit searches one mode -- in a v2 preset, since v1 holds four.
+	if len(fitted.Parameters.Modes) != 1 || fitted.Version != preset.VersionV2 {
+		t.Fatalf("fitted preset has %d modes in version %q, want 1 in %q", len(fitted.Parameters.Modes), fitted.Version, preset.VersionV2)
+	}
+
+	for _, want := range []string{"modes: 1 seeded from the reference's partials", "pinned: "} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+
+	latest, err := optimizer.FindLatestCheckpoint(workDir)
+	if err != nil {
+		t.Fatalf("find checkpoint: %v", err)
+	}
+
+	cp, err := optimizer.LoadCheckpoint(latest)
+	if err != nil {
+		t.Fatalf("load checkpoint: %v", err)
+	}
+
+	if cp.State == nil || cp.State.Modes != 1 {
+		t.Fatalf("checkpoint state = %+v, want modes 1", cp.State)
+	}
+
+	// A resume from that checkpoint seeds the same single mode, so the
+	// vector still fits.
+	resumed := baseFitOptions(referencePath, filepath.Join(dir, "resumed.json"), workDir)
+	resumed.resume = true
+
+	out.Reset()
+
+	if err := runFit(cmd, resumed); err != nil {
+		t.Fatalf("resumed runFit failed: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "modes: 1 seeded") {
+		t.Fatalf("the resumed run did not seed the checkpoint's one mode:\n%s", out.String())
+	}
+
+	// Keeping the template's modes is a choice, and it keeps the version.
+	kept := baseFitOptions(referencePath, filepath.Join(dir, "kept.json"), filepath.Join(dir, "work-kept"))
+	kept.modes = optimizer.KeepTemplateModes
+
+	out.Reset()
+
+	if err := runFit(cmd, kept); err != nil {
+		t.Fatalf("runFit with the template's modes failed: %v", err)
+	}
+
+	keptPreset, err := preset.Load(filepath.Join(dir, "kept.json"))
+	if err != nil {
+		t.Fatalf("load kept preset: %v", err)
+	}
+
+	if len(keptPreset.Parameters.Modes) != 4 || keptPreset.Version != preset.VersionV1 {
+		t.Fatalf("kept preset has %d modes in version %q, want the template's 4 in %q", len(keptPreset.Parameters.Modes), keptPreset.Version, preset.VersionV1)
+	}
+
+	if !strings.Contains(out.String(), "modes: keeping the preset's 4") {
+		t.Fatalf("output does not say the template's modes were kept:\n%s", out.String())
+	}
+}
+
+// TestRunFitRefusesTheRetiredBoundsKeys pins the message a bounds file from
+// before Phase 8.3 gets, which names the key and what became of it.
+func TestRunFitRefusesTheRetiredBoundsKeys(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+	boundsPath := filepath.Join(dir, "bounds.json")
+
+	if err := os.WriteFile(boundsPath, []byte(`{"frequency_mult": [0.5, 10.0]}`), 0o600); err != nil {
+		t.Fatalf("write bounds: %v", err)
+	}
+
+	options := baseFitOptions(referencePath, filepath.Join(dir, "fitted.json"), filepath.Join(dir, "work"))
+	options.boundsPath = boundsPath
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	err := runFit(cmd, options)
+	if err == nil || !strings.Contains(err.Error(), "frequency_mult was replaced by frequency") {
+		t.Fatalf("expected the retired key to be refused by name, got %v", err)
 	}
 }

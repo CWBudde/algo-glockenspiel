@@ -1,4 +1,4 @@
-import type { FitSnapshot } from "../../api/types";
+import type { FitMetrics, FitSnapshot } from "../../api/types";
 
 export interface FitStatusProps {
   snapshot: FitSnapshot | null;
@@ -41,6 +41,32 @@ function formatElapsed(elapsedMs: number): string {
  * progress without the focus being stolen from whatever the user is doing --
  * which for a fit that may last minutes is the only usable setting.
  */
+/** The terms in reporting order, with the unit each is measured in. */
+const METRIC_ROWS: readonly [keyof FitMetrics, string, string][] = [
+  ["partial_cents", "Partial pitch", "cents"],
+  ["partial_level_db", "Partial level", "dB"],
+  ["partial_decay_octaves", "Partial decay", "oct"],
+  ["partial_missing", "Partials missing", ""],
+  ["partial_extra", "Partials extra", ""],
+  ["spectral_fine_db", "Spectrum, fine", "dB"],
+  ["spectral_coarse_db", "Spectrum, coarse", "dB"],
+  ["envelope_db", "Envelope", "dB"],
+  ["decay_slope_dbps", "Decay slope", "dB/s"],
+  ["waveform", "Waveform residual", ""],
+  ["gain_db", "Gain applied", "dB"],
+];
+
+function formatMetric(value: number | null | undefined, unit: string): string {
+  if (value === null || value === undefined) {
+    return "n/a";
+  }
+
+  const digits = Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 10 ? 1 : 2;
+  const text = value.toFixed(digits);
+
+  return unit === "" ? text : `${text} ${unit}`;
+}
+
 export function FitStatus({
   snapshot,
   maxIterations,
@@ -150,9 +176,8 @@ export function FitStatus({
               <div>
                 {/*
                   What the mayfly backend settled on, which is not always what
-                  was asked for: with the variant set to "auto" the optimizer
-                  measures the landscape and chooses, and this row is the only
-                  place the choice is ever reported.
+                  was asked for: a preset chooses a dialect without naming it,
+                  and this row is the only place that choice is ever reported.
                 */}
                 <dt>Mayfly variant</dt>
                 <dd>{snapshot.mayflyVariant}</dd>
@@ -172,18 +197,51 @@ export function FitStatus({
             </div>
           )}
 
-          {snapshot.mayflyRecommendation !== undefined &&
-            snapshot.mayflyRecommendation !== "" && (
-              <div>
-                <dt>Why this variant</dt>
-                <dd>{snapshot.mayflyRecommendation}</dd>
-              </div>
-            )}
+          <div>
+            <dt>Starting modes</dt>
+            <dd>
+              {snapshot.seededModes > 0
+                ? `${snapshot.seededModes} from the reference's partials`
+                : "the starting preset's own"}
+            </dd>
+          </div>
 
           <div>
             <dt>Fitted preset</dt>
             <dd>{snapshot.hasPreset ? "available" : "not yet"}</dd>
           </div>
+        </dl>
+      )}
+
+      {snapshot?.pinned !== undefined && snapshot.pinned.length > 0 && (
+        <p className="fit-status-pinned">
+          {/*
+            A dimension that finished on a bound is one the search wanted to
+            push past the box, which is worth knowing before the preset is
+            trusted.
+          */}
+          On a bound:{" "}
+          {snapshot.pinned
+            .map((dimension) => `${dimension.name} at ${dimension.bound}`)
+            .join(", ")}
+        </p>
+      )}
+
+      {snapshot?.metrics !== undefined && (
+        <dl className="fit-status-grid fit-status-metrics">
+          {/*
+            The breakdown of the best point so far: one raw term per thing the
+            composite objective measures, in physical units, whatever metric
+            the run scores by. A term the reference was too short to measure
+            arrives as null and is shown as n/a rather than hidden, so the
+            list keeps its shape from one report to the next.
+          */}
+          {METRIC_ROWS.map(([key, label, unit]) => (
+            <div key={key}>
+              <dt>{label}</dt>
+              <dd>{formatMetric(snapshot.metrics?.[key], unit)}</dd>
+            </div>
+          ))}
         </dl>
       )}
 

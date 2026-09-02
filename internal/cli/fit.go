@@ -38,6 +38,7 @@ type fitOptions struct {
 	workDir         string
 	resume          bool
 	metric          string
+	modes           int
 	mayflyVariant   string
 	mayflyPreset    string
 	mayflyPop       int
@@ -61,6 +62,10 @@ type fitOptions struct {
 	// flag: it is the base the current flags and --mayfly-tuning are overlaid
 	// on, so a resumed run keeps the tuning it was started with.
 	mayflyTuning *optimizer.MayflyTuning
+
+	// reference is how the reference file is read: the loader's downmix and
+	// window, and an optional analysis document for the partial term.
+	reference referenceOptions
 }
 
 func newFitCmd() *cobra.Command {
@@ -75,7 +80,7 @@ func newFitCmd() *cobra.Command {
 		checkpointEvery: 1,
 		workDir:         filepath.FromSlash("out/fit"),
 		resume:          false,
-		metric:          string(optimizer.MetricRMS),
+		metric:          string(optimizer.MetricBalanced),
 		align:           true,
 		normalizeGain:   false,
 		mayflyVariant:   "desma",
@@ -121,7 +126,11 @@ func newFitCmd() *cobra.Command {
 	flags.IntVar(&options.checkpointEvery, "checkpoint-interval", options.checkpointEvery, "Write checkpoint every N progress reports (0 disables checkpointing entirely)")
 	flags.StringVar(&options.workDir, "work-dir", options.workDir, "Directory for checkpoints and rendered fit output, relative to the current directory")
 	flags.BoolVar(&options.resume, "resume", options.resume, "Resume fit from the latest checkpoint in work-dir")
-	flags.StringVar(&options.metric, "metric", options.metric, "Objective metric: rms|log|spectral")
+	flags.StringVar(&options.metric, "metric", options.metric,
+		"Objective: a composite profile (balanced|placement|polish) or a single legacy term (rms|log|spectral)")
+	flags.IntVar(&options.modes, "modes", options.modes,
+		"Modes to seed from the reference's partials: 0 for every partial the analysis lists, N for the strongest N, -1 to keep the preset's own modes")
+	addReferenceFlags(flags, &options.reference)
 	flags.BoolVar(&options.align, "align", options.align,
 		"Time-align each candidate to the reference before scoring. Leave on for recorded "+
 			"references: a few samples of offset invert the phase of a high partial, so the "+
@@ -131,9 +140,7 @@ func newFitCmd() *cobra.Command {
 			"reference level is unknown; it makes the model's amplitude parameters "+
 			"unidentifiable, so leave it off when the level is meaningful")
 	flags.StringVar(&options.mayflyVariant, "mayfly-variant", options.mayflyVariant,
-		"Mayfly variant: ma|desma|olce|eobbma|gsasma|mpma|aoblmoa|auto. \"auto\" spends part of "+
-			"the budget measuring the landscape before it picks one; the measured effect of the "+
-			"dialect is small, so that budget usually buys more spent on iterations")
+		"Mayfly variant: ma|desma|olce|eobbma|gsasma|hmma|mpma|aoblmoa")
 	flags.StringVar(&options.mayflyPreset, "mayfly-preset", options.mayflyPreset,
 		"Mayfly configuration preset. A preset already selects a variant, so it cannot be "+
 			"combined with --mayfly-variant")
@@ -230,7 +237,7 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	}
 
 	if options.metric == "" {
-		options.metric = string(optimizer.MetricRMS)
+		options.metric = string(optimizer.MetricBalanced)
 	}
 
 	metric, err := optimizer.ParseMetric(options.metric)
@@ -259,19 +266,33 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	}
 	defer stopCPUProfile()
 
-	reference, referenceRate, err := wavio.LoadMono(options.referencePath)
+	loaded, measurement, err := loadFitReference(options.referencePath, options.reference, options.sampleRate)
 	if err != nil {
 		return err
 	}
 
-	if referenceRate != options.sampleRate {
-		return fmt.Errorf("reference sample rate %d does not match requested sample rate %d", referenceRate, options.sampleRate)
-	}
+	writeReferenceCut(cmd.OutOrStdout(), options.referencePath, loaded)
+
+	reference := loaded.Samples
 
 	initialPreset, err := loadPresetOrDefault(options.presetPath)
 	if err != nil {
 		return err
 	}
+
+	// The analysis is measured here when no document named one, so that the
+	// seed, the frequency box and the objective's partial term all read the
+	// same partials.
+	if measurement == nil {
+		measurement = optimizer.MeasureReference(reference, options.sampleRate)
+	}
+
+	initialPreset, seededModes, err := optimizer.SeedPreset(initialPreset, measurement, options.note, options.modes)
+	if err != nil {
+		return err
+	}
+
+	writeSeededModes(cmd.OutOrStdout(), initialPreset, seededModes, options.modes)
 
 	bounds := optimizer.DefaultParamBounds
 
@@ -281,6 +302,8 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		if err != nil {
 			return err
 		}
+	} else {
+		bounds.Frequency = optimizer.FrequencyBoundsFor(measurement, options.sampleRate, initialPreset.Note, options.note)
 	}
 
 	// The scalar --mayfly-* flags and the tuning document are not two ways of
@@ -315,6 +338,8 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		objectiveConfig.Gain = optimizer.GainLeastSquares
 	}
 
+	objectiveConfig.Analysis = measurement
+
 	objective, err := optimizer.NewObjectiveFunctionWithConfig(
 		reference, initialPreset, options.sampleRate, options.note, options.velocity, objectiveConfig,
 	)
@@ -341,6 +366,13 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	initialEncoded, err = clampInitialPoint(cmd, optBounds, initialEncoded, explicitBounds)
 	if err != nil {
 		return err
+	}
+
+	// What the checkpoint records about the modes is the choice that was
+	// made, so a resumed run makes it again.
+	options.modes = optimizer.KeepTemplateModes
+	if seededModes > 0 {
+		options.modes = seededModes
 	}
 
 	bestCheckpointPath := func(iter int) string {
@@ -408,6 +440,14 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"iteration %d: current=%0.6g best=%0.6g evals=%d elapsed=%s\n",
 				progress.Iteration, progress.CurrentCost, progress.BestCost, progress.Evaluations, progress.Elapsed.Round(time.Millisecond))
+
+			// The breakdown of the best point so far, one line under the
+			// progress line. One extra render per report is a fraction of a
+			// percent of a Mayfly generation.
+			if metrics, err := objective.EvaluateMetrics(progress.BestParams); err == nil {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", formatMetricsLine(metrics))
+			}
+
 			if shouldCheckpoint(progress.Iteration, options.checkpointEvery) {
 				if saveCheckpoint(progress.Iteration, progress.OptimizerIterations, progress.BestParams, progress.BestCost) == nil {
 					lastCheckpointIteration = progress.Iteration
@@ -456,18 +496,33 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return err
 	}
 
-	// The reported RMS/log figures describe what the rendered WAV will sound
-	// like, so quantize a copy the way wavio.WriteMono will. The objective
-	// itself no longer does this — quantizing every candidate made the cost
-	// piecewise constant.
-	reportedSamples := append([]float32(nil), fittedSamples...)
-	optimizer.ProjectToPCM16Domain(reportedSamples)
-	rms := optimizer.ComputeRMSError(reportedSamples, reference)
-	logErr := optimizer.ComputeLogError(reportedSamples, reference, 1e-20, 0)
-
+	// The breakdown of the result, through the objective's own code. The
+	// earlier un-aligned, PCM16-quantised rms= and log= figures on this line
+	// were a different quantity from best= and disagreed with it by up to a
+	// hundred percentage points; a run is judged by its terms now.
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"Finished: best=%0.6g stop=%s iterations=%d evals=%d rms=%0.6g log=%0.6g\n",
-		result.BestCost, result.StopReason, result.Iterations, result.Evaluations, rms, logErr)
+		"Finished: best=%0.6g stop=%s iterations=%d evals=%d\n",
+		result.BestCost, result.StopReason, result.Iterations, result.Evaluations)
+
+	metrics, err := objective.EvaluateMetrics(result.BestParams)
+	if err != nil {
+		return err
+	}
+
+	profile := objective.Profile()
+	if !metric.Composite() {
+		profile = optimizer.ProfileBalanced
+	}
+
+	writeMetrics(cmd.OutOrStdout(), metrics, profile)
+
+	pinned, err := objective.Codec().Pinned(result.BestParams)
+	if err != nil {
+		return err
+	}
+
+	writePinned(cmd.OutOrStdout(), pinned, objective.Codec().Dimension())
+
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 		"Saved preset to %s and rendered fit to %s\n", options.outputPath, renderedPath)
 
@@ -762,19 +817,13 @@ func formatResolvedMayfly(resolved optimizer.ResolvedMayfly) string {
 
 	line += fmt.Sprintf(" rounds=%dx%d", resolved.Rounds, resolved.IterationsPerRound)
 
-	// Recommendation is filled in only when the dialect was measured rather
-	// than named, so it is what tells an auto run from a plain one.
-	if resolved.Recommendation != "" {
-		line += fmt.Sprintf(" (auto: %s, confidence=%0.2f, classify-evals=%d)",
-			resolved.Recommendation, resolved.Confidence, resolved.ClassifyEvaluations)
-	}
-
 	return line
 }
 
 func checkpointStateForOptions(options fitOptions, tuning *optimizer.MayflyTuning) *optimizer.OptimizerState {
 	state := &optimizer.OptimizerState{
-		Kind: options.optimizerName,
+		Kind:  options.optimizerName,
+		Modes: options.modes,
 	}
 	if options.optimizerName == "mayfly" {
 		// The schedule the run was given, not the one the flags asked for: a
@@ -820,6 +869,18 @@ func applyCheckpointResume(cmd *cobra.Command, options *fitOptions, cp *optimize
 
 	if !flagChanged(cmd, "metric") && cp.Metric != "" {
 		options.metric = cp.Metric
+	}
+
+	// The modes are the checkpoint's choice unless the flag says otherwise:
+	// a different choice builds a codec the checkpoint's vector does not fit.
+	// A checkpoint without the field was written before seeding existed and
+	// used the template's modes.
+	if !flagChanged(cmd, "modes") {
+		options.modes = optimizer.KeepTemplateModes
+
+		if cp.State != nil && cp.State.Modes != 0 {
+			options.modes = cp.State.Modes
+		}
 	}
 
 	if cp.State == nil {

@@ -80,8 +80,11 @@ func TestObjectiveEvaluateMatchesReference(t *testing.T) {
 		t.Fatalf("EncodeParams failed: %v", err)
 	}
 
+	// The codec writes the modes back in ascending frequency, so the bank
+	// sums them in a different order from the template's and the render
+	// differs from the reference by float32 rounding, not by zero.
 	got := objective.Evaluate(encoded)
-	if got > 1e-8 {
+	if got > 1e-6 {
 		t.Fatalf("expected near-zero objective cost, got %.12f", got)
 	}
 }

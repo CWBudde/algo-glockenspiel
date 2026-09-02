@@ -67,6 +67,9 @@ type fitJob struct {
 	mu          sync.Mutex
 	state       fitState
 	progress    optimizer.Progress
+	metrics     *optimizer.Metrics
+	pinned      []optimizer.PinnedDimension
+	seededModes int
 	stopReason  string
 	failure     string
 	finishedAt  time.Time
@@ -116,9 +119,8 @@ type fitSnapshot struct {
 	HasPreset bool `json:"hasPreset"`
 
 	// MayflyVariant is the dialect the run actually uses, which is not always
-	// the one that was asked for: "auto" measures the landscape and picks one,
-	// and a preset selects one of its own. Without this echo a client that
-	// asked for "auto" could never learn what ran.
+	// the one that was asked for: a preset selects one of its own. Without this
+	// echo a client that named a preset could never learn what ran.
 	MayflyVariant string `json:"mayflyVariant,omitempty"`
 
 	// MayflySeed is a string because it is an int64 and this is JSON: a seed
@@ -127,9 +129,19 @@ type fitSnapshot struct {
 	// request side spells it the same way for the same reason.
 	MayflySeed string `json:"mayflySeed,omitempty"`
 
-	// MayflyRecommendation is why an automatically chosen dialect was chosen,
-	// and is empty unless the variant was "auto".
-	MayflyRecommendation string `json:"mayflyRecommendation,omitempty"`
+	// Metrics is the breakdown of the best point so far: every term of the
+	// composite objective, whatever metric the run scores by. Absent until
+	// the first report.
+	Metrics *optimizer.Metrics `json:"metrics,omitempty"`
+
+	// SeededModes is how many of the starting modes came from the reference's
+	// partials; zero means the starting preset's own modes were kept.
+	SeededModes int `json:"seededModes"`
+
+	// Pinned lists the dimensions of the result that sit on a bound of the
+	// search box, once there is a result. A pinned dimension is one the
+	// search wanted to push past the box.
+	Pinned []optimizer.PinnedDimension `json:"pinned,omitempty"`
 }
 
 func newFitJob(id string, request fitRequest, sampleRate int, referenceSeconds float64, cancel context.CancelFunc) *fitJob {
@@ -170,12 +182,21 @@ func (j *fitJob) snapshot() fitSnapshot {
 		Metric:              j.request.Metric,
 		StartedAt:           j.startedAt,
 		HasPreset:           j.result != nil,
+		SeededModes:         j.seededModes,
+	}
+
+	if j.metrics != nil {
+		metrics := *j.metrics
+		snapshot.Metrics = &metrics
+	}
+
+	if len(j.pinned) > 0 {
+		snapshot.Pinned = append([]optimizer.PinnedDimension(nil), j.pinned...)
 	}
 
 	if resolved := j.resolvedMayfly; resolved.Variant != "" {
 		snapshot.MayflyVariant = resolved.Variant
 		snapshot.MayflySeed = strconv.FormatInt(resolved.Seed, 10)
-		snapshot.MayflyRecommendation = resolved.Recommendation
 	}
 
 	if !j.finishedAt.IsZero() {
@@ -208,7 +229,7 @@ func (j *fitJob) recordMayfly(resolved optimizer.ResolvedMayfly) {
 // This is the whole of the SSE plumbing on the optimizer's side: it is passed
 // as OptimizeOptions.Report, the same hook the CLI uses for checkpointing, so
 // internal/optimizer needed no change at all for streaming to exist.
-func (j *fitJob) report(progress optimizer.Progress) {
+func (j *fitJob) report(progress optimizer.Progress, metrics *optimizer.Metrics) {
 	j.mu.Lock()
 	// BestParams is a slice the backend keeps mutating after the callback
 	// returns, and it is the only reference-typed field in Progress. Copying it
@@ -216,6 +237,11 @@ func (j *fitJob) report(progress optimizer.Progress) {
 	// optimizer has since moved.
 	progress.BestParams = append([]float64(nil), progress.BestParams...)
 	j.progress = progress
+
+	if metrics != nil {
+		j.metrics = metrics
+	}
+
 	j.notifyLocked()
 	j.mu.Unlock()
 }
@@ -224,12 +250,17 @@ func (j *fitJob) report(progress optimizer.Progress) {
 // It is called exactly once, by the goroutine running the fit, as the last
 // thing that goroutine does -- which is what makes "done is closed" mean "the
 // job slot is free" rather than "the job asked to stop".
-func (j *fitJob) finish(state fitState, result *preset.Preset, final *optimizer.Result, cause error) {
+func (j *fitJob) finish(state fitState, result *preset.Preset, final *optimizer.Result, metrics *optimizer.Metrics, pinned []optimizer.PinnedDimension, cause error) {
 	j.mu.Lock()
 
 	j.state = state
 	j.result = result
+	j.pinned = pinned
 	j.finishedAt = time.Now()
+
+	if metrics != nil {
+		j.metrics = metrics
+	}
 
 	// The periodic Report callback is the only other thing that advances
 	// j.progress, and reportEvery is allowed to be zero, so a terminal snapshot
@@ -328,6 +359,7 @@ func (m *jobManager) start(
 	request fitRequest,
 	sampleRate int,
 	referenceSeconds float64,
+	seededModes int,
 	run func(ctx context.Context, job *fitJob),
 ) (*fitJob, error) {
 	m.mu.Lock()
@@ -341,6 +373,7 @@ func (m *jobManager) start(
 
 	ctx, cancel := context.WithCancel(context.Background())
 	job := newFitJob(fmt.Sprintf("fit-%d", m.counter), request, sampleRate, referenceSeconds, cancel)
+	job.seededModes = seededModes
 	m.current = job
 
 	go func() {

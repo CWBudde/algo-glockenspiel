@@ -180,10 +180,6 @@ func TestDecodeMayflyTuning(t *testing.T) {
 		},
 		{name: "epochs below one", content: `{"schedule": {"epochs": 0}}`, wantErr: "epochs must be at least 1"},
 		{name: "restarts negative", content: `{"schedule": {"restarts": -1}}`, wantErr: "restarts must be at least 0"},
-		{
-			name: "classify_evals negative", content: `{"schedule": {"classify_evals": -1}}`,
-			wantErr: "classify_evals must be at least 0",
-		},
 
 		{name: "rejects an infinite value", content: `{"dance": 1e999}`, wantErr: "decode tuning"},
 		{
@@ -473,14 +469,26 @@ func TestMayflyTuningApply(t *testing.T) {
 			{
 				variant: "gsasma",
 				content: `{"initial_temperature": 50, "cooling_rate": 0.9, "cooling_schedule": "linear",` +
-					`"cauchy_mutation_rate": 0.4, "golden_factor": 1.5, "apply_obl_to_global_best": true}`,
+					`"golden_factor": 1.5}`,
 				check: func(t *testing.T, cfg *mayfly.Config) {
 					t.Helper()
 
 					if cfg.InitialTemperature != 50 || cfg.CoolingRate != 0.9 ||
-						cfg.CoolingSchedule != mayfly.CoolingLinear || cfg.CauchyMutationRate != 0.4 ||
-						cfg.GoldenFactor != 1.5 || !cfg.ApplyOBLToGlobalBest {
+						cfg.CoolingSchedule != mayfly.CoolingLinear || cfg.GoldenFactor != 1.5 {
 						t.Fatalf("unexpected gsasma config: %+v", cfg)
+					}
+				},
+			},
+			{
+				// Both knobs belonged to gsasma through mayfly v0.6.0 and were
+				// moved to hmma in v0.7.0, which is where they are read.
+				variant: "hmma",
+				content: `{"cauchy_mutation_rate": 0.4, "apply_obl_to_global_best": true}`,
+				check: func(t *testing.T, cfg *mayfly.Config) {
+					t.Helper()
+
+					if cfg.CauchyMutationRate != 0.4 || !cfg.ApplyOBLToGlobalBest {
+						t.Fatalf("unexpected hmma config: %+v", cfg)
 					}
 				},
 			},
@@ -596,7 +604,7 @@ func TestMayflyTuningApply(t *testing.T) {
 
 	t.Run("the schedule is wrapper-owned and stays off the config", func(t *testing.T) {
 		tuning, err := optimizer.DecodeMayflyTuning(
-			[]byte(`{"schedule": {"epochs": 3, "restarts": 2, "classify_evals": 500}}`), "the test document",
+			[]byte(`{"schedule": {"epochs": 3, "restarts": 2}}`), "the test document",
 		)
 		if err != nil {
 			t.Fatalf("DecodeMayflyTuning failed: %v", err)
@@ -614,7 +622,7 @@ func TestMayflyTuningApply(t *testing.T) {
 		}
 
 		if tuning.Schedule == nil || *tuning.Schedule.Epochs != 3 ||
-			*tuning.Schedule.Restarts != 2 || *tuning.Schedule.ClassifyEvals != 500 {
+			*tuning.Schedule.Restarts != 2 {
 			t.Fatalf("expected the caller to read the schedule off the struct: %#v", tuning.Schedule)
 		}
 	})
@@ -733,9 +741,8 @@ func fullyPopulatedTuning() *optimizer.MayflyTuning {
 	}
 
 	tuning.Schedule = &optimizer.MayflySchedule{
-		Epochs:        tuningInt(3),
-		Restarts:      tuningInt(2),
-		ClassifyEvals: tuningInt(500),
+		Epochs:   tuningInt(3),
+		Restarts: tuningInt(2),
 	}
 
 	return tuning

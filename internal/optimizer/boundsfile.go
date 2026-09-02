@@ -31,30 +31,37 @@ type BoundsRange [2]float64
 // rest:
 //
 //	{
-//	  "input_mix":      [0.0, 2.0],
-//	  "filter_freq":    [500.0, 8000.0],
-//	  "base_frequency": [400.0, 500.0],
-//	  "amplitude":      [-1.0, 1.0],
-//	  "frequency_mult": [0.5, 10.0],
-//	  "decay_ms":       [50.0, 400.0],
-//	  "harmonic_gain":  [0.0, 1.0]
+//	  "input_mix":     [0.0, 2.0],
+//	  "filter_freq":   [500.0, 8000.0],
+//	  "amplitude":     [-1.0, 1.0],
+//	  "frequency":     [400.0, 12000.0],
+//	  "decay_ms":      [50.0, 400.0],
+//	  "harmonic_gain": [0.0, 1.0]
 //	}
+//
+// frequency is a mode's frequency in hertz as the preset writes it. Two keys
+// from before Phase 8.3 are recognised only to be refused with a reason:
+// base_frequency is no longer searched, and frequency_mult became frequency.
 type BoundsDocument struct {
-	InputMix      *BoundsRange `json:"input_mix"`
-	FilterFreq    *BoundsRange `json:"filter_freq"`
-	BaseFrequency *BoundsRange `json:"base_frequency"`
-	Amplitude     *BoundsRange `json:"amplitude"`
-	FrequencyMult *BoundsRange `json:"frequency_mult"`
-	DecayMs       *BoundsRange `json:"decay_ms"`
-	HarmonicGain  *BoundsRange `json:"harmonic_gain"`
+	InputMix     *BoundsRange `json:"input_mix"`
+	FilterFreq   *BoundsRange `json:"filter_freq"`
+	Amplitude    *BoundsRange `json:"amplitude"`
+	Frequency    *BoundsRange `json:"frequency"`
+	DecayMs      *BoundsRange `json:"decay_ms"`
+	HarmonicGain *BoundsRange `json:"harmonic_gain"`
+
+	// The retired keys. A document that still carries one would otherwise be
+	// refused as an unknown field, which is true but not helpful.
+	BaseFrequency *json.RawMessage `json:"base_frequency"`
+	FrequencyMult *json.RawMessage `json:"frequency_mult"`
 }
 
 // BoundsKeys names the accepted keys, in the order they are documented. It is
 // what the CLI's --bounds help text and the server's error messages are built
 // from, so the list cannot fall out of step with the struct above.
 var BoundsKeys = []string{
-	"input_mix", "filter_freq", "base_frequency", "amplitude",
-	"frequency_mult", "decay_ms", "harmonic_gain",
+	"input_mix", "filter_freq", "amplitude",
+	"frequency", "decay_ms", "harmonic_gain",
 }
 
 // LoadParamBounds reads a bounds file and overlays it on the default bounds.
@@ -98,9 +105,15 @@ func DecodeParamBounds(data []byte, source string) (ParamBounds, error) {
 		return bounds, fmt.Errorf("decode bounds %q: unexpected content after the bounds object", source)
 	}
 
+	if document.BaseFrequency != nil {
+		return bounds, fmt.Errorf("bounds %q: base_frequency is not searched any more -- the fitted preset keeps the starting preset's value -- so remove the key", source)
+	}
+
+	if document.FrequencyMult != nil {
+		return bounds, fmt.Errorf("bounds %q: frequency_mult was replaced by frequency, a mode's frequency in hertz as the preset writes it", source)
+	}
+
 	// limit is the range model.ValidateBarParams enforces on the dimension.
-	// frequency_mult has none: it is a multiplier, and what the model bounds is
-	// the mode frequency it produces together with base_frequency.
 	fields := []struct {
 		name   string
 		source *BoundsRange
@@ -109,9 +122,8 @@ func DecodeParamBounds(data []byte, source string) (ParamBounds, error) {
 	}{
 		{"input_mix", document.InputMix, &bounds.InputMix, &Range{Min: model.InputMixMin, Max: model.InputMixMax}},
 		{"filter_freq", document.FilterFreq, &bounds.FilterFreq, &Range{Min: model.FilterFrequencyMinHz, Max: model.FilterFrequencyMaxHz}},
-		{"base_frequency", document.BaseFrequency, &bounds.BaseFrequency, &Range{Min: model.FrequencyMinHz, Max: model.FrequencyMaxHz}},
 		{"amplitude", document.Amplitude, &bounds.Amplitude, &Range{Min: model.AmplitudeMin, Max: model.AmplitudeMax}},
-		{"frequency_mult", document.FrequencyMult, &bounds.FrequencyMult, nil},
+		{"frequency", document.Frequency, &bounds.Frequency, &Range{Min: model.FrequencyMinHz, Max: model.FrequencyMaxHz}},
 		{"decay_ms", document.DecayMs, &bounds.DecayMs, &Range{Min: model.DecayMsMin, Max: model.DecayMsValidationMax}},
 		{"harmonic_gain", document.HarmonicGain, &bounds.HarmonicGain, &Range{Min: model.HarmonicGainMin, Max: model.HarmonicGainMax}},
 	}

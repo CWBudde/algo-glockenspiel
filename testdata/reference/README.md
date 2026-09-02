@@ -58,7 +58,7 @@ floor.
 | sample rate | 44100 Hz                       |
 | length      | 317816 frames, 7.207 s         |
 | peak        | 0.0417 (-27.6 dBFS)            |
-| onset       | frame 112                      |
+| onset       | frame 303 (`analysis.Onset`)   |
 
 Three things about it decide how it can be used.
 
@@ -77,7 +77,9 @@ staging, not the bar's loudness, so any fit against it has to normalise gain
 (`--normalize-gain`) or scale the reference first.
 
 Measured partials over the first second, with half-lives from the narrowband
-envelope:
+envelope. `glockenspiel analyze` reproduces this table by code — frequencies to
+0.02%, half-lives to within 15% — and its numbers, not these, are the ones the
+fit reads; see `docs/training.md`.
 
 | Partial   | Level  | Half-life | T60    |
 | --------- | ------ | --------- | ------ |

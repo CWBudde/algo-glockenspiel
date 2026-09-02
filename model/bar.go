@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"math"
+	"math/cmplx"
 
 	"github.com/cwbudde/algo-dsp/dsp/filter/biquad"
 	"github.com/cwbudde/algo-dsp/dsp/filter/design/pass"
@@ -339,4 +340,25 @@ func clearFloat32(buf []float32) {
 	for i := range buf {
 		buf[i] = 0
 	}
+}
+
+// ExcitationResponse is the magnitude of the excitation lowpass at a frequency,
+// for a bar with the given cutoff rendered at sampleRate. It is what scales the
+// strike a mode at that frequency receives, so a fit that reasons about mode
+// levels from the parameters alone -- rather than from a render -- has to
+// multiply the amplitude by it. The shaper and the dry mix are not included.
+func ExcitationResponse(filterFrequency, atHz, sampleRate float64) float64 {
+	if sampleRate <= 0 || atHz < 0 {
+		return 0
+	}
+
+	coefficients := lowpassCoefficients(filterFrequency, sampleRate)
+	omega := 2 * math.Pi * atHz / sampleRate
+	z1 := complex(math.Cos(omega), -math.Sin(omega))
+	z2 := z1 * z1
+
+	numerator := complex(coefficients.B0, 0) + complex(coefficients.B1, 0)*z1 + complex(coefficients.B2, 0)*z2
+	denominator := complex(1, 0) + complex(coefficients.A1, 0)*z1 + complex(coefficients.A2, 0)*z2
+
+	return cmplx.Abs(numerator / denominator)
 }

@@ -33,10 +33,20 @@ func TestParamCodecEncodeDecodeRoundTrip(t *testing.T) {
 		t.Fatalf("chebyshev enabled mismatch: got %v want %v", decoded.Chebyshev.Enabled, params.Chebyshev.Enabled)
 	}
 
-	for i := range params.Modes {
-		assertClose(t, decoded.Modes[i].Amplitude, params.Modes[i].Amplitude, 1e-12, "mode amplitude")
-		assertClose(t, decoded.Modes[i].Frequency, params.Modes[i].Frequency, 1e-9, "mode frequency")
-		assertClose(t, decoded.Modes[i].DecayMs, params.Modes[i].DecayMs, 1e-9, "mode decay")
+	// The codec writes modes in ascending order of frequency, whatever order
+	// they were handed in, so the round trip is exact up to that sort.
+	expected := sortedModes(params.Modes)
+
+	for i := range expected {
+		assertClose(t, decoded.Modes[i].Amplitude, expected[i].Amplitude, 1e-12, "mode amplitude")
+		assertClose(t, decoded.Modes[i].Frequency, expected[i].Frequency, 1e-9, "mode frequency")
+		assertClose(t, decoded.Modes[i].DecayMs, expected[i].DecayMs, 1e-9, "mode decay")
+	}
+
+	for i := 1; i < len(decoded.Modes); i++ {
+		if decoded.Modes[i].Frequency < decoded.Modes[i-1].Frequency {
+			t.Fatalf("decoded modes are not sorted by frequency: %v", decoded.Modes)
+		}
 	}
 
 	for i := range params.Chebyshev.HarmonicGains {
@@ -126,10 +136,12 @@ func TestBoundsNormalizeClampsOutOfRangeValues(t *testing.T) {
 // in the encoded vector.
 func TestParamCodecEncodesDecayLogarithmically(t *testing.T) {
 	params := validBarParams()
-	params.Modes[0].DecayMs = 10
-	params.Modes[1].DecayMs = 20
-	params.Modes[2].DecayMs = 100
-	params.Modes[3].DecayMs = 200
+
+	// In ascending frequency order, which is the order the codec encodes in.
+	params.Modes[3].DecayMs = 10
+	params.Modes[2].DecayMs = 20
+	params.Modes[0].DecayMs = 100
+	params.Modes[1].DecayMs = 200
 
 	codec, err := NewParamCodec(&params)
 	if err != nil {
@@ -137,8 +149,8 @@ func TestParamCodecEncodesDecayLogarithmically(t *testing.T) {
 	}
 
 	encoded := mustEncode(t, codec, &params)
-	firstStep := encoded[3+1*3+2] - encoded[3+0*3+2]
-	secondStep := encoded[3+3*3+2] - encoded[3+2*3+2]
+	firstStep := encoded[2+1*3+2] - encoded[2+0*3+2]
+	secondStep := encoded[2+3*3+2] - encoded[2+2*3+2]
 
 	if math.Abs(firstStep-secondStep) > 1e-12 {
 		t.Fatalf("equal decay ratios must be equal encoded steps: %g vs %g", firstStep, secondStep)
@@ -226,7 +238,7 @@ func TestNewParamCodecWithStrictBoundsDoesNotWiden(t *testing.T) {
 		t.Fatalf("NewParamCodecWithStrictBounds failed: %v", err)
 	}
 
-	amplitude := strict.EncodedBounds().Ranges[3]
+	amplitude := strict.EncodedBounds().Ranges[2]
 	if amplitude.Min != -1 || amplitude.Max != 1 {
 		t.Fatalf("strict bounds were widened to %+v", amplitude)
 	}
@@ -236,7 +248,7 @@ func TestNewParamCodecWithStrictBoundsDoesNotWiden(t *testing.T) {
 		t.Fatalf("NewParamCodecWithBounds failed: %v", err)
 	}
 
-	if lenient.EncodedBounds().Ranges[3].Max <= 1 {
+	if lenient.EncodedBounds().Ranges[2].Max <= 1 {
 		t.Fatal("expected the default constructor to keep widening bounds")
 	}
 }
@@ -266,13 +278,8 @@ func TestDecodeParamsPreservesChebyshevStage(t *testing.T) {
 // TestDefaultBoundsUseTheAuthoringCeiling guards the half of the decay split
 // that must not move. Raising model.DecayMsValidationMax widens what a preset
 // file may contain once transposed; it must not widen what a fit searches,
-// because the decay dimension is log-encoded into the unit cube and stretching
-// it by an order of magnitude would change every fit's step size for reasons
-// that have nothing to do with transposition.
-//
-// Its sibling, TestSearchBoundIsUnchanged in internal/synth, pins the constant
-// itself. The two halves are apart because internal/optimizer imports
-// internal/synth, so neither package can assert both.
+// which is the model's own search box and, per fit, no more than the note
+// the template is authored at may carry.
 func TestDefaultBoundsUseTheAuthoringCeiling(t *testing.T) {
 	if got := DefaultParamBounds.DecayMs.Max; got != model.DecayMsSearchMax {
 		t.Fatalf("DefaultParamBounds.DecayMs.Max = %g, want the search bound %g",
@@ -282,5 +289,90 @@ func TestDefaultBoundsUseTheAuthoringCeiling(t *testing.T) {
 	if DefaultParamBounds.DecayMs.Max >= model.DecayMsValidationMax {
 		t.Fatalf("the search box reaches the validation ceiling %g; it must stay the narrower of the two",
 			model.DecayMsValidationMax)
+	}
+}
+
+func TestParamCodecBlockGroupsPartitionEveryDimension(t *testing.T) {
+	params := validBarParams()
+
+	codec, err := NewParamCodec(&params)
+	if err != nil {
+		t.Fatalf("NewParamCodec failed: %v", err)
+	}
+
+	groups := codec.BlockGroups()
+	if len(groups) != codec.ModeCount()+1 {
+		t.Fatalf("expected one group per mode plus one for the scalars, got %d", len(groups))
+	}
+
+	seen := make([]bool, codec.Dimension())
+
+	for groupIndex, group := range groups {
+		if len(group) == 0 {
+			t.Fatalf("group %d is empty", groupIndex)
+		}
+
+		for _, dimension := range group {
+			if dimension < 0 || dimension >= codec.Dimension() {
+				t.Fatalf("group %d holds dimension %d outside [0, %d)", groupIndex, dimension, codec.Dimension())
+			}
+
+			if seen[dimension] {
+				t.Fatalf("dimension %d appears in more than one group", dimension)
+			}
+
+			seen[dimension] = true
+		}
+	}
+
+	for dimension, present := range seen {
+		if !present {
+			t.Fatalf("dimension %d is in no group", dimension)
+		}
+	}
+}
+
+// TestParamCodecBlockGroupsKeepAModeTogether is the point of the partition: a
+// mode's amplitude, frequency and decay are what a dense block has to
+// correlate, so they must never be split across two blocks.
+func TestParamCodecBlockGroupsKeepAModeTogether(t *testing.T) {
+	params := validBarParams()
+
+	codec, err := NewParamCodec(&params)
+	if err != nil {
+		t.Fatalf("NewParamCodec failed: %v", err)
+	}
+
+	groups := codec.BlockGroups()
+	names := codec.DimensionNames()
+
+	for mode := range codec.ModeCount() {
+		base := scalarParameterCount + mode*3
+		triple := []int{base, base + 1, base + 2}
+
+		home := -1
+
+		for groupIndex, group := range groups {
+			for _, dimension := range group {
+				if dimension == base {
+					home = groupIndex
+				}
+			}
+		}
+
+		if home < 0 {
+			t.Fatalf("mode %d has no group", mode)
+		}
+
+		if len(groups[home]) != 3 {
+			t.Fatalf("mode %d shares its group with %v", mode, groups[home])
+		}
+
+		for i, dimension := range triple {
+			if groups[home][i] != dimension {
+				t.Fatalf("mode %d group %v does not hold %s at %d",
+					mode, groups[home], names[dimension], dimension)
+			}
+		}
 	}
 }

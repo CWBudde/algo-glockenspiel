@@ -30,6 +30,8 @@ func NewRootCmd() *cobra.Command {
 	rootCmd.AddCommand(
 		newSynthCmd(),
 		newFitCmd(),
+		newDistanceCmd(),
+		newAnalyzeCmd(),
 		newServeCmd(),
 		newVersionCmd(),
 	)

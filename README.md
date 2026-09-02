@@ -44,7 +44,7 @@ Or directly:
 go build -o bin/glockenspiel ./cmd/glockenspiel
 ```
 
-All flags of both commands are documented in [docs/user-guide.md](docs/user-guide.md); what follows is the short version.
+All flags of these commands are documented in [docs/user-guide.md](docs/user-guide.md); what follows is the short version.
 
 ### `glockenspiel synth`
 
@@ -72,7 +72,6 @@ glockenspiel fit \
   --preset assets/presets/default.json \
   --output out/fitted-a4.json \
   --optimizer simple \
-  --metric spectral \
   --max-iter 100 \
   --time-budget 30s \
   --work-dir out/fit-a4
@@ -89,11 +88,38 @@ glockenspiel fit \
   --resume
 ```
 
-Flags: `--reference`, `--preset`, `--bounds`, `--output`, `--note`, `--velocity`, `--sample-rate`, `--optimizer` (`simple` or `mayfly`), `--metric` (`rms`, `log` or `spectral`), `--max-iter`, `--time-budget` (a Go duration such as `30s` or `10m`; a bare number is read as seconds), `--align`, `--normalize-gain`, `--report-every`, `--checkpoint-interval`, `--work-dir`, `--resume`, `--mayfly-variant` (one of seven dialects, or `auto`), `--mayfly-pop`, `--mayfly-seed`, `--mayfly-preset`, `--mayfly-tuning`, `--mayfly-epochs`, `--mayfly-restarts`, `--mayfly-stagnation`, `--mayfly-target-cost`, `--mayfly-nc`, `--mayfly-nc-ratio`, `--mayfly-selection`. See [docs/mayfly-tuning.md](docs/mayfly-tuning.md) for the tuning document.
+Flags: `--reference`, `--preset`, `--bounds`, `--output`, `--note`, `--velocity`, `--sample-rate`, `--optimizer` (`simple` or `mayfly`), `--metric` (a composite profile, `balanced`, `placement` or `polish`, or a legacy term, `rms`, `log` or `spectral`), `--downmix`, `--window`, `--keep-level`, `--analysis`, `--modes` (`0` seeds one starting mode per measured partial, `N` the strongest `N`, `-1` keeps the preset's own), `--max-iter`, `--time-budget` (a Go duration such as `30s` or `10m`; a bare number is read as seconds), `--align`, `--normalize-gain`, `--report-every`, `--checkpoint-interval`, `--work-dir`, `--resume`, `--mayfly-variant` (one of eight dialects), `--mayfly-pop`, `--mayfly-seed`, `--mayfly-preset`, `--mayfly-tuning`, `--mayfly-epochs`, `--mayfly-restarts`, `--mayfly-stagnation`, `--mayfly-target-cost`, `--mayfly-nc`, `--mayfly-nc-ratio`, `--mayfly-selection`. See [docs/mayfly-tuning.md](docs/mayfly-tuning.md) for the tuning document.
 
 It writes the fitted preset to `--output`, the best-fit render to `<work-dir>/fitted_output.wav` and checkpoints to `<work-dir>/checkpoint_*.json`.
 
 Resume restores the saved best parameter vector, the optimizer and metric selection, the remaining iteration budget and the Mayfly settings when present. It does not restore a full internal simplex or a full Mayfly population snapshot.
+
+### `glockenspiel distance`
+
+Scores a preset against a reference the way `fit` would, without searching: every objective
+term, raw and aligned, with and without gain normalisation, plus which dimensions sit on a
+bound.
+
+```bash
+glockenspiel distance \
+  --reference testdata/reference/legacy_synth_a4.wav \
+  --preset assets/presets/default.json
+```
+
+Flags: `--reference`, `--preset`, `--bounds`, `--note`, `--velocity`, `--sample-rate`, `--json`. `just baseline` runs it for both shipped presets against both references; [docs/training.md](docs/training.md) is that table with a reading.
+
+### `glockenspiel analyze`
+
+Measures a reference recording: cuts it to its first strike, normalises the level, and lists
+the partials with their level, attack level and half-life.
+
+```bash
+glockenspiel analyze \
+  --reference testdata/reference/glockenspiel_c5.wav \
+  --output out/run/analysis.json --trimmed-out out/run/reference.wav
+```
+
+Flags: `--reference`, `--output`, `--trimmed-out`, `--downmix`, `--window`, `--keep-level`, `--frame-size`, `--max-partials`, `--min-level`, `--min-frequency`, `--json`. `just analyze` runs it for both shipped references.
 
 ### `glockenspiel version`
 
@@ -148,6 +174,7 @@ The shipped preset is [assets/presets/default.json](assets/presets/default.json)
 ├── internal/cpufeat        # Runtime CPU feature detection
 ├── internal/synth          # Note rendering and the realtime voice engine
 ├── internal/preset         # Preset JSON schema v1/v2, load, save, validate
+├── internal/analysis       # Reference cut, onset, partials, analysis.json
 ├── internal/optimizer      # Objectives, optimizers, checkpoints
 ├── internal/cli            # Cobra commands
 ├── assets/presets          # Built-in presets, embedded into the binary
@@ -193,8 +220,9 @@ The optimizer layer is kept separate from the synthesis engine so new metrics an
 `docs/` goes deeper:
 
 - [docs/oscillator-bank.md](docs/oscillator-bank.md) — the recursion, the AoSoA layout, the three packed kernels, the numeric contract they are held to, the realtime render path, and measured performance.
-- [docs/optimizer.md](docs/optimizer.md) — parameter encoding, objective evaluation, reading references, and checkpoint contracts.
+- [docs/optimizer.md](docs/optimizer.md) — parameter encoding, objective evaluation, analysing and reading references, and checkpoint contracts.
 - [docs/user-guide.md](docs/user-guide.md) — the full CLI walkthrough, including `--bounds` and how to choose an optimizer and a metric.
+- [docs/training.md](docs/training.md) — what the shipped presets score today through the fit objective's own code, and what those numbers say about it.
 - [docs/web-app.md](docs/web-app.md) — the front end's architecture, the WASM bridge, the two-step build, and the Optimize loop.
 - [docs/serve.md](docs/serve.md) — the `serve` command and the fit API it exposes.
 - [docs/audio-transport.md](docs/audio-transport.md) — why synthesis runs in a Web Worker behind an `AudioWorkletNode`, and the three alternatives that were rejected.

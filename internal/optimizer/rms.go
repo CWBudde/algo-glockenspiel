@@ -1,6 +1,10 @@
 package optimizer
 
-import "math"
+import (
+	"math"
+
+	"github.com/cwbudde/algo-glockenspiel/internal/analysis"
+)
 
 // AlignmentMode selects how a candidate signal is time-aligned to the reference
 // before the error is computed.
@@ -33,14 +37,9 @@ const (
 )
 
 const (
-	// A 64-sample block at 44.1 kHz is 1.45 ms: short enough to localise an
-	// attack, long enough that a single stray sample cannot trigger it.
-	alignBlockSize = 64
-
-	// Onset is the first block whose RMS reaches this fraction of the loudest
-	// block. A struck bar rises far faster than this, so the exact value only
-	// has to separate the attack from the noise floor.
-	alignOnsetRatio = 0.1
+	// The onset detector's block, owned by internal/analysis so that the
+	// analysis and the alignment agree on where a strike starts.
+	alignBlockSize = analysis.OnsetBlockSize
 
 	// The correlation window covers the attack, where the partials are all
 	// still present and the waveform is most distinctive. 2048 samples is 46 ms
@@ -329,62 +328,11 @@ func OptimalGain(cand, ref []float32) float64 {
 	return cross / candEnergy
 }
 
-// detectOnset returns the index of the first sample that belongs to the attack.
-//
-// Two cheap passes over block RMS values avoid allocating an envelope, which
-// matters because this runs once per candidate evaluation.
+// detectOnset is analysis.Onset: the analysis package owns the definition so
+// the sample it calls the strike and the sample the alignment calls the strike
+// cannot drift apart.
 func detectOnset(signal []float32) int {
-	if len(signal) == 0 {
-		return 0
-	}
-
-	peak := 0.0
-
-	for start := 0; start < len(signal); start += alignBlockSize {
-		if energy := blockMeanSquare(signal, start); energy > peak {
-			peak = energy
-		}
-	}
-
-	if peak <= 0 {
-		return 0
-	}
-
-	threshold := peak * alignOnsetRatio * alignOnsetRatio
-	sampleThreshold := math.Sqrt(peak) * alignOnsetRatio
-
-	for start := 0; start < len(signal); start += alignBlockSize {
-		if blockMeanSquare(signal, start) < threshold {
-			continue
-		}
-
-		end := minInt(start+alignBlockSize, len(signal))
-		for i := start; i < end; i++ {
-			if math.Abs(float64(signal[i])) >= sampleThreshold {
-				return i
-			}
-		}
-
-		return start
-	}
-
-	return 0
-}
-
-func blockMeanSquare(signal []float32, start int) float64 {
-	end := minInt(start+alignBlockSize, len(signal))
-	if end <= start {
-		return 0
-	}
-
-	sum := 0.0
-
-	for _, sample := range signal[start:end] {
-		value := float64(sample)
-		sum += value * value
-	}
-
-	return sum / float64(end-start)
+	return analysis.Onset(signal)
 }
 
 func squaredDiffSumGeneric(synth, ref []float32) float64 {

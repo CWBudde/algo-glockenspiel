@@ -17,10 +17,12 @@ import (
 	"time"
 
 	embeddedassets "github.com/cwbudde/algo-glockenspiel/assets"
+	"github.com/cwbudde/algo-glockenspiel/internal/analysis"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/cwbudde/algo-glockenspiel/internal/synth"
 	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
+	"github.com/cwbudde/algo-glockenspiel/model"
 )
 
 const (
@@ -56,6 +58,12 @@ type Request struct {
 
 	Align         bool `json:"align"`
 	NormalizeGain bool `json:"normalizeGain"`
+
+	// Modes is how the starting modes are chosen, as --modes is on the
+	// command line: zero seeds one per partial the reference's analysis
+	// lists, a positive count the strongest that many, -1 keeps the starting
+	// preset's own.
+	Modes int `json:"modes,omitempty"`
 
 	MayflyVariant    string `json:"mayflyVariant"`
 	MayflyPopulation int    `json:"mayflyPopulation"`
@@ -111,14 +119,15 @@ func DecodeRequest(data []byte) (Request, error) {
 
 // Prepared is a validated fit ready to run. It owns all input memory.
 type Prepared struct {
-	request    Request
-	template   *preset.Preset
-	objective  *optimizer.ObjectiveFunction
-	initial    []float64
-	backend    optimizer.Optimizer
-	timeBudget time.Duration
-	sampleRate int
-	reference  int
+	request     Request
+	template    *preset.Preset
+	objective   *optimizer.ObjectiveFunction
+	initial     []float64
+	backend     optimizer.Optimizer
+	timeBudget  time.Duration
+	sampleRate  int
+	reference   int
+	seededModes int
 }
 
 // New validates and decodes a browser fit. Empty presetJSON and boundsJSON
@@ -147,14 +156,14 @@ func New(request Request, referenceWAV, presetJSON, boundsJSON []byte) (*Prepare
 		return nil, fmt.Errorf("the reference is %d bytes, above the %d byte limit", len(referenceWAV), MaxReferenceBytes)
 	}
 
-	reference, sampleRate, err := wavio.DecodeMono(bytes.NewReader(referenceWAV), "the uploaded reference")
+	// The reference is prepared the way the fit command prepares one: one
+	// channel, cut to its first strike, peak-normalised.
+	loaded, err := analysis.DecodeReference(bytes.NewReader(referenceWAV), "the uploaded reference", analysis.LoadOptions{})
 	if err != nil {
 		return nil, err
 	}
 
-	if len(reference) == 0 {
-		return nil, errors.New("the reference contains no samples")
-	}
+	reference, sampleRate := loaded.Samples, loaded.SampleRate
 
 	if sampleRate < minSampleRate || sampleRate > maxSampleRate {
 		return nil, fmt.Errorf("the reference declares a sample rate of %d Hz, outside the supported [%d,%d] range",
@@ -166,8 +175,24 @@ func New(request Request, referenceWAV, presetJSON, boundsJSON []byte) (*Prepare
 		return nil, err
 	}
 
+	if request.Modes < optimizer.KeepTemplateModes || request.Modes > model.MaxModes {
+		return nil, fmt.Errorf("modes must be between %d and %d, got %d", optimizer.KeepTemplateModes, model.MaxModes, request.Modes)
+	}
+
+	// The same sequence the fit command runs: measure the reference once,
+	// seed the starting modes from it, and draw the frequency box from its
+	// fundamental unless a box was uploaded.
+	measurement := optimizer.MeasureReference(reference, sampleRate)
+
+	template, seededModes, err := optimizer.SeedPreset(template, measurement, request.Note, request.Modes)
+	if err != nil {
+		return nil, err
+	}
+
 	config := optimizer.DefaultObjectiveConfig(metric)
 	config.Alignment = optimizer.AlignNone
+	config.Analysis = measurement
+	config.Bounds.Frequency = optimizer.FrequencyBoundsFor(measurement, sampleRate, template.Note, request.Note)
 
 	if len(boundsJSON) > 0 {
 		bounds, decodeErr := optimizer.DecodeParamBounds(boundsJSON, "the uploaded bounds")
@@ -205,14 +230,15 @@ func New(request Request, referenceWAV, presetJSON, boundsJSON []byte) (*Prepare
 	}
 
 	return &Prepared{
-		request:    request,
-		template:   template,
-		objective:  objective,
-		initial:    initial,
-		backend:    backend,
-		timeBudget: budget,
-		sampleRate: sampleRate,
-		reference:  len(reference),
+		request:     request,
+		template:    template,
+		objective:   objective,
+		initial:     initial,
+		backend:     backend,
+		timeBudget:  budget,
+		sampleRate:  sampleRate,
+		seededModes: seededModes,
+		reference:   len(reference),
 	}, nil
 }
 
@@ -228,12 +254,12 @@ func (p *Prepared) ReferenceSeconds() float64 {
 }
 
 // OnMayflyResolve installs the callback that reports what a Mayfly run settled
-// on -- the dialect, the seed, and why an automatically chosen dialect was
-// chosen -- once those are known and before the search starts. It must be
-// called before Run, and a fit that does not use Mayfly never calls back.
+// on -- the dialect and the seed -- once those are known and before the search
+// starts. It must be called before Run, and a fit that does not use Mayfly
+// never calls back.
 //
-// Without it a variant of "auto" is invisible to the browser: the dialect is
-// picked from the objective inside the run and would otherwise be discarded
+// Without it a preset's dialect and a resolved zero seed are invisible to the
+// browser: both are settled inside the run and would otherwise be discarded
 // here, leaving the UI unable to say what it actually ran.
 func (p *Prepared) OnMayflyResolve(report func(optimizer.ResolvedMayfly)) {
 	if backend, ok := p.backend.(*optimizer.MayflyOptimizer); ok {
@@ -293,6 +319,22 @@ func (p *Prepared) yielding(yield func()) optimizer.ObjectiveFunc {
 
 		return cost
 	}
+}
+
+// Metrics is the breakdown of an optimizer point: every term of the
+// composite objective, whatever metric the fit scores by.
+func (p *Prepared) Metrics(params []float64) (optimizer.Metrics, error) {
+	return p.objective.EvaluateMetrics(params)
+}
+
+// SeededModes is how many of the starting modes came from the reference's
+// partials, zero when the starting preset's own were kept.
+func (p *Prepared) SeededModes() int { return p.seededModes }
+
+// Pinned lists the dimensions of an optimizer point that sit on a bound of
+// the search box.
+func (p *Prepared) Pinned(params []float64) ([]optimizer.PinnedDimension, error) {
+	return p.objective.Codec().Pinned(params)
 }
 
 // Preset decodes an optimizer point into a fitted preset.

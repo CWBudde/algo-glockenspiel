@@ -72,7 +72,8 @@ the decays in the file.
 | ---------------------- | -------------------------------------------------------------------------- | ------------------- |
 | `DecayMsMin`           | the shortest decay, everywhere                                             | `ValidateBarParams` |
 | `DecayMsValidationMax` | what a `BarParams` may carry when it reaches `NewBar`, after transposition | `ValidateBarParams` |
-| `DecayMsSearchMax`     | the optimizer's search box and the plugin's decay knobs — nothing else     | nothing             |
+| `DecayMsSearchMin`     | the floor of the optimizer's search box and the plugin's decay knobs       | nothing             |
+| `DecayMsSearchMax`     | the ceiling of that box — narrowed per fit to the authoring ceiling below  | nothing             |
 
 **The authoring ceiling is not in that table, because it is not a constant.**
 How much decay a preset file may carry depends on its base note, since that is
@@ -86,16 +87,16 @@ cannot disagree at the boundary.
 Anything that produces or accepts a preset file wants those two. Reaching for
 `DecayMsSearchMax` instead is wrong in both directions:
 
-- **Too permissive below note 76.** A preset at note 69 with a 1000 ms decay is
-  inside no constant's range but reaches `NewBar` as 6727 ms at note 36 and goes
-  silent. That is the dead low register, and collapsing these ceilings into one
-  500 ms constant is what silenced MIDI 36–52 once already; see Phase 5.1 in
-  `PLAN.md`.
-- **Too strict above it.** The authoring ceiling crosses below 500 ms at note 76
-  — 525 ms at note 75, 496 ms at note 76 — so a fit run at a high base note can
-  return a preset inside the optimizer's own search box that
-  `ValidateAuthoredBarParams` refuses. 500 ms at note 100 is 20159 ms at
-  note 36.
+- **Too permissive.** A preset at note 69 with a 1000 ms decay is inside the
+  search box but reaches `NewBar` as 6727 ms at note 36 and goes silent. That
+  is the dead low register, and collapsing these ceilings into one 500 ms
+  constant is what silenced MIDI 36–52 once already; see Phase 5.1 in
+  `PLAN.md`. The box is two seconds since Phase 8.3, so the authoring ceiling
+  sits below it everywhere above note 51 — 743 ms at note 69 — and the
+  optimizer narrows its box to `AuthoredDecayMsMax` for the note it fits at
+  rather than trusting the constant.
+- **Too strict.** Below note 52 the ceiling is above the box, so a preset
+  authored there may carry more decay than a fit would ever propose.
 
 Only the bottom of the keyboard is checked, and only the decay ceiling.
 Transposing down is monotonic, so the lowest playable note is the worst case.

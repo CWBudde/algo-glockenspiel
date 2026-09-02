@@ -48,7 +48,6 @@ See [optimizer.md](optimizer.md) for how the document fits into a run.
 | `min_iterations`        | int   | >= 0                 | Iterations that must complete before either stopping rule may fire.                                                                                            |
 | `epochs`                | int   | >= 1                 | How many optimizer epochs the wrapper runs per fit.                                                                                                            |
 | `restarts`              | int   | >= 0                 | How many times the wrapper restarts from a fresh population.                                                                                                   |
-| `classify_evals`        | int   | >= 0                 | Evaluation budget the wrapper's classification stage may spend.                                                                                                |
 
 ## DESMA
 
@@ -77,14 +76,12 @@ See [optimizer.md](optimizer.md) for how the document fits into a run.
 
 ## GSASMA
 
-| Key                        | Type  | Range                                  | Description                                                                                                                      |
-| -------------------------- | ----- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `initial_temperature`      | float | > 0                                    | Starting temperature of the simulated-annealing acceptance test.                                                                 |
-| `cooling_rate`             | float | (0, 1)                                 | Per-iteration temperature multiplier. Must stay strictly inside (0,1) so the schedule actually cools without collapsing at once. |
-| `cooling_schedule`         | enum  | `exponential`, `linear`, `logarithmic` | Shape of the temperature decay.                                                                                                  |
-| `cauchy_mutation_rate`     | float | [0, 1]                                 | Share of mutations drawn from a Cauchy rather than a Gaussian distribution.                                                      |
-| `golden_factor`            | float | any finite                             | Weight of the golden-sine step.                                                                                                  |
-| `apply_obl_to_global_best` | bool  | true, false                            | Apply opposition-based learning to the global best each iteration.                                                               |
+| Key                   | Type  | Range                                  | Description                                                                                                                      |
+| --------------------- | ----- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `initial_temperature` | float | > 0                                    | Starting temperature of the simulated-annealing acceptance test.                                                                 |
+| `cooling_rate`        | float | (0, 1)                                 | Per-iteration temperature multiplier. Must stay strictly inside (0,1) so the schedule actually cools without collapsing at once. |
+| `cooling_schedule`    | enum  | `exponential`, `linear`, `logarithmic` | Shape of the temperature decay.                                                                                                  |
+| `golden_factor`       | float | any finite                             | Weight of the golden-sine step.                                                                                                  |
 
 ## MPMA
 

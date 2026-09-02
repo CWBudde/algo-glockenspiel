@@ -36,15 +36,16 @@ type wasmFitJob struct {
 
 	state      string
 	progress   optimizer.Progress
+	metrics    *optimizer.Metrics
+	pinned     []optimizer.PinnedDimension
 	reports    int
 	stopReason string
 	failure    string
 	finished   time.Time
 	fitted     *preset.Preset
 
-	mayflyVariant        string
-	mayflySeed           string
-	mayflyRecommendation string
+	mayflyVariant string
+	mayflySeed    string
 }
 
 type wasmFitSnapshot struct {
@@ -68,13 +69,23 @@ type wasmFitSnapshot struct {
 	Optimizer        string  `json:"optimizer"`
 	Metric           string  `json:"metric"`
 
-	// The three Mayfly fields are what the run resolved rather than what the
-	// request asked for, which is the only way "auto" is visible at all. The
-	// seed is a decimal string because a JavaScript Number cannot hold a
-	// 64-bit integer, exactly as it is on the way in.
-	MayflyVariant        string `json:"mayflyVariant,omitempty"`
-	MayflySeed           string `json:"mayflySeed,omitempty"`
-	MayflyRecommendation string `json:"mayflyRecommendation,omitempty"`
+	// The two Mayfly fields are what the run resolved rather than what the
+	// request asked for, which is the only way a preset's dialect is visible at
+	// all. The seed is a decimal string because a JavaScript Number cannot hold
+	// a 64-bit integer, exactly as it is on the way in.
+	// Metrics is the breakdown of the best point so far, every term of the
+	// composite objective, whatever metric the run scores by. Absent until
+	// the first visible report.
+	Metrics *optimizer.Metrics `json:"metrics,omitempty"`
+
+	// SeededModes is how many starting modes came from the reference's
+	// partials, zero when the starting preset's own were kept. Pinned lists
+	// the result's dimensions that sit on a bound, once there is a result.
+	SeededModes int                         `json:"seededModes"`
+	Pinned      []optimizer.PinnedDimension `json:"pinned,omitempty"`
+
+	MayflyVariant string `json:"mayflyVariant,omitempty"`
+	MayflySeed    string `json:"mayflySeed,omitempty"`
 
 	StartedAt  time.Time  `json:"startedAt"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
@@ -263,13 +274,12 @@ func (j *wasmFitJob) run(ctx context.Context) {
 }
 
 // resolved records what the Mayfly run chose, and emits at once so the UI can
-// name the dialect an "auto" fit picked while that fit is still running rather
-// than only after it finishes. It takes the lock like every other writer.
+// name the dialect a preset picked while that fit is still running rather than
+// only after it finishes. It takes the lock like every other writer.
 func (j *wasmFitJob) resolved(resolved optimizer.ResolvedMayfly) {
 	j.mu.Lock()
 	j.mayflyVariant = resolved.Variant
 	j.mayflySeed = strconv.FormatInt(resolved.Seed, 10)
-	j.mayflyRecommendation = resolved.Recommendation
 	j.mu.Unlock()
 
 	j.emit()
@@ -278,6 +288,19 @@ func (j *wasmFitJob) resolved(resolved optimizer.ResolvedMayfly) {
 func (j *wasmFitJob) report(progress optimizer.Progress) {
 	fitted, err := j.prepared.Preset(progress.BestParams)
 
+	visible := j.request.ReportEvery > 0 &&
+		progress.OptimizerIterations%j.request.ReportEvery == 0
+
+	// The breakdown costs one render, so it is taken only for the reports
+	// the UI will see.
+	var metrics *optimizer.Metrics
+
+	if visible {
+		if measured, err := j.prepared.Metrics(progress.BestParams); err == nil {
+			metrics = &measured
+		}
+	}
+
 	j.mu.Lock()
 
 	j.progress = progress
@@ -285,8 +308,10 @@ func (j *wasmFitJob) report(progress optimizer.Progress) {
 		j.fitted = fitted
 	}
 
-	visible := j.request.ReportEvery > 0 &&
-		progress.OptimizerIterations%j.request.ReportEvery == 0
+	if metrics != nil {
+		j.metrics = metrics
+	}
+
 	if visible {
 		j.reports++
 	}
@@ -300,9 +325,27 @@ func (j *wasmFitJob) report(progress optimizer.Progress) {
 }
 
 func (j *wasmFitJob) finish(state string, result *optimizer.Result, cause error) {
+	var (
+		metrics *optimizer.Metrics
+		pinned  []optimizer.PinnedDimension
+	)
+
+	if result != nil {
+		if measured, err := j.prepared.Metrics(result.BestParams); err == nil {
+			metrics = &measured
+		}
+
+		pinned, _ = j.prepared.Pinned(result.BestParams)
+	}
+
 	j.mu.Lock()
 	j.state = state
 	j.finished = time.Now()
+	j.pinned = pinned
+
+	if metrics != nil {
+		j.metrics = metrics
+	}
 
 	if result != nil {
 		j.progress.OptimizerIterations = result.Iterations
@@ -344,27 +387,36 @@ func (j *wasmFitJob) snapshot() wasmFitSnapshot {
 	}
 
 	snapshot := wasmFitSnapshot{
-		JobID:                j.id,
-		State:                j.state,
-		Iteration:            j.reports,
-		OptimizerIterations:  j.progress.OptimizerIterations,
-		Evaluations:          j.progress.Evaluations,
-		CurrentCost:          j.progress.CurrentCost,
-		BestCost:             j.progress.BestCost,
-		ElapsedMS:            elapsed.Milliseconds(),
-		StopReason:           j.stopReason,
-		Error:                j.failure,
-		SampleRate:           j.prepared.SampleRate(),
-		ReferenceSeconds:     j.prepared.ReferenceSeconds(),
-		Note:                 j.request.Note,
-		Velocity:             j.request.Velocity,
-		Optimizer:            j.request.Optimizer,
-		Metric:               j.request.Metric,
-		MayflyVariant:        j.mayflyVariant,
-		MayflySeed:           j.mayflySeed,
-		MayflyRecommendation: j.mayflyRecommendation,
-		StartedAt:            j.started,
-		HasPreset:            j.fitted != nil,
+		JobID:               j.id,
+		State:               j.state,
+		Iteration:           j.reports,
+		OptimizerIterations: j.progress.OptimizerIterations,
+		Evaluations:         j.progress.Evaluations,
+		CurrentCost:         j.progress.CurrentCost,
+		BestCost:            j.progress.BestCost,
+		ElapsedMS:           elapsed.Milliseconds(),
+		StopReason:          j.stopReason,
+		Error:               j.failure,
+		SampleRate:          j.prepared.SampleRate(),
+		ReferenceSeconds:    j.prepared.ReferenceSeconds(),
+		Note:                j.request.Note,
+		Velocity:            j.request.Velocity,
+		Optimizer:           j.request.Optimizer,
+		Metric:              j.request.Metric,
+		MayflyVariant:       j.mayflyVariant,
+		MayflySeed:          j.mayflySeed,
+		StartedAt:           j.started,
+		HasPreset:           j.fitted != nil,
+		SeededModes:         j.prepared.SeededModes(),
+	}
+
+	if j.metrics != nil {
+		metrics := *j.metrics
+		snapshot.Metrics = &metrics
+	}
+
+	if len(j.pinned) > 0 {
+		snapshot.Pinned = append([]optimizer.PinnedDimension(nil), j.pinned...)
 	}
 
 	if !j.finished.IsZero() {

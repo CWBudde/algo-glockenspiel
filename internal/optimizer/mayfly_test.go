@@ -16,7 +16,7 @@ import (
 )
 
 func TestMayflyConfigRejectsUnsupportedVariant(t *testing.T) {
-	if _, err := newMayflyConfig(ResolvedMayfly{Variant: "nope"}, 10, 3, 5, nil, nil); err == nil {
+	if _, err := newMayflyConfig(ResolvedMayfly{Variant: "nope"}, 10, 3, 5, nil); err == nil {
 		t.Fatal("expected unsupported variant to fail")
 	}
 }
@@ -511,7 +511,7 @@ func TestMayflyUnknownVariantListsTheAlternativesInOrder(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(first, "aoblmoa, desma, eobbma, gsasma, ma, mpma, olce") {
+	if !strings.Contains(first, "aoblmoa, desma, eobbma, gsasma, hmma, ma, mpma, olce") {
 		t.Fatalf("expected a sorted variant list, got %q", first)
 	}
 }
@@ -531,12 +531,12 @@ func TestTuningZeroValueIsTodaysBehaviour(t *testing.T) {
 		t.Run(variant, func(t *testing.T) {
 			resolved := ResolvedMayfly{Variant: variant}
 
-			absent, err := newMayflyConfig(resolved, 10, 3, 50, nil, nil)
+			absent, err := newMayflyConfig(resolved, 10, 3, 50, nil)
 			if err != nil {
 				t.Fatalf("newMayflyConfig with no document failed: %v", err)
 			}
 
-			empty, err := newMayflyConfig(resolved, 10, 3, 50, &MayflyTuning{}, nil)
+			empty, err := newMayflyConfig(resolved, 10, 3, 50, &MayflyTuning{})
 			if err != nil {
 				t.Fatalf("newMayflyConfig with an empty document failed: %v", err)
 			}
@@ -556,7 +556,7 @@ func TestMayflyTuningOverridesTheVariantDefault(t *testing.T) {
 	rate := 0.5
 	tuning := &MayflyTuning{CoolingRate: &rate}
 
-	cfg, err := newMayflyConfig(ResolvedMayfly{Variant: "gsasma"}, 10, 3, 50, tuning, nil)
+	cfg, err := newMayflyConfig(ResolvedMayfly{Variant: "gsasma"}, 10, 3, 50, tuning)
 	if err != nil {
 		t.Fatalf("newMayflyConfig failed: %v", err)
 	}
@@ -569,7 +569,7 @@ func TestMayflyTuningOverridesTheVariantDefault(t *testing.T) {
 	// written, because mayfly ignores the fields of variants it is not running.
 	elite := 3
 	if _, err := newMayflyConfig(ResolvedMayfly{Variant: "gsasma"}, 10, 3, 50,
-		&MayflyTuning{EliteCount: &elite}, nil); err == nil {
+		&MayflyTuning{EliteCount: &elite}); err == nil {
 		t.Fatal("expected a DESMA knob to be refused under GSASMA")
 	}
 }
@@ -584,7 +584,7 @@ func TestMayflyPresetSelectsADialect(t *testing.T) {
 			t.Fatalf("resolve failed: %v", err)
 		}
 
-		cfg, err := newMayflyConfig(resolved, 10, 3, 50, nil, nil)
+		cfg, err := newMayflyConfig(resolved, 10, 3, 50, nil)
 		if err != nil {
 			t.Fatalf("newMayflyConfig failed: %v", err)
 		}
@@ -600,7 +600,7 @@ func TestMayflyPresetSelectsADialect(t *testing.T) {
 			t.Fatalf("resolve failed: %v", err)
 		}
 
-		cfg, err := newMayflyConfig(resolved, 10, 3, 50, nil, nil)
+		cfg, err := newMayflyConfig(resolved, 10, 3, 50, nil)
 		if err != nil {
 			t.Fatalf("newMayflyConfig failed: %v", err)
 		}
@@ -800,5 +800,198 @@ func TestMayflyPresetReportsTheDialectItChose(t *testing.T) {
 
 	if resolved.Variant != "olce" {
 		t.Fatalf("expected the preset's dialect to be reported, got %q", resolved.Variant)
+	}
+}
+
+// TestMayflyIsReproducibleAcrossWorkerCounts pins the property the whole
+// engine comparison rests on: at a fixed seed a run is bit-identical however
+// many workers evaluate it. Mayfly v0.7.0 gave the sequential and parallel
+// paths the same proposal and commit semantics, so width does not change the
+// trajectory either, and both halves are asserted here.
+func TestMayflyIsReproducibleAcrossWorkerCounts(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	initial := []float64{5, 5}
+	objective := func(x []float64) float64 { return square(x[0]-1.25) + square(x[1]+2.5) }
+
+	run := func(workers int) *Result {
+		t.Helper()
+
+		result, err := (&MayflyOptimizer{
+			Variant: "desma", Population: 8, Seed: 4242, MaxWorkers: workers,
+		}).Optimize(context.Background(), objective, initial, bounds, OptimizeOptions{
+			MaxIterations: 40,
+		})
+		if err != nil {
+			t.Fatalf("Optimize with %d workers failed: %v", workers, err)
+		}
+
+		return result
+	}
+
+	first, second := run(4), run(4)
+
+	// A run that found nothing would agree with itself just as exactly, so the
+	// reproducibility claim is only worth something next to a progress claim.
+	// Forty iterations on a two-dimensional sphere reach the optimum to many
+	// digits; 1e-6 is loose enough not to pin a trajectory.
+	if first.BestCost > 1e-6 {
+		t.Fatalf("best cost = %g, want a run that actually converged", first.BestCost)
+	}
+
+	if first.BestCost != second.BestCost || !reflect.DeepEqual(first.BestParams, second.BestParams) {
+		t.Fatalf("four workers were not reproducible: %g %v then %g %v",
+			first.BestCost, first.BestParams, second.BestCost, second.BestParams)
+	}
+
+	serial := run(1)
+
+	if serial.BestCost != first.BestCost || !reflect.DeepEqual(serial.BestParams, first.BestParams) {
+		t.Fatalf("one worker walked a different trajectory than four: %g %v against %g %v",
+			serial.BestCost, serial.BestParams, first.BestCost, first.BestParams)
+	}
+}
+
+// TestMayflyResultSeedEchoesTheConfiguredSeed checks the contract the wrapper's
+// report depends on. buildConfig sets Config.Seed rather than Config.Rand, and
+// the run's reported seed is only honest if mayfly agrees that it is the value
+// the generator was built from.
+func TestMayflyResultSeedEchoesTheConfiguredSeed(t *testing.T) {
+	resolved := ResolvedMayfly{Variant: "desma", Seed: 20260902}
+
+	cfg, err := (&MayflyOptimizer{Population: 6, MaxWorkers: 1}).buildConfig(resolved, 2, 20)
+	if err != nil {
+		t.Fatalf("buildConfig failed: %v", err)
+	}
+
+	cfg.ObjectiveFunc = func(x []float64) float64 { return square(x[0]) + square(x[1]) }
+
+	res, err := mayfly.OptimizeContext(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("OptimizeContext failed: %v", err)
+	}
+
+	if res.Seed == nil {
+		t.Fatal("mayfly did not report the seed the run was configured with")
+	}
+
+	if *res.Seed != resolved.Seed {
+		t.Fatalf("Result.Seed = %d, want the configured %d", *res.Seed, resolved.Seed)
+	}
+}
+
+// TestMayflySurvivesAnInvalidRegion covers what a fit objective actually does:
+// it returns +Inf for a vector that fails to decode or validate. Mayfly v0.7.0
+// fails a search whose whole initial population is non-finite, and a cold
+// restart draws a fresh uniform population that can land entirely inside such a
+// region, so the tracker reports a large finite penalty instead. Without that
+// the run below errors and loses the answer the first round already found.
+func TestMayflySurvivesAnInvalidRegion(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	initial := []float64{9.95, 9.95}
+
+	// Valid only in a corner a tenth of a percent of the box wide, so a
+	// uniformly drawn population is invalid with overwhelming probability.
+	objective := func(x []float64) float64 {
+		if x[0] < 9.9 || x[1] < 9.9 {
+			return math.Inf(1)
+		}
+
+		return square(x[0]-9.95) + square(x[1]-9.95)
+	}
+
+	restarts := 2
+	tuning := &MayflyTuning{Schedule: &MayflySchedule{Restarts: &restarts}}
+
+	result, err := (&MayflyOptimizer{
+		Variant: "desma", Population: 6, Seed: 11, MaxWorkers: 1, Tuning: tuning,
+	}).Optimize(context.Background(), objective, initial, bounds, OptimizeOptions{
+		MaxIterations: 30,
+	})
+	if err != nil {
+		t.Fatalf("Optimize failed on an objective with an invalid region: %v", err)
+	}
+
+	if !isFinite(result.BestCost) {
+		t.Fatalf("best cost = %g, want a finite one", result.BestCost)
+	}
+}
+
+// TestMayflyColdRoundsDoNotRepeatEachOther pins what a restart is for. Mayfly
+// reads Config.Seed at the start of every OptimizeContext call, so a schedule
+// that handed every round the same seed would run one search several times:
+// each cold round would draw the identical uniform population and follow the
+// identical trajectory, and the independent exploration a restart exists to buy
+// would be spent on a search already done.
+func TestMayflyColdRoundsDoNotRepeatEachOther(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	initial := []float64{5, 5}
+	objective := func(x []float64) float64 { return square(x[0]-1.25) + square(x[1]+2.5) }
+
+	// One warm round, then two cold ones. The two cold rounds are what this
+	// compares: they start from a fresh population rather than the incumbent,
+	// so nothing but the random stream distinguishes them.
+	restarts := 2
+	tuning := &MayflyTuning{Schedule: &MayflySchedule{Restarts: &restarts}}
+
+	const iterationsPerRound = 10
+
+	var perIteration []float64
+
+	_, err := (&MayflyOptimizer{
+		Variant: "desma", Population: 6, Seed: 99, MaxWorkers: 1, Tuning: tuning,
+	}).Optimize(context.Background(), objective, initial, bounds, OptimizeOptions{
+		MaxIterations: 3 * iterationsPerRound,
+		ReportEvery:   1,
+		Report: func(progress Progress) {
+			// CurrentCost is the round's own best, which restarts with the
+			// round, so the sequence is a fingerprint of that round's search.
+			perIteration = append(perIteration, progress.CurrentCost)
+		},
+	})
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if len(perIteration) != 3*iterationsPerRound {
+		t.Fatalf("got %d reports, want one per iteration of three rounds", len(perIteration))
+	}
+
+	secondRound := perIteration[iterationsPerRound : 2*iterationsPerRound]
+	thirdRound := perIteration[2*iterationsPerRound:]
+
+	if reflect.DeepEqual(secondRound, thirdRound) {
+		t.Fatalf("the two cold rounds walked the same trajectory: %v", secondRound)
+	}
+}
+
+// TestMayflyHMMAIsSelectableAndNamed covers the dialect mayfly v0.7.0 split out
+// of GSASMA. Its Use flag is its own, so without a case in variantNameForConfig
+// a run asking for it would report itself as plain "ma" and its two knobs would
+// be looked up under the wrong dialect.
+func TestMayflyHMMAIsSelectableAndNamed(t *testing.T) {
+	rate := 0.4
+	tuning := &MayflyTuning{CauchyMutationRate: &rate}
+
+	cfg, err := newMayflyConfig(ResolvedMayfly{Variant: "hmma"}, 10, 3, 50, tuning)
+	if err != nil {
+		t.Fatalf("newMayflyConfig for hmma failed: %v", err)
+	}
+
+	if !cfg.UseHMMA {
+		t.Fatal("expected the hmma dialect to be selected")
+	}
+
+	if got := variantNameForConfig(cfg); got != "hmma" {
+		t.Fatalf("variantNameForConfig = %q, want hmma", got)
+	}
+
+	if cfg.CauchyMutationRate != rate {
+		t.Fatalf("cauchy_mutation_rate = %v, want %v", cfg.CauchyMutationRate, rate)
+	}
+
+	// The same knob under the dialect it used to belong to is refused, which is
+	// the whole point of moving it.
+	if _, err := newMayflyConfig(ResolvedMayfly{Variant: "gsasma"}, 10, 3, 50, tuning); err == nil {
+		t.Fatal("expected an hmma knob to be refused under gsasma")
 	}
 }

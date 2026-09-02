@@ -37,16 +37,14 @@ type MayflyConvergence struct {
 }
 
 // MayflySchedule is the wrapper's own run schedule: how many epochs a fit
-// runs, how many times it restarts, and how many evaluations the classifier
-// stage may spend.
+// runs and how many times it restarts.
 //
 // It has no counterpart in mayfly.Config, which is exactly why it is nested.
 // Keeping it one level down leaves the top level a faithful mirror of mayfly's
 // own names, so a knob upstream adds later can never collide with one of ours.
 type MayflySchedule struct {
-	Epochs        *int `json:"epochs,omitempty"`
-	Restarts      *int `json:"restarts,omitempty"`
-	ClassifyEvals *int `json:"classify_evals,omitempty"`
+	Epochs   *int `json:"epochs,omitempty"`
+	Restarts *int `json:"restarts,omitempty"`
 }
 
 // MayflyTuning is the JSON form of a curated subset of mayfly.Config.
@@ -363,17 +361,21 @@ func MayflyTuningFields() []MayflyTuningField {
 			Help:    "Shape of the temperature decay.",
 		},
 		{
-			Key: "cauchy_mutation_rate", Label: "Cauchy mutation rate", Kind: "float", Variant: "gsasma",
+			Key: "golden_factor", Label: "Golden factor", Kind: "float", Variant: "gsasma",
+			Help: "Weight of the golden-sine step.",
+		},
+
+		// Both knobs read UseHMMA upstream. Mayfly attributed them to GSASMA
+		// through v0.6.0 and moved them to HMMA in v0.7.0, so writing either
+		// one under gsasma configures a stage that dialect never runs.
+		{
+			Key: "cauchy_mutation_rate", Label: "Cauchy mutation rate", Kind: "float", Variant: "hmma",
 			Min: tuningBound(0), Max: tuningBound(1),
 			Help: "Share of mutations drawn from a Cauchy rather than a Gaussian distribution.",
 		},
 		{
-			Key: "golden_factor", Label: "Golden factor", Kind: "float", Variant: "gsasma",
-			Help: "Weight of the golden-sine step.",
-		},
-		{
-			Key: "apply_obl_to_global_best", Label: "OBL on global best", Kind: "bool", Variant: "gsasma",
-			Help: "Apply opposition-based learning to the global best each iteration.",
+			Key: "apply_obl_to_global_best", Label: "OBL on global best", Kind: "bool", Variant: "hmma",
+			Help: "Apply opposition-based learning to the global best every tenth iteration.",
 		},
 
 		{
@@ -446,11 +448,6 @@ func MayflyTuningFields() []MayflyTuningField {
 			Key: "restarts", Label: "Restarts", Kind: "int",
 			Min:  tuningBound(0),
 			Help: "How many times the wrapper restarts from a fresh population.",
-		},
-		{
-			Key: "classify_evals", Label: "Classifier evaluations", Kind: "int",
-			Min:  tuningBound(0),
-			Help: "Evaluation budget the wrapper's classification stage may spend.",
 		},
 	}
 }
@@ -746,7 +743,6 @@ func (t *MayflyTuning) knobs() []tuningKnob {
 		// to a mayfly.Config, so these knobs carry no apply function.
 		addInt("epochs", t.Schedule.Epochs, nil)
 		addInt("restarts", t.Schedule.Restarts, nil)
-		addInt("classify_evals", t.Schedule.ClassifyEvals, nil)
 	}
 
 	return knobs

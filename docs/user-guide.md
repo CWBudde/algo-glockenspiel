@@ -1,9 +1,10 @@
 # User Guide
 
-This guide focuses on the two supported end-user workflows in this repository:
+This guide focuses on the three supported end-user workflows in this repository:
 
 1. rendering notes with `glockenspiel synth`
 2. fitting presets with `glockenspiel fit`
+3. scoring a preset against a reference with `glockenspiel distance`
 
 ## Render With `synth`
 
@@ -82,7 +83,7 @@ glockenspiel fit \
   --work-dir out/fit-a4
 ```
 
-Broader search with Mayfly and spectral matching:
+Broader search with Mayfly under the partial-heavy profile:
 
 ```bash
 glockenspiel fit \
@@ -92,7 +93,7 @@ glockenspiel fit \
   --optimizer mayfly \
   --mayfly-variant desma \
   --mayfly-pop 10 \
-  --metric spectral \
+  --metric placement \
   --max-iter 200 \
   --time-budget 60s \
   --work-dir out/fit-a4
@@ -119,16 +120,21 @@ glockenspiel fit \
 - `--velocity`: strike velocity for candidate renders
 - `--sample-rate`: must match the reference WAV sample rate
 - `--optimizer`: `simple` or `mayfly`
-- `--metric`: `rms`, `log`, or `spectral`
+- `--metric`: a composite profile — `balanced` (the default), `placement` or `polish` — or a single legacy term, `rms`, `log` or `spectral`. See [Choosing Optimizer And Metric](#choosing-optimizer-and-metric)
+- `--downmix`: which channel of a multi-channel reference the fit sees, `first` (the default) or `mean`
+- `--window`: cut the reference to this length after its onset instead of where the strike ends; by default the loader cuts at a second event or where the tail stops falling
+- `--keep-level`: keep the reference at the file's level instead of peak-normalising it; only a legacy metric without `--normalize-gain` can tell the difference
+- `--analysis`: an `analysis.json` from `glockenspiel analyze` whose partials the partial term, the seed and the frequency box use; by default the reference is measured before the fit starts
+- `--modes`: where the starting modes come from. `0` (the default) seeds one mode per partial the analysis lists, at its frequency, attack level and half-life; `N` seeds the strongest `N`; `-1` keeps the starting preset's own modes. A seeded fit from a v1 preset writes a v2 preset, because v1 holds exactly four modes
 - `--max-iter`: iteration cap passed to the optimizer
 - `--time-budget`: wall-clock budget as a Go duration, for example `30s` or `10m`; a bare number is still read as seconds
 - `--align`: time-align each candidate to the reference before scoring, on by default. Leave it on for recorded references: a few samples of offset invert the phase of a high partial, so the correct parameters would score worse than incorrect ones
-- `--normalize-gain`: divide out the scalar gain that best matches the reference level, off by default. Use it when the reference level is unknown; it makes the model's amplitude parameters unidentifiable, so leave it off when the level is meaningful
+- `--normalize-gain`: under a legacy metric, divide out the scalar gain that best matches the reference level, off by default. Use it when the reference level is unknown; it makes the model's amplitude parameters unidentifiable, so leave it off when the level is meaningful. A composite profile solves its gain in closed form regardless
 - `--report-every`: progress print interval, counted in the chosen optimizer's own iterations. The default follows the backend -- 10 for `simple`, 1 for `mayfly` -- because a mayfly iteration is a whole generation, roughly fifty renders, against about one for a simple major iteration
 - `--checkpoint-interval`: checkpoint write interval in progress reports; `0` disables checkpointing entirely, including the final checkpoint
 - `--work-dir`: stores checkpoints and `fitted_output.wav`, resolved relative to the current directory (default `out/fit`)
 - `--resume`: restart from the latest `checkpoint_*.json` in `work-dir`
-- `--mayfly-variant`: which of Mayfly's seven dialects to run, or `auto` to measure the landscape and choose one. `auto` spends part of the budget on that measurement, and the effect of the choice was measured as small, so that budget is usually better spent on iterations
+- `--mayfly-variant`: which of Mayfly's eight dialects to run. The measured effect of the choice is small, so it is rarely the setting worth reaching for first
 - `--mayfly-pop`: Mayfly male/female population size. Bigger is not better at a fixed budget: larger populations were measured as _worse_, because each iteration costs more
 - `--mayfly-seed`: random seed for Mayfly. `0` picks a seed, prints it, and records it, so the run stays reproducible and a resume continues the same stream
 - `--mayfly-preset`: start from one of Mayfly's named configurations, which pick a dialect and its knobs together. Cannot be combined with `--mayfly-variant`, and does not override `--max-iter` or `--mayfly-pop`
@@ -203,13 +209,20 @@ narrows the dimensions you care about:
 {
   "input_mix": [0.0, 2.0],
   "filter_freq": [500.0, 8000.0],
-  "base_frequency": [430.0, 450.0],
   "amplitude": [-1.0, 1.0],
-  "frequency_mult": [0.5, 10.0],
+  "frequency": [400.0, 12000.0],
   "decay_ms": [50.0, 400.0],
   "harmonic_gain": [0.0, 1.0]
 }
 ```
+
+`frequency` is a mode's frequency in hertz as the preset writes it. Without a
+bounds file the fit narrows it to half the reference's fundamental up to 0.45
+of the sample rate, and `decay_ms` to what a preset at the starting preset's
+note may carry; a bounds file replaces the whole box, so its `frequency` key is
+the box that runs. Two keys from before Phase 8.3 are refused with a reason:
+`base_frequency`, which is no longer searched, and `frequency_mult`, which
+became `frequency`.
 
 Every key is optional and holds a `[min, max]` pair; an omitted key keeps the
 default bound, so narrowing a single dimension needs a one-line file:
@@ -240,52 +253,129 @@ Use `mayfly` when:
 - `simple` gets stuck too early
 - you are willing to spend more memory and wall-clock time per run to search more broadly
 
-Benchmark snapshot from `internal/optimizer/perf_test.go` on 2026-03-02, short legacy fit:
+Benchmark snapshot from `internal/optimizer/perf_test.go` on 2026-09-02, short legacy fit,
+Go 1.26.0 on twelve hardware threads (`go test ./internal/optimizer -run '^$' -bench LegacyShort -benchmem`):
 
-- `simple`: `85.47 iter/s`, `220.8 eval/s`, `140.4 convergence-ms`, `3.56 MB/op`
-- `mayfly` (`desma`, population 10): `19.98 iter/s`, `939.9 eval/s`, `1001 convergence-ms`, `38.4 MB/op`
+- `simple`: `61.0 iter/s`, `1138 eval/s`, `147.6 convergence-ms`, `21.4 MB/op`
+- `mayfly` (`desma`, population 10): `115.8 iter/s`, `4292 eval/s`, `172.6 convergence-ms`, `95.7 MB/op`
 
-Interpretation:
+Both rows were measured under Mayfly v0.6.0. v0.7.0 changed the update rules, so any Mayfly
+number recorded here before 2026-09-02 describes a different search; see
+[optimizer.md](optimizer.md#the-version-this-is-pinned-to).
 
-- `simple` is the better default for local refinement from a reasonable preset
-- `mayfly` explores many more candidates per second, but it is materially heavier and slower to converge on this short benchmark
+An earlier snapshot in this place was taken before `internal/wavio` learned to decode 32-bit
+float WAVs, so it timed fits against a square wave; it has been replaced, not corrected. Read
+this one as throughput only: it says how many renders each backend gets through per second,
+not which one finds a better fit. `mayfly` evaluates candidates in parallel and `simple` does
+not, which is most of the evaluation-rate gap.
 
-Use `rms` when:
+The default, `balanced`, scores every candidate on ten terms at once — the partials' pitch,
+level, decay, and which are missing or extra; the log spectrum at a fine and a coarse resolution
+above the reference's own noise floor; the broadband envelope and its decay slope; and the
+aligned waveform residual — and folds them into one number in `[0, 1]`. Each term is printed
+under every progress line and as a table at the end, so a run says _which_ thing is wrong rather
+than how wrong in total. [optimizer.md](optimizer.md#the-composite-objective) defines each term.
+The other two profiles weigh the same terms differently:
 
-- you want the simplest and fastest metric
-- you are debugging obvious failures
+- `placement` puts most of its weight on where the partials are and whether they are all there,
+  and almost none on the waveform. It is the profile for a global search from far away.
+- `polish` puts half its weight on the waveform. It only makes sense once every partial is
+  within a few cents, which is what a local refinement from a good result is.
 
-Use `log` when:
+The legacy single-term metrics remain for comparison with older runs:
 
-- you want RMS behavior but less sensitivity to large absolute magnitude differences
+- `rms` is the aligned time-domain difference. Its capture range is a few cents per partial:
+  [training.md](training.md) measured the waveform gain against the recording at −52 to −93 dB
+  for every shipped preset, which is no correlation at all.
+- `log` is a monotone transform of `rms` with the same minimiser.
+- `spectral` is the coarse STFT error with every bin counted, which the review found outvoted by
+  empty bins.
 
-Use `spectral` when:
-
-- spectral shape matters more than waveform alignment
-- the reference and candidate are perceptually close but time-domain metrics look poor
-- you want an alternate search target after `rms` or `log` plateau, not a guaranteed better default
-
-Recorded A4 comparison on 2026-03-02 with `simple` from `assets/presets/default.json`:
-
-- `rms` and `log` converged to the same fitted preset and the same rendered output
-- `spectral` converged to a different fit with worse time-domain error on that problem
-- the `spectral` result also landed on a slightly lower first-mode frequency than the `rms`/`log` fit
-
-The reference for that comparison is `testdata/reference/glockenspiel_a4.wav`, which is in the
-repository. The three rendered results are not: they were written under `out/`, which is
-gitignored local scratch. Reproduce them by running the same fit three times with
-`--metric rms`, `--metric log` and `--metric spectral` into separate `--work-dir`s.
-
-**That comparison predates the float-WAV decode fix and has not been re-taken.** The
-reference is 32-bit IEEE float, and until `internal/wavio` learned to read that format it
-decoded to a square wave — so all three metrics were compared on a signal the file does not
-contain. Read the three bullets above as a record of what was run, not as current guidance
-on which metric to pick. See [testdata/reference/README.md](../testdata/reference/README.md).
+Before switching profiles, run `distance` on the current result and look at which term is
+large — see [Score With `distance`](#score-with-distance) and the tables in
+[training.md](training.md).
 
 Practical conclusion:
 
-- start with `simple` + `rms` or `log`
-- try `spectral` when the attack brightness or overtone balance sounds wrong even though the basic pitch/tail are close
+- start with `balanced`; measure with `distance` before changing anything
+- a large `partial_missing` or `partial_cents` with small spectral terms means the search has not
+  found the partials yet: try `placement`, or a wider search
+- small partial terms with a large `waveform` means the partials are placed and the phase is
+  not: `polish` from that result
+
+## Score With `distance`
+
+`distance` renders a preset once and prints what the fit objective would score it at, without
+searching. It goes through the same codec, alignment, gain and metric code that scores a
+candidate during a fit, so its numbers are the fit's numbers.
+
+```bash
+glockenspiel distance \
+  --reference testdata/reference/legacy_synth_a4.wav \
+  --preset assets/presets/default.json \
+  --note 69
+```
+
+The reference is read the way `fit` reads it — one channel, cut to its first strike,
+peak-normalised — and the first line says what the loader did. The legacy table has three rows,
+one per policy a legacy fit can run under: `raw` compares sample for sample at natural level,
+`aligned` is what an aligned fit scores, and `aligned+gain` is a `--normalize-gain` fit. Every
+row carries the `rms`, `log` and `spectral` terms, the lag the alignment chose, and the
+least-squares gain that best matches the render to the reference. The gain is measured under
+every policy and divided out only under the third, so a gain far below 0 dB says the waveform
+correlation could not see the reference; the baseline in [training.md](training.md) shows what
+that looks like against a real recording.
+
+Below that, the composite objective's breakdown: every term with its value, its norm, its weight
+under `balanced` and its share of the score, then the score under each of the three profiles,
+the gain applied, the waveform gain, and how many of the reference's partials the preset's modes
+matched. This is the table a fit prints at its end, for a preset that was not fitted.
+
+Below the table the report says where the preset sits in the search box: which dimensions are
+on an edge, and which edges of the default box had to move to contain the preset at all. A
+fitted preset with many pinned dimensions is one the search wanted to push further.
+
+### What The Flags Do
+
+- `--reference`: WAV file to score against
+- `--downmix`, `--window`, `--keep-level`, `--analysis`: how the reference is read, as for `fit`
+- `--preset`: preset JSON to score; omit it to score the preset built into the binary
+- `--bounds`: JSON search box, kept strict as `fit` keeps it; a preset outside it is scored clamped into it, and the report says so
+- `--note`, `--velocity`: how the preset is rendered
+- `--sample-rate`: must match the reference WAV
+- `--json`: the same report as JSON, for scripts, with the composite terms under `metrics` and the profile scores under `scores`; a term that could not be computed is `null`
+
+## Measure With `analyze`
+
+`analyze` reads a recording and says what is in it before anything is fitted to it: where the
+strike starts and ends, what level it sits at, and which partials it holds.
+
+```bash
+glockenspiel analyze --reference testdata/reference/glockenspiel_c5.wav
+```
+
+The first block is the cut. The file is reduced to one channel, cut from the onset to where the
+strike stops being the only thing in the file — a second event in the tail, or the tail no
+longer falling — and scaled so its peak is full scale. Each of those decisions is printed, and
+`--window 1s` or `--keep-level` overrides the last two. The table below it lists each partial
+strongest first: its `level` against the strongest, its `amplitude` in dB against full scale of
+the cut, its `attack` — the level its decay extrapolates to at the strike, which is what a model
+mode's amplitude has to reach — and its `half-life`, with the T60 that half-life implies.
+
+`--output analysis.json` writes the same thing as JSON, which is what a fit will read to size its
+search space, and `--trimmed-out reference.wav` writes the cut itself so that `fit` and
+`distance` can be pointed at the strike rather than the file.
+
+### What The Flags Do
+
+- `--reference`: WAV file to measure
+- `--output`: write the analysis as JSON to this path
+- `--trimmed-out`: write the cut, normalised reference as a 16-bit mono WAV to this path
+- `--downmix`: `first` keeps channel zero (default); `mean` averages the channels
+- `--window`: cut this long after the onset instead of finding where the strike ends
+- `--keep-level`: leave the level alone instead of normalising the peak to full scale
+- `--frame-size`, `--max-partials`, `--min-level`, `--min-frequency`: the spectrum window in samples, how many partials to report, how deep below the strongest to look, and where to stop ignoring hum
+- `--json`: print the analysis as JSON instead of the text report
 
 ## Parameter Guide
 
@@ -309,7 +399,7 @@ The top-level `parameters` object holds:
 
 - `input_mix`: amount of dry filtered excitation mixed into the resonant output
 - `filter_frequency`: lowpass cutoff for the excitation path, in Hz
-- `base_frequency`: reference tuning for the preset note
+- `base_frequency`: reference tuning for the preset note. It never reaches the audio, and a fit writes the starting preset's value through rather than searching it
 - `modes`: the resonant partials, exactly four in v1 and one to 512 in v2
 - `chebyshev.enabled`: enables harmonic shaping
 - `chebyshev.stage`: v2 only, `excitation` (the v1 behaviour, and the default) or `output`
@@ -345,13 +435,12 @@ Your `--sample-rate` must equal the WAV file sample rate. Either:
 - rerun with the reference sample rate, or
 - resample the WAV before fitting
 
-### `unsupported metric ""` or `unsupported metric "..."`
+### `unsupported metric "..."`
 
 Use one of:
 
-- `rms`
-- `log`
-- `spectral`
+- `balanced`, `placement` or `polish`, the composite profiles
+- `rms`, `log` or `spectral`, the legacy single terms
 
 ### `unsupported optimizer "..."`
 
@@ -394,10 +483,13 @@ Resume does not restore a full internal simplex or full Mayfly population snapsh
 
 ### Fitting does not improve much
 
-Try:
+First run `distance` on the fitted preset. A `gain` far below 0 dB means the time-domain terms
+cannot see the reference at all, and no budget will help; a long list of pinned dimensions
+means the search wanted to leave the box. Then try:
 
 1. switching from `simple` to `mayfly`
-2. using `spectral` instead of `rms`
-3. starting from a closer preset
+2. starting from a closer preset
+3. widening or narrowing the box with `--bounds`, guided by the pinned list
 4. increasing `--max-iter`
 5. increasing `--time-budget`
+6. `spectral` instead of `rms`, as a different target rather than a better one

@@ -52,6 +52,11 @@ type Result struct {
 	// own vocabulary plus "context_canceled" and "time_budget" for aborts.
 	StopReason  string
 	Evaluations int
+
+	// Restarts is the number of independent searches the run completed. Only
+	// the CMA-ES backend restarts, so it is zero for every other backend and
+	// for a run that was cut before its first search finished.
+	Restarts int
 }
 
 // Progress describes one optimizer progress update.
@@ -74,4 +79,8 @@ type Progress struct {
 	BestParams  []float64
 	Elapsed     time.Duration
 	Evaluations int
+
+	// Restart is the zero-based index of the search in progress. Only the
+	// CMA-ES backend restarts, so it is zero for every other backend.
+	Restart int
 }

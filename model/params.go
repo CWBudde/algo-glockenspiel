@@ -81,21 +81,26 @@ const (
 	// and the note-on was discarded without a sound or a diagnostic.
 	DecayMsValidationMax = 5000.0
 
-	// DecayMsSearchMax is the upper end of the optimizer's decay search box and
-	// of the plugin's decay knobs. That is all it is.
+	// DecayMsSearchMin and DecayMsSearchMax are the optimizer's decay search
+	// box. That is all they are.
 	//
-	// It is emphatically not the ceiling a preset is authored under, which is
-	// [AuthoredDecayMsMax] and depends on the base note -- and which drops below
-	// this constant above note 75, so a fit run up there can return a preset
-	// [ValidateAuthoredBarParams] refuses. Nothing validates against this value.
+	// The ceiling is emphatically not the one a preset is authored under, which
+	// is [AuthoredDecayMsMax] and depends on the base note -- 743 ms at note 69,
+	// 124 ms at note 100 -- so the optimizer narrows its box to that ceiling
+	// for the note it fits at, and nothing validates against these values.
 	//
-	// It stays at the 500 ms it has always been. Widening it is not a free
-	// change: the optimizer log-encodes decay into the unit cube, so stretching
-	// the box by an order of magnitude changes the step size every fit takes
-	// through that dimension, for reasons that have nothing to do with the
-	// transposition problem DecayMsValidationMax solves. 500 ms is also already
-	// generous for a struck metal bar's individual mode.
-	DecayMsSearchMax = 500.0
+	// The ceiling was 500 ms until Phase 8.3, kept there for a step-size
+	// argument: decay is log-encoded into the unit cube, so widening the box
+	// stretches every step through that dimension. The argument lost to a
+	// measurement. A decay here is a half-life, and the only real recording in
+	// the repository has a fundamental whose half-life is 677 ms, so a 500 ms
+	// box could not contain the one bar the model is meant to reproduce. Two
+	// seconds covers a long-ringing bar's fundamental with room to spare; the
+	// floor rises from the 0.1 ms validation minimum to half a millisecond
+	// because a mode that dies within a sample is a click, not a partial, and
+	// the search has no business spending steps there.
+	DecayMsSearchMin = 0.5
+	DecayMsSearchMax = 2000.0
 
 	// HarmonicGainMin and HarmonicGainMax bound both sets of harmonic gains --
 	// ModeParams.Harmonics, the partials riding on one mode, and

@@ -34,8 +34,8 @@ function built(variant: string, values: Record<string, string>) {
 }
 
 describe("mayflyTuningFieldsFor", () => {
-  it("returns only the shared knobs for auto", () => {
-    const fields = fieldsFor("auto");
+  it("returns only the shared knobs when no dialect is known", () => {
+    const fields = fieldsFor("");
 
     expect(fields.length).toBeGreaterThan(0);
     expect(fields.every((field) => field.variant === "")).toBe(true);
@@ -45,7 +45,7 @@ describe("mayflyTuningFieldsFor", () => {
   });
 
   it("returns the shared knobs plus the dialect's own", () => {
-    const shared = fieldsFor("auto");
+    const shared = fieldsFor("");
     const desma = fieldsFor("desma");
 
     expect(desma.length).toBeGreaterThan(shared.length);
@@ -82,16 +82,18 @@ describe("buildMayflyTuningDocument", () => {
   });
 
   it("reads each kind as its own type", () => {
-    const result = built("gsasma", {
+    // hmma because it owns the only bool a dialect other than mpma has:
+    // apply_obl_to_global_best moved here from gsasma in mayfly v0.7.0.
+    const result = built("hmma", {
       selection: "rank",
       apply_obl_to_global_best: "true",
-      cooling_rate: "0.5",
+      cauchy_mutation_rate: "0.5",
       nm: "3",
     });
 
     expect(result.document.selection).toBe("rank");
     expect(result.document.apply_obl_to_global_best).toBe(true);
-    expect(result.document.cooling_rate).toBe(0.5);
+    expect(result.document.cauchy_mutation_rate).toBe(0.5);
     expect(result.document.nm).toBe(3);
   });
 
@@ -103,7 +105,6 @@ describe("buildMayflyTuningDocument", () => {
       min_iterations: "5",
       epochs: "3",
       restarts: "1",
-      classify_evals: "400",
       npop: "40",
     });
 
@@ -116,7 +117,6 @@ describe("buildMayflyTuningDocument", () => {
     expect(result.document.schedule).toEqual({
       epochs: 3,
       restarts: 1,
-      classify_evals: 400,
     });
     // The nested keys never appear at the top level as well.
     expect(result.document).not.toHaveProperty("target_cost");
@@ -141,7 +141,7 @@ describe("buildMayflyTuningDocument", () => {
   it("never carries a knob the given fields do not list", () => {
     // The shared table has no elite_count, so a value left over from a
     // previously selected dialect cannot reach the document.
-    const result = built("auto", { elite_count: "4", npop: "40" });
+    const result = built("", { elite_count: "4", npop: "40" });
 
     expect(result.document).not.toHaveProperty("elite_count");
     expect(result.count).toBe(1);

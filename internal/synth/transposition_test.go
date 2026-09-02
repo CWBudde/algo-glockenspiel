@@ -188,22 +188,26 @@ func TestDroppedNoteOnsCountsRefusedNotes(t *testing.T) {
 // rather than against the number itself.
 //
 // The worst case a preset can present is a mode sitting at the top of the
-// optimizer's search box, DecayMsSearchMax, transposed to the bottom of the
-// playable keyboard. Every fit can produce such a preset, so the validation
-// ceiling has to admit it -- otherwise the optimizer emits presets the
-// synthesizer refuses to play, which is precisely the failure this change
-// repairs.
+// box a fit at the default note searches -- the authoring ceiling for that
+// note, which the optimizer narrows its decay box to -- transposed to the
+// bottom of the playable keyboard. Every fit can produce such a preset, so
+// the validation ceiling has to admit it -- otherwise the optimizer emits
+// presets the synthesizer refuses to play, which is precisely the failure
+// this change repairs.
 func TestValidationCeilingAdmitsTheWorstCaseTransposition(t *testing.T) {
 	// The transposition in scaledParamsForNote, restated here so the test
 	// fails if either side of the relationship moves.
 	ratio := math.Pow(2, float64(KeyboardFirstNote-defaultPresetNote)/12)
-	worstCase := model.DecayMsSearchMax / ratio
+	worstCase := model.AuthoredDecayMsMax(defaultPresetNote) / ratio
 
-	if worstCase > model.DecayMsValidationMax {
-		t.Fatalf("a preset at the search bound (%g ms) transposed to note %d needs %.1f ms, "+
+	// A round trip through the ratio lands within an ulp of the ceiling.
+	if worstCase > model.DecayMsValidationMax*(1+1e-12) {
+		t.Fatalf("a preset at the authored ceiling (%g ms) transposed to note %d needs %.1f ms, "+
 			"past the validation ceiling of %g ms",
-			model.DecayMsSearchMax, KeyboardFirstNote, worstCase, model.DecayMsValidationMax)
+			model.AuthoredDecayMsMax(defaultPresetNote), KeyboardFirstNote, worstCase, model.DecayMsValidationMax)
 	}
+
+	worstCase = math.Min(worstCase, model.DecayMsValidationMax)
 
 	params := model.BarParams{
 		InputMix:        1.0,
@@ -219,14 +223,15 @@ func TestValidationCeilingAdmitsTheWorstCaseTransposition(t *testing.T) {
 	}
 }
 
-// TestSearchBoundIsUnchanged guards the half of the split that must not move.
-// Raising the validation ceiling widens what a preset file may contain; it must
-// not widen what a fit searches, because the optimizer's decay range is
-// log-encoded and stretching it by an order of magnitude would change every
-// fit's behaviour for reasons that have nothing to do with transposition.
-func TestSearchBoundIsUnchanged(t *testing.T) {
-	if model.DecayMsSearchMax != 500.0 {
-		t.Fatalf("optimizer decay bound = %g ms, want 500", model.DecayMsSearchMax)
+// TestSearchBoundIsTwoSeconds pins the search box Phase 8.3 set. Raising the
+// validation ceiling widens what a preset file may contain; it must not widen
+// what a fit searches, which is this box narrowed to the note's authoring
+// ceiling. The box itself is a physical claim: the one recording in the
+// repository has a fundamental with a 677 ms half-life, and a box that cannot
+// hold it cannot fit it.
+func TestSearchBoundIsTwoSeconds(t *testing.T) {
+	if model.DecayMsSearchMax != 2000.0 || model.DecayMsSearchMin != 0.5 {
+		t.Fatalf("optimizer decay box = [%g, %g] ms, want [0.5, 2000]", model.DecayMsSearchMin, model.DecayMsSearchMax)
 	}
 
 	// The other half of this guard -- that the optimizer's search box actually
@@ -332,40 +337,40 @@ func TestPresetsPastTheirBaseNoteCeilingAreRefusedAtLoad(t *testing.T) {
 	}
 }
 
-// TestSearchBoundIsAuthorableOnlyUpToNote75 states, as an assertion, the fact
+// TestSearchBoundIsAuthorableOnlyUpToNote51 states, as an assertion, the fact
 // the old derivation of DecayMsValidationMax silently assumed away: the
 // optimizer's decay box and the authoring ceiling agree only over part of the
-// keyboard. Above note 75 the optimizer can propose a decay a preset at that
-// position may not carry.
+// keyboard. Above note 51 the box is wider than a preset at that position may
+// carry, which is why the objective narrows it to the ceiling for its note.
 //
 // This is a real edge rather than a curiosity, and pinning it is what keeps the
 // two constants honest with each other: if either moves, this test says where
 // the crossover went.
-func TestSearchBoundIsAuthorableOnlyUpToNote75(t *testing.T) {
-	if got := model.AuthoredDecayMsMax(75); got < model.DecayMsSearchMax {
-		t.Errorf("at base note 75 the ceiling is %g ms, below the search bound %g", got, model.DecayMsSearchMax)
+func TestSearchBoundIsAuthorableOnlyUpToNote51(t *testing.T) {
+	if got := model.AuthoredDecayMsMax(51); got < model.DecayMsSearchMax {
+		t.Errorf("at base note 51 the ceiling is %g ms, below the search bound %g", got, model.DecayMsSearchMax)
 	}
 
-	if got := model.AuthoredDecayMsMax(76); got >= model.DecayMsSearchMax {
-		t.Errorf("at base note 76 the ceiling is %g ms, still at or above the search bound %g",
+	if got := model.AuthoredDecayMsMax(52); got >= model.DecayMsSearchMax {
+		t.Errorf("at base note 52 the ceiling is %g ms, still at or above the search bound %g",
 			got, model.DecayMsSearchMax)
 	}
 }
 
-// TestBaseFrequencyDoesNotReachTheAudio pins the property the `just
-// refit-default` recipe leans on when it says the fit's base_frequency may be
-// normalised back to 440 by hand.
+// TestBaseFrequencyDoesNotReachTheAudio pins the property the optimizer's
+// codec leans on when it writes the starting preset's base_frequency through
+// rather than searching it.
 //
 // base_frequency is carried through TransposeToNote and range-checked by
 // ValidateBarParams, and that is the whole of its life in the model: Bar builds
 // its oscillators from each mode's own Frequency, so nothing downstream ever
-// reads it. Where it does matter is internal/optimizer, which encodes a mode's
-// frequency as log10(Frequency / BaseFrequency) -- it is the anchor the search
-// space is expressed against, not a parameter of the instrument. A fit is
-// therefore free to drift it anywhere that still spans its modes, and the fit
-// that produced the shipped preset drifted it to 1499 Hz.
+// reads it. Until Phase 8.3 internal/optimizer encoded a mode's frequency as
+// log10(Frequency / BaseFrequency), which made the base a gauge freedom -- the
+// fit that produced the shipped preset drifted it to 1499 Hz and the recipe
+// said to set it back to 440 by hand. The codec now encodes frequencies in
+// hertz and leaves the base alone.
 //
-// Setting it back to 440 has to be free, and this says it is. The notes are the
+// Setting it to anything has to be free, and this says it is. The notes are the
 // two ends of the keyboard plus the preset's own, because transposition scales
 // base_frequency by the same ratio as everything else, so a note far from the
 // preset's is where an accidental dependency would show first.

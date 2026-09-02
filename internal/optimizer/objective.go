@@ -5,8 +5,10 @@ import (
 	"math"
 	"sync"
 
+	"github.com/cwbudde/algo-glockenspiel/internal/analysis"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/cwbudde/algo-glockenspiel/internal/synth"
+	"github.com/cwbudde/algo-glockenspiel/model"
 )
 
 const (
@@ -34,6 +36,15 @@ const (
 	MetricLog Metric = "log"
 
 	MetricSpectral Metric = "spectral"
+
+	// MetricBalanced, MetricPlacement and MetricPolish are the composite
+	// objective under the profile of that name: every term in Metrics,
+	// scored by Metrics.Score. Balanced is the default; placement weights
+	// the partials for a global stage; polish weights the waveform for a
+	// local one.
+	MetricBalanced  Metric = "balanced"
+	MetricPlacement Metric = "placement"
+	MetricPolish    Metric = "polish"
 )
 
 // ObjectiveConfig carries the optional knobs of an objective function.
@@ -52,6 +63,11 @@ type ObjectiveConfig struct {
 	// convenient for the built-in defaults but silently discards a range the
 	// caller asked for. Set this whenever the bounds came from the user.
 	StrictBounds bool
+
+	// Analysis is the reference's measured partials for the composite
+	// objective's partial term, as `glockenspiel analyze` writes them. Nil
+	// measures the reference at construction.
+	Analysis *analysis.Measurement
 }
 
 // DefaultObjectiveConfig returns the configuration used by the plain
@@ -101,6 +117,17 @@ type ObjectiveFunction struct {
 	metric     Metric
 	gain       GainMode
 	logFloor   float64
+
+	// profile is the composite profile for a composite metric.
+	profile Profile
+
+	// composite is the reference side of the composite terms. It is built at
+	// construction for a composite metric and on first use for a legacy one,
+	// so EvaluateMetrics works under every metric without every legacy
+	// objective paying for it.
+	composite     *compositeReference
+	compositeOnce sync.Once
+	analysis      *analysis.Measurement
 }
 
 // newRenderState builds an independent preset/synthesizer pair from the template.
@@ -141,7 +168,15 @@ func NewObjectiveFunctionWithConfig(reference []float32, template *preset.Preset
 		newCodec = NewParamCodecWithStrictBounds
 	}
 
-	codec, err := newCodec(&template.Parameters, config.Bounds)
+	// The decay ceiling depends on the note the preset is authored at, which
+	// the bounds cannot know and the codec does not: a search that could
+	// write 2000 ms at note 69 would produce a preset the file refuses.
+	bounds, err := narrowDecayBounds(config.Bounds, template.Note)
+	if err != nil {
+		return nil, err
+	}
+
+	codec, err := newCodec(&template.Parameters, bounds)
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +194,8 @@ func NewObjectiveFunctionWithConfig(reference []float32, template *preset.Preset
 		}
 	}
 
+	profile, _ := ProfileFor(config.Metric)
+
 	obj := &ObjectiveFunction{
 		reference:  append([]float32(nil), reference...),
 		template:   *template,
@@ -173,6 +210,12 @@ func NewObjectiveFunctionWithConfig(reference []float32, template *preset.Preset
 		metric:   config.Metric,
 		gain:     config.Gain,
 		logFloor: defaultLogErrorFloor,
+		profile:  profile,
+		analysis: config.Analysis,
+	}
+
+	if config.Metric.Composite() {
+		obj.compositeReference()
 	}
 
 	// Fail here rather than inside a pooled allocation, where there is nowhere
@@ -216,8 +259,8 @@ func validateObjectiveInputs(reference []float32, template *preset.Preset, sampl
 		return fmt.Errorf("reference audio cannot be empty")
 	}
 
-	if metric != MetricRMS && metric != MetricLog && metric != MetricSpectral {
-		return fmt.Errorf("unsupported metric %q", metric)
+	if _, err := ParseMetric(string(metric)); err != nil {
+		return err
 	}
 
 	return preset.Validate(template)
@@ -260,6 +303,10 @@ func (o *ObjectiveFunction) Evaluate(encoded []float64) float64 {
 	state.working.Parameters = *params
 	rendered := state.engine.RenderNote(o.note, o.velocity, o.duration)
 
+	if o.metric.Composite() {
+		return o.metrics(rendered, params).Score(o.profile)
+	}
+
 	aligned, target := o.align.Align(rendered, o.reference)
 
 	switch o.metric {
@@ -272,6 +319,57 @@ func (o *ObjectiveFunction) Evaluate(encoded []float64) float64 {
 	default:
 		return math.Inf(1)
 	}
+}
+
+// compositeReference builds the reference side of the composite terms once.
+func (o *ObjectiveFunction) compositeReference() *compositeReference {
+	o.compositeOnce.Do(func() {
+		o.composite = newCompositeReference(o.reference, o.sampleRate, o.analysis)
+	})
+
+	return o.composite
+}
+
+// metrics takes every composite term for a render of params.
+func (o *ObjectiveFunction) metrics(rendered []float32, params *model.BarParams) Metrics {
+	composite := o.compositeReference()
+
+	return composite.measure(rendered, o.reference, o.align,
+		modelPartials(params, o.template.Note, o.note, o.sampleRate, composite.partialFloor))
+}
+
+// Profile returns the composite profile the objective scores with, which is
+// the zero Profile for a legacy metric.
+func (o *ObjectiveFunction) Profile() Profile {
+	return o.profile
+}
+
+// Metric returns the metric the objective was built with.
+func (o *ObjectiveFunction) Metric() Metric {
+	return o.metric
+}
+
+// EvaluateMetrics decodes and renders a candidate exactly as Evaluate does and
+// returns every composite term for it. Under a composite metric,
+// Metrics.Score(Profile()) is what Evaluate returns for the same candidate.
+// It works under a legacy metric too, where it is a report rather than the
+// cost.
+func (o *ObjectiveFunction) EvaluateMetrics(encoded []float64) (Metrics, error) {
+	params, err := o.codec.DecodeParams(encoded)
+	if err != nil {
+		return Metrics{}, err
+	}
+
+	state, ok := o.states.Get().(*renderState)
+	if !ok || state == nil {
+		return Metrics{}, fmt.Errorf("render state unavailable")
+	}
+	defer o.states.Put(state)
+
+	state.working.Parameters = *params
+	rendered := state.engine.RenderNote(o.note, o.velocity, o.duration)
+
+	return o.metrics(rendered, params), nil
 }
 
 // spectralGainDB converts the least-squares optimal time-domain gain into the

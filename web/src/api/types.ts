@@ -44,6 +44,14 @@ export function isTerminal(state: FitState): boolean {
  * frame are one whole snapshot -- never a delta -- so a client that reconnects
  * mid-run reads the same shape it was streaming.
  */
+/** `optimizer.PinnedDimension`: one result dimension sitting on a bound. */
+export interface PinnedDimension {
+  name: string;
+  value: number;
+  bound: "min" | "max";
+  limit: number;
+}
+
 export interface FitSnapshot {
   jobId: string;
   state: FitState;
@@ -77,6 +85,27 @@ export interface FitSnapshot {
   optimizer: OptimizerName;
   metric: MetricName;
 
+  /**
+   * `optimizer.Metrics`: the breakdown of the best point so far, one raw
+   * term per thing the composite objective measures, whatever metric the run
+   * scores by. A term the reference was too short to measure is null. Absent
+   * until the first report.
+   */
+  metrics?: FitMetrics;
+
+  /**
+   * How many of the starting modes came from the reference's partials; zero
+   * when the starting preset's own modes were kept (`modes: -1`).
+   */
+  seededModes: number;
+
+  /**
+   * The dimensions of the result that sit on a bound of the search box,
+   * once there is a result. A pinned dimension is one the search wanted to
+   * push past the box; `value` and `limit` are in the preset's own units.
+   */
+  pinned?: PinnedDimension[];
+
   /** RFC 3339 timestamps, as Go's time.Time marshals them. */
   startedAt: string;
   finishedAt?: string;
@@ -90,9 +119,9 @@ export interface FitSnapshot {
 
   /**
    * What the mayfly backend settled on, present only once a mayfly run has
-   * resolved its configuration. This is the whole point of reporting it: with
-   * `variant: "auto"` the user asked the optimizer to choose the dialect, and
-   * without an echo there is no way to learn which one it chose.
+   * resolved its configuration. This is the whole point of reporting it: a
+   * preset chooses a dialect without naming it, and without an echo there is
+   * no way to learn which one it chose.
    */
   mayflyVariant?: string;
 
@@ -102,9 +131,6 @@ export interface FitSnapshot {
    * verbatim and never passed through `Number()`.
    */
   mayflySeed?: string;
-
-  /** Why an automatically chosen dialect was chosen. Empty when none was. */
-  mayflyRecommendation?: string;
 }
 
 /**
@@ -115,30 +141,49 @@ export interface FitSnapshot {
  */
 export type FitEventName = "progress" | "done" | "shutdown";
 
+/** One term of `optimizer.Metrics`, as the snapshot carries it. */
+export interface FitMetrics {
+  partial_cents: number | null;
+  partial_level_db: number | null;
+  partial_decay_octaves: number | null;
+  partial_missing: number | null;
+  partial_extra: number | null;
+  spectral_fine_db: number | null;
+  spectral_coarse_db: number | null;
+  envelope_db: number | null;
+  decay_slope_dbps: number | null;
+  waveform: number | null;
+  gain_db: number | null;
+  waveform_gain_db: number | null;
+  lag: number;
+  overlap: number;
+  reference_partials: number;
+  model_partials: number;
+  matched: number;
+}
+
 /* ------------------------------------------------------------------ */
 /* The request                                                         */
 /* ------------------------------------------------------------------ */
 
-/** `optimizer.ParseMetric`'s vocabulary. */
-export type MetricName = "rms" | "log" | "spectral";
+/**
+ * `optimizer.ParseMetric`'s vocabulary: the three composite profiles, then
+ * the single-term legacy metrics.
+ */
+export type MetricName =
+  "balanced" | "placement" | "polish" | "rms" | "log" | "spectral";
 
 /** `selectOptimizer`'s vocabulary. */
 export type OptimizerName = "simple" | "mayfly";
 
-/**
- * `MayflyOptimizer.Validate`'s vocabulary.
- *
- * "auto" is a request rather than a dialect: it asks the optimizer to measure
- * the landscape and pick one. Which one it picked is only knowable afterwards,
- * from `FitSnapshot.mayflyVariant`.
- */
+/** `MayflyOptimizer.Validate`'s vocabulary. */
 export const MAYFLY_VARIANTS = [
-  "auto",
   "ma",
   "desma",
   "olce",
   "eobbma",
   "gsasma",
+  "hmma",
   "mpma",
   "aoblmoa",
 ] as const;
@@ -178,6 +223,9 @@ export const MAYFLY_SELECTIONS = ["rank", "tournament"] as const;
 export type MayflySelection = (typeof MAYFLY_SELECTIONS)[number];
 
 export const METRIC_NAMES: readonly MetricName[] = [
+  "balanced",
+  "placement",
+  "polish",
   "rms",
   "log",
   "spectral",
@@ -205,6 +253,13 @@ export const OPTIMIZER_NAMES: readonly OptimizerName[] = [
 export interface FitRequestFields {
   note: number;
   velocity: number;
+
+  /**
+   * How the starting modes are chosen, as `--modes` is on the command line:
+   * 0 seeds one mode per partial the reference's analysis lists, N seeds the
+   * strongest N, -1 keeps the starting preset's own modes. Absent means 0.
+   */
+  modes?: number;
   optimizer: OptimizerName;
   metric: MetricName;
   maxIterations: number;
@@ -265,7 +320,7 @@ export const DEFAULT_FIT_REQUEST: FitRequestFields = {
   note: 69,
   velocity: 100,
   optimizer: "simple",
-  metric: "rms",
+  metric: "balanced",
   maxIterations: 100,
   timeBudget: "30s",
   reportEvery: 10,
@@ -357,9 +412,9 @@ export type BoundsRange = [min: number, max: number];
 export interface BoundsDocument {
   input_mix?: BoundsRange;
   filter_freq?: BoundsRange;
-  base_frequency?: BoundsRange;
   amplitude?: BoundsRange;
-  frequency_mult?: BoundsRange;
+  /** A mode's frequency in hertz, as the preset writes it. */
+  frequency?: BoundsRange;
   decay_ms?: BoundsRange;
   harmonic_gain?: BoundsRange;
 }
@@ -370,9 +425,8 @@ export type BoundsKey = keyof BoundsDocument;
 export const BOUNDS_KEYS: readonly BoundsKey[] = [
   "input_mix",
   "filter_freq",
-  "base_frequency",
   "amplitude",
-  "frequency_mult",
+  "frequency",
   "decay_ms",
   "harmonic_gain",
 ] as const;
@@ -384,8 +438,7 @@ export const BOUNDS_KEYS: readonly BoundsKey[] = [
  */
 export const LOG_ENCODED_BOUNDS_KEYS: readonly BoundsKey[] = [
   "filter_freq",
-  "base_frequency",
-  "frequency_mult",
+  "frequency",
   "decay_ms",
 ] as const;
 
@@ -397,28 +450,31 @@ export const LOG_ENCODED_BOUNDS_KEYS: readonly BoundsKey[] = [
  * validation and score +Inf, so the fit would burn its whole budget to produce
  * nothing. Mirroring the check here reports it before the reference is
  * uploaded rather than after.
- *
- * `frequency_mult` is deliberately absent, exactly as it is there: it is a
- * multiplier, and what the model bounds is the mode frequency it produces
- * together with `base_frequency`, not the multiplier itself.
  */
 export const MODEL_BOUNDS_LIMITS: Partial<Record<BoundsKey, BoundsRange>> = {
   input_mix: [0, 2],
   filter_freq: [20, 20000],
-  base_frequency: [0.01, 50000],
   amplitude: [-2, 2],
+  frequency: [0.01, 50000],
   decay_ms: [0.1, 5000],
   harmonic_gain: [0, 2],
 };
 
-/** `optimizer.DefaultParamBounds`, shown as the placeholder for each field. */
+/**
+ * `optimizer.DefaultParamBounds`, shown as the placeholder for each field.
+ *
+ * Two of these are narrowed per fit before the search starts, without a
+ * document: `frequency` to half the reference's fundamental up to 0.45 of
+ * its sample rate, and `decay_ms` to what a preset at the starting preset's
+ * note may carry. A document replaces the whole box, so a `frequency` key
+ * in one is the box that runs.
+ */
 export const DEFAULT_PARAM_BOUNDS: Required<BoundsDocument> = {
   input_mix: [0, 2],
   filter_freq: [20, 20000],
-  base_frequency: [0.01, 50000],
   amplitude: [-2, 2],
-  frequency_mult: [0.5, 10],
-  decay_ms: [0.1, 500],
+  frequency: [20, 20000],
+  decay_ms: [0.5, 2000],
   harmonic_gain: [0, 2],
 };
 
@@ -443,7 +499,6 @@ export interface MayflyConvergenceDocument {
 export interface MayflyScheduleDocument {
   epochs?: number;
   restarts?: number;
-  classify_evals?: number;
 }
 
 /** What a flat tuning knob may hold, by `MayflyTuningField.kind`. */

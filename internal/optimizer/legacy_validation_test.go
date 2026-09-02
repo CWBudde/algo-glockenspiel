@@ -162,13 +162,12 @@ func loadLegacyReferenceWAV(t *testing.T) ([]float32, int) {
 
 func legacyValidationBounds(target *model.BarParams) ParamBounds {
 	return ParamBounds{
-		InputMix:      Range{Min: math.Max(model.InputMixMin, target.InputMix-0.35), Max: math.Min(model.InputMixMax, target.InputMix+0.35)},
-		FilterFreq:    Range{Min: math.Max(model.FilterFrequencyMinHz, target.FilterFrequency*0.6), Max: math.Min(model.FilterFrequencyMaxHz, target.FilterFrequency*1.4)},
-		BaseFrequency: Range{Min: target.BaseFrequency, Max: target.BaseFrequency},
-		Amplitude:     Range{Min: model.AmplitudeMin, Max: model.AmplitudeMax},
-		FrequencyMult: Range{Min: 0.05, Max: 12},
-		DecayMs:       Range{Min: model.DecayMsMin, Max: model.DecayMsSearchMax},
-		HarmonicGain:  Range{Min: model.HarmonicGainMin, Max: model.HarmonicGainMax},
+		InputMix:     Range{Min: math.Max(model.InputMixMin, target.InputMix-0.35), Max: math.Min(model.InputMixMax, target.InputMix+0.35)},
+		FilterFreq:   Range{Min: math.Max(model.FilterFrequencyMinHz, target.FilterFrequency*0.6), Max: math.Min(model.FilterFrequencyMaxHz, target.FilterFrequency*1.4)},
+		Amplitude:    Range{Min: model.AmplitudeMin, Max: model.AmplitudeMax},
+		Frequency:    Range{Min: target.BaseFrequency * 0.05, Max: target.BaseFrequency * 12},
+		DecayMs:      Range{Min: model.DecayMsSearchMin, Max: model.DecayMsSearchMax},
+		HarmonicGain: Range{Min: model.HarmonicGainMin, Max: model.HarmonicGainMax},
 	}
 }
 

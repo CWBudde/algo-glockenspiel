@@ -151,14 +151,16 @@ const EMPTY_BOUNDS_ROWS: BoundsRows = Object.fromEntries(
 const BOUNDS_LABELS: Record<BoundsKey, string> = {
   input_mix: "Input mix",
   filter_freq: "Filter frequency (Hz)",
-  base_frequency: "Base frequency (Hz)",
   amplitude: "Mode amplitude",
-  frequency_mult: "Frequency multiplier",
+  frequency: "Mode frequency (Hz)",
   decay_ms: "Decay (ms)",
   harmonic_gain: "Harmonic gain",
 };
 
 const METRIC_LABELS: Record<MetricName, string> = {
+  balanced: "balanced — partials, spectrum, envelope and waveform together",
+  placement: "placement — partial-heavy, for a global search",
+  polish: "polish — waveform-heavy, for a local refinement",
   rms: "rms — root mean square of the time-domain difference",
   log: "log — logarithmic amplitude difference",
   spectral: "spectral — magnitude spectrum difference",
@@ -430,9 +432,7 @@ function tuningRangeError(
 
 /** What one knob contributes: a value, nothing at all, or a reason it cannot. */
 type ParsedKnob =
-  | { value: MayflyTuningValue }
-  | { omitted: true }
-  | { error: string };
+  { value: MayflyTuningValue } | { omitted: true } | { error: string };
 
 /** Reads one knob according to its kind. An empty field is omitted, never zero. */
 function parseTuningField(field: MayflyTuningField, raw: string): ParsedKnob {
@@ -478,8 +478,7 @@ function parseTuningField(field: MayflyTuningField, raw: string): ParsedKnob {
 
 /** What buildMayflyTuningDocument answers with. */
 type BuiltTuning =
-  | { document: MayflyTuningDocument; count: number }
-  | { errors: FieldErrors };
+  { document: MayflyTuningDocument; count: number } | { errors: FieldErrors };
 
 /**
  * Builds the `mayflyTuning` document from the knob editor.
@@ -668,11 +667,12 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
    * A preset picks a dialect of its own and the engine refuses a preset and an
    * explicit variant together, so a chosen preset takes the variant select off
    * the screen -- removed rather than disabled, for the reason the whole mayfly
-   * block is -- and leaves the editor with the shared knobs only, exactly as
-   * "auto" does.
+   * block is -- and leaves the editor with the shared knobs only. The empty
+   * string is how "no dialect is known yet" is spelled: it matches the shared
+   * knobs, whose own variant field is empty, and no dialect's.
    */
   const mayflyPreset = scalars.mayflyPreset.trim();
-  const tuningVariant = mayflyPreset === "" ? mayflyVariant : "auto";
+  const tuningVariant = mayflyPreset === "" ? mayflyVariant : "";
   const tuningFields = useMemo(
     () =>
       mayflyTuningFieldsFor(tuningVariant).filter(
@@ -1587,10 +1587,6 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
                           </option>
                         ))}
                       </select>
-                      <p className="fit-hint">
-                        <code>auto</code> measures the landscape and picks a
-                        dialect; the Status panel reports which one it chose.
-                      </p>
                     </div>
                   ) : null}
 
@@ -1822,11 +1818,11 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
                     written here, so a knob that moves upstream moves in the
                     form as well: `just gen-mayfly-tuning` is the only step.
                   */}
-                  {tuningVariant === "auto" ? (
+                  {tuningVariant === "" ? (
                     <p className="fit-hint">
-                      {mayflyPreset === ""
-                        ? "Only the shared knobs are shown: with the variant set to auto the dialect is chosen at run time, and a dialect's own knobs cannot be chosen before the dialect is."
-                        : "Only the shared knobs are shown: the preset chooses the dialect, and a dialect's own knobs cannot be chosen before the dialect is."}
+                      Only the shared knobs are shown: the preset chooses the
+                      dialect, and a dialect&apos;s own knobs cannot be chosen
+                      before the dialect is.
                     </p>
                   ) : null}
 

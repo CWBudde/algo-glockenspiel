@@ -539,3 +539,58 @@ func TestFloatSamplesAboveFullScaleSurvive(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeChannelsReturnsEveryChannelInFileOrder(t *testing.T) {
+	const frames = 64
+
+	interleaved := make([]float32, 0, frames*2)
+	for i := range frames {
+		value := float32(i+1) / frames
+		interleaved = append(interleaved, value, -value)
+	}
+
+	encoded, err := wavio.MarshalMono(44100, interleaved)
+	if err != nil {
+		t.Fatalf("MarshalMono failed: %v", err)
+	}
+
+	channels, sampleRate, err := wavio.DecodeChannels(bytes.NewReader(makeStereo(t, encoded)), "stereo")
+	if err != nil {
+		t.Fatalf("DecodeChannels failed: %v", err)
+	}
+
+	if sampleRate != 44100 {
+		t.Fatalf("sample rate = %d, want 44100", sampleRate)
+	}
+
+	if len(channels) != 2 {
+		t.Fatalf("decoded %d channels, want 2", len(channels))
+	}
+
+	for i := range frames {
+		want := float32(i+1) / frames
+
+		if len(channels[0]) != frames || len(channels[1]) != frames {
+			t.Fatalf("channel lengths %d and %d, want %d", len(channels[0]), len(channels[1]), frames)
+		}
+
+		if math.Abs(float64(channels[0][i]-want)) > quantisationStep {
+			t.Fatalf("left frame %d = %g, want %g", i, channels[0][i], want)
+		}
+
+		if math.Abs(float64(channels[1][i]+want)) > quantisationStep {
+			t.Fatalf("right frame %d = %g, want %g", i, channels[1][i], -want)
+		}
+	}
+
+	mono, _, err := wavio.DecodeMono(bytes.NewReader(makeStereo(t, encoded)), "stereo")
+	if err != nil {
+		t.Fatalf("DecodeMono failed: %v", err)
+	}
+
+	for i := range frames {
+		if mono[i] != channels[0][i] {
+			t.Fatalf("DecodeMono frame %d = %g, DecodeChannels channel 0 = %g; they must read through one path", i, mono[i], channels[0][i])
+		}
+	}
+}
