@@ -78,6 +78,21 @@ type Request struct {
 	MayflyNCRatio    *float64 `json:"mayflyNcRatio,omitempty"`
 	MayflySelection  string   `json:"mayflySelection,omitempty"`
 
+	// The CMA-ES settings, spelled as the fit service spells its form fields.
+	// A zero lambda takes Hansen's default population, a zero step size takes
+	// 0.3, a zero restart count restarts until the budget is spent, and a zero
+	// seed asks the backend to pick one.
+	//
+	// The seed is a number here while MayflySeed above is a string, because the
+	// two front ends spell it differently: the mayfly seed is typed into the
+	// form as an exact int64 and carried verbatim, while the CMA-ES seed
+	// travels as a JSON number, as web/src/api/types.ts declares it.
+	CmaesCovariance string  `json:"cmaesCovariance,omitempty"`
+	CmaesLambda     int     `json:"cmaesLambda,omitempty"`
+	CmaesSigma      float64 `json:"cmaesSigma,omitempty"`
+	CmaesSeed       int64   `json:"cmaesSeed,omitempty"`
+	CmaesRestarts   int     `json:"cmaesRestarts,omitempty"`
+
 	// MayflyTuning is the full tuning document, inline in the request rather
 	// than a separate input, which is where this front end departs from the
 	// HTTP one. Two reasons:
@@ -138,8 +153,11 @@ func New(request Request, referenceWAV, presetJSON, boundsJSON []byte) (*Prepare
 		return nil, err
 	}
 
-	backend, err := selectOptimizer(request, seed)
-	if err != nil {
+	// Selected once here to reject an unusable backend before the reference is
+	// decoded, and once more below, where the codec can supply the CMA-ES
+	// block partition. The fit service splits the same work the same way, for
+	// the same reason: a request is judged before any work is done for it.
+	if _, err = selectOptimizer(request, seed, nil); err != nil {
 		return nil, err
 	}
 
@@ -225,6 +243,11 @@ func New(request Request, referenceWAV, presetJSON, boundsJSON []byte) (*Prepare
 	}
 
 	initial, err := objective.Codec().EncodedBounds().Clamp(encoded)
+	if err != nil {
+		return nil, err
+	}
+
+	backend, err := selectOptimizer(request, seed, objective.Codec())
 	if err != nil {
 		return nil, err
 	}
@@ -539,10 +562,34 @@ func parseDuration(raw string) (time.Duration, error) {
 	return time.Duration(seconds * float64(time.Second)), nil
 }
 
-func selectOptimizer(request Request, seed int64) (optimizer.Optimizer, error) {
+// selectOptimizer maps the request's backend name onto an implementation. The
+// codec is nil on the validating call in New, which runs before there is one;
+// it carries the CMA-ES block partition, which only the codec can build.
+func selectOptimizer(request Request, seed int64, codec *optimizer.ParamCodec) (optimizer.Optimizer, error) {
 	switch request.Optimizer {
 	case "simple":
 		return &optimizer.SimpleOptimizer{}, nil
+	case "cmaes":
+		// MaxWorkers is one for the reason it is one below: a WASM build has
+		// no threads.
+		backend := &optimizer.CMAESOptimizer{
+			Covariance:   request.CmaesCovariance,
+			Lambda:       request.CmaesLambda,
+			InitialSigma: request.CmaesSigma,
+			Seed:         request.CmaesSeed,
+			MaxWorkers:   1,
+			RestartLimit: request.CmaesRestarts,
+		}
+
+		if codec != nil {
+			backend.BlockGroups = codec.BlockGroups()
+		}
+
+		if err := backend.Validate(request.MaxIterations); err != nil {
+			return nil, err
+		}
+
+		return backend, nil
 	case "mayfly":
 		// MaxWorkers is one because a WASM build has no threads: anything above
 		// one would serialise anyway, at the cost of the goroutine handover.

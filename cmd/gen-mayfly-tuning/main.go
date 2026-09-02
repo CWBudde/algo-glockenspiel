@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -228,26 +229,13 @@ See [optimizer.md](optimizer.md) for how the document fits into a run.
 
 `)
 
-	sections := []struct {
-		variant string
-		title   string
-	}{
-		{"", "Shared"},
-		{"desma", "DESMA"},
-		{"olce", "OLCE-MA"},
-		{"eobbma", "EOBBMA"},
-		{"gsasma", "GSASMA"},
-		{"mpma", "MPMA"},
-		{"aoblmoa", "AOBLMOA"},
-	}
-
 	fields := optimizer.MayflyTuningFields()
 
-	for _, section := range sections {
+	for _, variant := range sectionVariants(fields) {
 		rows := make([]optimizer.MayflyTuningField, 0, len(fields))
 
 		for _, field := range fields {
-			if field.Variant == section.variant {
+			if field.Variant == variant {
 				rows = append(rows, field)
 			}
 		}
@@ -264,7 +252,7 @@ See [optimizer.md](optimizer.md) for how the document fits into a run.
 			})
 		}
 
-		b.WriteString("## " + section.title + "\n\n")
+		b.WriteString("## " + sectionTitle(variant) + "\n\n")
 		b.WriteString(renderTable(table))
 		b.WriteString("\n")
 	}
@@ -272,6 +260,61 @@ See [optimizer.md](optimizer.md) for how the document fits into a run.
 	// The blank line after the last table is one section separator too many at
 	// the end of a file, and prettier trims it.
 	return []byte(strings.TrimRight(b.String(), "\n") + "\n")
+}
+
+// sectionVariants lists the dialects the table actually holds knobs for, in the
+// order the table declares them, with the shared section first. Deriving it
+// from the table rather than writing it out means a knob retagged to a dialect
+// with no section yet still reaches the document: a hard-coded list silently
+// dropped the two knobs that moved to hmma.
+func sectionVariants(fields []optimizer.MayflyTuningField) []string {
+	variants := make([]string, 0, len(fields))
+	seen := map[string]bool{}
+
+	for _, field := range fields {
+		if seen[field.Variant] {
+			continue
+		}
+
+		seen[field.Variant] = true
+
+		variants = append(variants, field.Variant)
+	}
+
+	slices.SortStableFunc(variants, func(a, b string) int {
+		return boolToInt(a != "") - boolToInt(b != "")
+	})
+
+	return variants
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+
+	return 0
+}
+
+// sectionTitle names a dialect the way its paper does. A dialect the map does
+// not know is titled by its own key upper-cased, so a new one documents itself.
+func sectionTitle(variant string) string {
+	titles := map[string]string{
+		"":        "Shared",
+		"desma":   "DESMA",
+		"olce":    "OLCE-MA",
+		"eobbma":  "EOBBMA",
+		"gsasma":  "GSASMA",
+		"hmma":    "HMMA",
+		"mpma":    "MPMA",
+		"aoblmoa": "AOBLMOA",
+	}
+
+	if title, ok := titles[variant]; ok {
+		return title
+	}
+
+	return strings.ToUpper(variant)
 }
 
 // renderTable pads every column to its widest cell, which is what prettier does

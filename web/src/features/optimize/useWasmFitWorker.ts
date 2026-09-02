@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   DEFAULT_FIT_REQUEST,
   isTerminal,
+  type CmaesCovariance,
   type FitRequestFields,
   type FitSnapshot,
   type MayflyTuningDocument,
@@ -68,6 +69,13 @@ function formOptionalNumber(form: FormData, name: string): number | undefined {
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
+/** Reads an optional string, keeping "absent" apart from an empty field. */
+function formOptionalString(form: FormData, name: string): string | undefined {
+  const value = form.get(name);
+
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
 /**
  * Lifts the tuning document out of the multipart body and back into JSON.
  *
@@ -98,6 +106,11 @@ function requestFromForm(
   const targetCost = formOptionalNumber(form, "mayflyTargetCost");
   const nc = formOptionalNumber(form, "mayflyNc");
   const ncRatio = formOptionalNumber(form, "mayflyNcRatio");
+  const cmaesCovariance = formOptionalString(form, "cmaesCovariance");
+  const cmaesLambda = formOptionalNumber(form, "cmaesLambda");
+  const cmaesSigma = formOptionalNumber(form, "cmaesSigma");
+  const cmaesSeed = formOptionalNumber(form, "cmaesSeed");
+  const cmaesRestarts = formOptionalNumber(form, "cmaesRestarts");
 
   return {
     note: formNumber(form, "note", DEFAULT_FIT_REQUEST.note),
@@ -172,6 +185,16 @@ function requestFromForm(
     ...(nc === undefined ? {} : { mayflyNc: nc }),
     ...(ncRatio === undefined ? {} : { mayflyNcRatio: ncRatio }),
     ...(tuning === undefined ? {} : { mayflyTuning: tuning }),
+    // The CMA-ES fields ride along only when the form sent them, which it does
+    // only for a CMA-ES fit. Every one of them has a backend default, so an
+    // absent key is the default rather than a missing setting.
+    ...(cmaesCovariance === undefined
+      ? {}
+      : { cmaesCovariance: cmaesCovariance as CmaesCovariance }),
+    ...(cmaesLambda === undefined ? {} : { cmaesLambda }),
+    ...(cmaesSigma === undefined ? {} : { cmaesSigma }),
+    ...(cmaesSeed === undefined ? {} : { cmaesSeed }),
+    ...(cmaesRestarts === undefined ? {} : { cmaesRestarts }),
   };
 }
 

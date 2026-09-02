@@ -18,6 +18,7 @@ import {
 } from "../../api/presets.generated";
 import {
   BOUNDS_KEYS,
+  CMAES_COVARIANCES,
   DEFAULT_FIT_REQUEST,
   DEFAULT_PARAM_BOUNDS,
   defaultReportEvery,
@@ -32,6 +33,7 @@ import {
   type BoundsDocument,
   type BoundsKey,
   type BoundsRange,
+  type CmaesCovariance,
   type FitSnapshot,
   type MayflyConvergenceDocument,
   type MayflyScheduleDocument,
@@ -104,6 +106,10 @@ interface ScalarFields {
   mayflyTargetCost: string;
   mayflyNc: string;
   mayflyNcRatio: string;
+  cmaesLambda: string;
+  cmaesSigma: string;
+  cmaesSeed: string;
+  cmaesRestarts: string;
 }
 
 /**
@@ -141,6 +147,10 @@ const INITIAL_SCALARS: ScalarFields = {
   mayflyTargetCost: "",
   mayflyNc: "",
   mayflyNcRatio: "",
+  cmaesLambda: String(DEFAULT_FIT_REQUEST.cmaesLambda),
+  cmaesSigma: String(DEFAULT_FIT_REQUEST.cmaesSigma),
+  cmaesSeed: String(DEFAULT_FIT_REQUEST.cmaesSeed),
+  cmaesRestarts: String(DEFAULT_FIT_REQUEST.cmaesRestarts),
 };
 
 const EMPTY_BOUNDS_ROWS: BoundsRows = Object.fromEntries(
@@ -606,6 +616,9 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
   const [mayflyVariant, setMayflyVariant] = useState<MayflyVariant>(
     DEFAULT_FIT_REQUEST.mayflyVariant,
   );
+  const [cmaesCovariance, setCmaesCovariance] = useState<CmaesCovariance>(
+    DEFAULT_FIT_REQUEST.cmaesCovariance ?? "separable",
+  );
   const [align, setAlign] = useState(DEFAULT_FIT_REQUEST.align);
   const [normalizeGain, setNormalizeGain] = useState(
     DEFAULT_FIT_REQUEST.normalizeGain,
@@ -625,6 +638,7 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
   const running = snapshot?.state === "running";
   const fitActions = actions ?? SERVER_ACTIONS;
   const mayfly = optimizer === "mayfly";
+  const cmaes = optimizer === "cmaes";
   const jobState =
     snapshot === null
       ? "Ready to start"
@@ -874,6 +888,68 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
       }
     }
 
+    let lambda: number | null = null;
+    let sigma: number | null = null;
+    let cmaesSeed: number | null = null;
+    let cmaesRestarts: number | null = null;
+
+    if (cmaes) {
+      const parsedLambda = parseInt10(
+        "The population",
+        scalars.cmaesLambda,
+        FIT_LIMITS.cmaesLambda.min,
+        FIT_LIMITS.cmaesLambda.max,
+      );
+      const parsedSigma = parseOptionalNumber(
+        "The step size",
+        scalars.cmaesSigma,
+        FIT_LIMITS.cmaesSigma.min,
+        FIT_LIMITS.cmaesSigma.max,
+      );
+      const parsedCmaesSeed = parseInt10(
+        "The seed",
+        scalars.cmaesSeed,
+        FIT_LIMITS.cmaesSeed.min,
+        FIT_LIMITS.cmaesSeed.max,
+      );
+      const parsedCmaesRestarts = parseInt10(
+        "The restart limit",
+        scalars.cmaesRestarts,
+        FIT_LIMITS.cmaesRestarts.min,
+        FIT_LIMITS.cmaesRestarts.max,
+      );
+
+      if ("error" in parsedLambda) {
+        found.cmaesLambda = parsedLambda.error;
+      } else if (parsedLambda.value === 1) {
+        // Zero is "take Hansen's default", so one is the only population the
+        // range admits that the backend then refuses.
+        found.cmaesLambda = "The population must be 0 or at least 2.";
+      } else {
+        lambda = parsedLambda.value;
+      }
+
+      if ("error" in parsedSigma) {
+        found.cmaesSigma = parsedSigma.error;
+      } else if (parsedSigma.value !== undefined) {
+        // Zero is left to travel: the backend reads it as "take the default",
+        // the same way it reads a zero population and a zero seed.
+        sigma = parsedSigma.value;
+      }
+
+      if ("error" in parsedCmaesSeed) {
+        found.cmaesSeed = parsedCmaesSeed.error;
+      } else {
+        cmaesSeed = parsedCmaesSeed.value;
+      }
+
+      if ("error" in parsedCmaesRestarts) {
+        found.cmaesRestarts = parsedCmaesRestarts.error;
+      } else {
+        cmaesRestarts = parsedCmaesRestarts.value;
+      }
+    }
+
     const bounds: BoundsDocument = {};
     let boundsCount = 0;
 
@@ -911,6 +987,10 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
           name === "mayflyTargetCost" ||
           name === "mayflyNc" ||
           name === "mayflyNcRatio" ||
+          name === "cmaesLambda" ||
+          name === "cmaesSigma" ||
+          name === "cmaesSeed" ||
+          name === "cmaesRestarts" ||
           name === "bounds" ||
           name.startsWith("bounds-") ||
           // Every knob of the tuning editor reports under this prefix, so the
@@ -1012,6 +1092,20 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
           "mayflyTuning.json",
         );
       }
+    }
+
+    if (cmaes) {
+      form.append("cmaesCovariance", cmaesCovariance);
+      form.append("cmaesLambda", String(lambda));
+
+      // An empty field is left out of the request entirely, which is how the
+      // service is told to keep its own default.
+      if (sigma !== null) {
+        form.append("cmaesSigma", String(sigma));
+      }
+
+      form.append("cmaesSeed", String(cmaesSeed));
+      form.append("cmaesRestarts", String(cmaesRestarts));
     }
 
     return { form, maxIterations: (maxIterations as { value: number }).value };
@@ -1830,6 +1924,129 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
                     {tuningFields.map((field) => tuningRow(field))}
                   </div>
                 </section>
+              </section>
+            ) : null}
+
+            {/* Removed rather than disabled when another backend is chosen,
+                for the reason the mayfly block above is. */}
+            {cmaes ? (
+              <section
+                aria-labelledby={fieldId("cmaes-heading")}
+                className="fit-advanced-section"
+              >
+                <h3 id={fieldId("cmaes-heading")}>CMA-ES optimizer</h3>
+
+                <div className="fit-row">
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("cmaesCovariance")}>
+                      Covariance
+                    </label>
+                    <select
+                      id={fieldId("cmaesCovariance")}
+                      onChange={(event) => {
+                        setCmaesCovariance(
+                          event.target.value as CmaesCovariance,
+                        );
+                      }}
+                      value={cmaesCovariance}
+                    >
+                      {CMAES_COVARIANCES.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="fit-hint">
+                      Separable learns the diagonal only; block learns a dense
+                      matrix per mode.
+                    </p>
+                  </div>
+
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("cmaesLambda")}>Population</label>
+                    <input
+                      aria-describedby={describedBy("cmaesLambda")}
+                      aria-invalid={errors.cmaesLambda !== undefined}
+                      id={fieldId("cmaesLambda")}
+                      inputMode="numeric"
+                      max={FIT_LIMITS.cmaesLambda.max}
+                      min={FIT_LIMITS.cmaesLambda.min}
+                      onChange={(event) => {
+                        setScalar("cmaesLambda", event.target.value);
+                      }}
+                      type="number"
+                      value={scalars.cmaesLambda}
+                    />
+                    <p className="fit-hint">
+                      0 takes Hansen&apos;s default, twelve at the dimensions
+                      this model encodes.
+                    </p>
+                    {fieldError("cmaesLambda")}
+                  </div>
+
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("cmaesSigma")}>Step size</label>
+                    <input
+                      aria-describedby={describedBy("cmaesSigma")}
+                      aria-invalid={errors.cmaesSigma !== undefined}
+                      id={fieldId("cmaesSigma")}
+                      inputMode="decimal"
+                      max={FIT_LIMITS.cmaesSigma.max}
+                      min={FIT_LIMITS.cmaesSigma.min}
+                      onChange={(event) => {
+                        setScalar("cmaesSigma", event.target.value);
+                      }}
+                      step="0.05"
+                      type="number"
+                      value={scalars.cmaesSigma}
+                    />
+                    <p className="fit-hint">
+                      A fraction of the search box; 0 takes the default of 0.3,
+                      which covers a third of it.
+                    </p>
+                    {fieldError("cmaesSigma")}
+                  </div>
+                </div>
+
+                <div className="fit-row">
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("cmaesSeed")}>Seed</label>
+                    <input
+                      aria-describedby={describedBy("cmaesSeed")}
+                      aria-invalid={errors.cmaesSeed !== undefined}
+                      id={fieldId("cmaesSeed")}
+                      inputMode="numeric"
+                      onChange={(event) => {
+                        setScalar("cmaesSeed", event.target.value);
+                      }}
+                      type="number"
+                      value={scalars.cmaesSeed}
+                    />
+                    <p className="fit-hint">0 picks a seed and reports it.</p>
+                    {fieldError("cmaesSeed")}
+                  </div>
+
+                  <div className="fit-field">
+                    <label htmlFor={fieldId("cmaesRestarts")}>Restarts</label>
+                    <input
+                      aria-describedby={describedBy("cmaesRestarts")}
+                      aria-invalid={errors.cmaesRestarts !== undefined}
+                      id={fieldId("cmaesRestarts")}
+                      inputMode="numeric"
+                      max={FIT_LIMITS.cmaesRestarts.max}
+                      min={FIT_LIMITS.cmaesRestarts.min}
+                      onChange={(event) => {
+                        setScalar("cmaesRestarts", event.target.value);
+                      }}
+                      type="number"
+                      value={scalars.cmaesRestarts}
+                    />
+                    <p className="fit-hint">
+                      0 restarts means restart until the budget is spent.
+                    </p>
+                    {fieldError("cmaesRestarts")}
+                  </div>
+                </div>
               </section>
             ) : null}
 

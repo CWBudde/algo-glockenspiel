@@ -131,6 +131,12 @@ export interface FitSnapshot {
    * verbatim and never passed through `Number()`.
    */
   mayflySeed?: string;
+
+  /**
+   * The zero-based index of the search in progress. Only the CMA-ES backend
+   * restarts, so it is absent for every other one.
+   */
+  restart?: number;
 }
 
 /**
@@ -174,7 +180,13 @@ export type MetricName =
   "balanced" | "placement" | "polish" | "rms" | "log" | "spectral";
 
 /** `selectOptimizer`'s vocabulary. */
-export type OptimizerName = "simple" | "mayfly";
+export type OptimizerName = "simple" | "mayfly" | "cmaes";
+
+/** `CMAESOptimizer.resolve`'s vocabulary: the covariance it learns. */
+export const CMAES_COVARIANCES = ["separable", "block"] as const;
+
+/** Derived from the list, for the reason MayflyVariant is. */
+export type CmaesCovariance = (typeof CMAES_COVARIANCES)[number];
 
 /** `MayflyOptimizer.Validate`'s vocabulary. */
 export const MAYFLY_VARIANTS = [
@@ -234,6 +246,7 @@ export const METRIC_NAMES: readonly MetricName[] = [
 export const OPTIMIZER_NAMES: readonly OptimizerName[] = [
   "simple",
   "mayfly",
+  "cmaes",
 ] as const;
 
 /**
@@ -309,6 +322,18 @@ export interface FitRequestFields {
    * `browserfit.Request` takes the document in the request JSON instead.
    */
   mayflyTuning?: MayflyTuningDocument;
+
+  /**
+   * The CMA-ES settings, sent only when that backend is chosen. Each one has a
+   * default the backend fills in, so an absent field is not a missing setting:
+   * `cmaesLambda: 0` takes Hansen's population, `cmaesSeed: 0` asks the backend
+   * to pick a seed, and `cmaesRestarts: 0` restarts until the budget is spent.
+   */
+  cmaesCovariance?: CmaesCovariance;
+  cmaesLambda?: number;
+  cmaesSigma?: number;
+  cmaesSeed?: number;
+  cmaesRestarts?: number;
 }
 
 /**
@@ -334,6 +359,11 @@ export const DEFAULT_FIT_REQUEST: FitRequestFields = {
   mayflyRestarts: 0,
   mayflyStagnation: 0,
   mayflySelection: "",
+  cmaesCovariance: "separable",
+  cmaesLambda: 0,
+  cmaesSigma: 0.3,
+  cmaesSeed: 0,
+  cmaesRestarts: 0,
 };
 
 /**
@@ -386,6 +416,18 @@ export const FIT_LIMITS = {
    */
   mayflyNc: { min: -1, max: 4096 },
   mayflyNcRatio: { min: 0, max: 4096 },
+  /** `maxCMAESLambda`; zero is "take Hansen's default" rather than a population. */
+  cmaesLambda: { min: 0, max: 4096 },
+  /** The step size is a fraction of the normalized box, so it cannot leave it. */
+  cmaesSigma: { min: 0, max: 1 },
+  /** `maxCMAESRestarts`; zero restarts until the budget is spent. */
+  cmaesRestarts: { min: 0, max: 1000 },
+  /**
+   * A seed is otherwise unbounded, but it travels as a JS number here, and a
+   * number stops representing every integer past 2^53: a value outside the safe
+   * range would reach the backend as a different seed than the one typed.
+   */
+  cmaesSeed: { min: Number.MIN_SAFE_INTEGER, max: Number.MAX_SAFE_INTEGER },
   /** `maxFitTimeBudget`, in seconds; the lower bound is exclusive. */
   timeBudgetSeconds: { min: 0, max: 3600 },
   /** `maxRenderSeconds`; the lower bound is exclusive. */

@@ -212,7 +212,7 @@ was not hand-tuned afterwards:
 
 ```
 glockenspiel fit --reference testdata/reference/glockenspiel_c5.wav --note 72 \
-  --optimizer mayfly --mayfly-pop 20 --mayfly-seed 1 --time-budget 90s --max-iter 100000
+  --optimizer mayfly --mayfly-pop 20 --seed 1 --time-budget 90s --max-iter 100000
 ```
 
 | Row                                | `balanced` | missing | extra | fine dB | coarse dB | env dB | waveform | matched |
@@ -241,6 +241,77 @@ the model stops it:
 
 Nothing here is a campaign result. It is one seed at one budget, and 8.5 exists because one
 run is not evidence; but it is the first run whose report says what to do next.
+
+## Engines after 8.4, 2026-09-02
+
+Phase 8.4 changed which engines exist and which one runs by default. Nothing here chooses a
+default by measurement; that is 8.5's campaign and 8.6's decision.
+
+**Dragonfly is out.** MayFlyCircleFit measured it against the same paired-block design its other
+optimizer reports use and it lost decisively: zero of twelve blocks in every arm, t = −16.8, and
+the best of 576 restarts worse than every baseline block
+(`docs/dragonfly-poc-report.md` in MayFlyCircleFit). That is not a close call a different
+objective could reverse, so Dragonfly is not a candidate in 8.5's designs and no wrapper for it
+exists here.
+
+**Every Mayfly number in this file's earlier sections is incomparable to a run taken now.**
+Mayfly moved from v0.6.0 to v0.7.1 on 2026-09-02. v0.7.0 was a correctness release that changed
+the update rules themselves: standard attraction uses the paper's scalar Cartesian distances,
+crossover retains offspring sex, mutation draws from the matching incumbent population, females
+take part in global-best and termination decisions, and non-finite objective values stop being
+rewarded. v0.7.1 changed no behaviour. Every Mayfly figure recorded above, and the benchmark
+rows in [user-guide.md](user-guide.md), was measured under v0.6.0: a seeded trajectory from that
+version does not reproduce, and the costs it reached are not a baseline for v0.7.1. The 90 s fit
+in "The search space after 8.3" is one of those numbers.
+
+**go-cma-es is pinned at v0.1.0, deliberately.** That version has a measured defect above a
+population of 256 in separable mode and 1024 in block mode, where `ActiveCMA` goes inert and
+covariance memory is dropped. This fit runs a population of twelve to fourteen by default and
+`--cmaes-lambda` is not expected past 64, so the ceiling is far above anything a fit here
+reaches. v0.2.0 fixes it and changes the sampling trajectory with it, which would split the 8.5
+campaign's numbers into a before and an after, so the bump waits until 8.6's tables exist. It is
+recorded under "Deferred" in [PLAN.md](../PLAN.md).
+
+### A smoke run of the three engines
+
+One 60 s run of each engine on the C5 recording at note 72 under `balanced`, seed 1, on twelve
+hardware threads. **This is a smoke test, not a comparison.** One run per engine at one budget
+on one seed says the wiring works and the reports are readable; it does not say which engine
+finds a better fit, and no error bar exists here to say whether any gap between two rows is
+larger than the spread of one engine over seeds. 8.5's campaign is the instrument that answers
+that question, over paired seed blocks at a matched evaluation budget.
+
+```
+glockenspiel fit --reference testdata/reference/glockenspiel_c5.wav --note 72 \
+  --optimizer cmaes --seed 1 --time-budget 60s --max-iter 100000 \
+  --work-dir out/smoke/cmaes-sep --output out/smoke/cmaes-sep.json
+
+glockenspiel fit --reference testdata/reference/glockenspiel_c5.wav --note 72 \
+  --optimizer cmaes --cmaes-covariance block --seed 1 --time-budget 60s --max-iter 100000 \
+  --work-dir out/smoke/cmaes-block --output out/smoke/cmaes-block.json
+
+glockenspiel fit --reference testdata/reference/glockenspiel_c5.wav --note 72 \
+  --optimizer mayfly --mayfly-pop 20 --seed 1 --time-budget 60s --max-iter 100000 \
+  --work-dir out/smoke/mayfly --output out/smoke/mayfly.json
+```
+
+| Engine                           | `balanced` | Restarts or rounds | Evaluations | Pinned  |
+| -------------------------------- | ---------: | ------------------ | ----------: | ------- |
+| `cmaes`, separable (the default) |   0.273463 | `restarts=2`       |      24,583 | 0 of 30 |
+| `cmaes`, block covariance        |   0.261791 | `restarts=1`       |      22,903 | 0 of 30 |
+| `mayfly`, DESMA, population 20   |   0.224395 | one round          |      27,290 | 5 of 30 |
+
+All three stopped on `time_budget` rather than a convergence criterion, and all three seeded
+eight modes from the recording's partials. The reference was read the same way in every run:
+`channel first of 2, cut 303..73068 (1.650 s, tail reached floor), gain +27.59 dB`. Both CMA-ES
+runs took Hansen's λ of 14 at the thirty dimensions eight modes encode, σ 0.3.
+
+Two things the rows do say, because they are structural rather than statistical. The CMA-ES runs
+finished with nothing on a bound and one of the eight reference partials matched; the Mayfly run
+finished with five dimensions pinned and six of eight partials matched, which is the seeded
+population doing what 8.3 built it for. And the Mayfly run reads 0.224 against the 0.180 the
+90 s fit above reads, but that fit ran under v0.6.0 for half again the budget, so the pair is an
+illustration of the incomparability warning rather than a measurement of either.
 
 ## What the baseline is for
 

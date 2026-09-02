@@ -1,0 +1,176 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
+	"github.com/spf13/cobra"
+)
+
+// TestFitCmdDefaultsToCMAES pins the Phase 8.4 default: the standalone
+// Nelder-Mead run stops being what a bare `fit` does, while staying
+// selectable.
+func TestFitCmdDefaultsToCMAES(t *testing.T) {
+	cmd := newFitCmd()
+
+	if got := cmd.Flags().Lookup("optimizer").DefValue; got != "cmaes" {
+		t.Fatalf("expected cmaes as the default optimizer, got %q", got)
+	}
+
+	if got := cmd.Flags().Lookup("cmaes-restarts").DefValue; got != "0" {
+		t.Fatalf("expected the default to restart until the budget is spent, got %q", got)
+	}
+
+	if got := cmd.Flags().Lookup("optimizer").Usage; !strings.Contains(got, "simple") {
+		t.Fatalf("expected simple to stay selectable in the usage text, got %q", got)
+	}
+}
+
+func TestFitCmdPolishFlagDefaults(t *testing.T) {
+	cmd := newFitCmd()
+
+	for flag, want := range map[string]string{
+		"polish":            "none",
+		"polish-iterations": "200",
+		"polish-budget":     "0s",
+		"polish-sigma":      "0.02",
+	} {
+		lookup := cmd.Flags().Lookup(flag)
+		if lookup == nil {
+			t.Fatalf("expected a --%s flag", flag)
+		}
+
+		if lookup.DefValue != want {
+			t.Fatalf("unexpected --%s default: got %q want %q", flag, lookup.DefValue, want)
+		}
+	}
+}
+
+func TestRunFitRejectsAnUnknownPolishEngine(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+
+	options := baseFitOptions(referencePath, filepath.Join(dir, "fitted.json"), filepath.Join(dir, "work"))
+	options.polish = "gradient-descent"
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	err := runFit(cmd, options)
+	if err == nil || !strings.Contains(err.Error(), "polish engine") {
+		t.Fatalf("expected the unknown engine to be named, got %v", err)
+	}
+}
+
+func TestRunFitReportsThePolishStage(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+
+	options := baseFitOptions(referencePath, filepath.Join(dir, "fitted.json"), filepath.Join(dir, "work"))
+	options.polish = "nelder-mead"
+	options.polishIterations = 5
+	options.polishSigma = 0.02
+
+	var out bytes.Buffer
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+
+	if err := runFit(cmd, options); err != nil {
+		t.Fatalf("runFit failed: %v", err)
+	}
+
+	line := out.String()
+	if !strings.Contains(line, "polish (nelder-mead): primary ") {
+		t.Fatalf("expected the polish line, got %q", line)
+	}
+
+	if !strings.Contains(line, "accepted") && !strings.Contains(line, "rejected") {
+		t.Fatalf("expected the polish line to state its verdict, got %q", line)
+	}
+}
+
+func TestRunFitRejectsAPolishStepWiderThanTheBox(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+
+	outputPath := filepath.Join(dir, "fitted.json")
+
+	options := baseFitOptions(referencePath, outputPath, filepath.Join(dir, "work"))
+	options.polish = "cmaes"
+	options.polishIterations = 5
+	options.polishSigma = 2
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	err := runFit(cmd, options)
+	if err == nil || !strings.Contains(err.Error(), "polish-sigma") {
+		t.Fatalf("expected the flag to be named, got %v", err)
+	}
+
+	// The refusal has to land before the search, not after it: the point of
+	// validating here is that an operator does not spend a whole fit to be told
+	// about a flag.
+	if _, statErr := os.Stat(outputPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no preset to be written, got %v", statErr)
+	}
+}
+
+func TestRunFitKeepsTheSearchResultWhenThePolishStageFails(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+	outputPath := filepath.Join(dir, "fitted.json")
+	workDir := filepath.Join(dir, "work")
+
+	previous := polishRun
+
+	t.Cleanup(func() { polishRun = previous })
+
+	polishRun = func(context.Context, *optimizer.ObjectiveFunction, []float64, optimizer.PolishOptions) (*optimizer.PolishResult, error) {
+		return nil, errors.New("engine exploded")
+	}
+
+	options := baseFitOptions(referencePath, outputPath, workDir)
+	options.polish = "nelder-mead"
+	options.polishIterations = 5
+	options.polishSigma = 0.02
+	options.checkpointEvery = 1
+
+	var out bytes.Buffer
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+
+	if err := runFit(cmd, options); err != nil {
+		t.Fatalf("expected a failed polish to be survivable, got %v", err)
+	}
+
+	line := out.String()
+	if !strings.Contains(line, "polish (nelder-mead) failed: engine exploded; keeping the search result") {
+		t.Fatalf("expected the failure to be reported, got %q", line)
+	}
+
+	if !strings.Contains(line, "Finished: best=") {
+		t.Fatalf("expected the run to report its result, got %q", line)
+	}
+
+	if _, err := os.Stat(outputPath); err != nil {
+		t.Fatalf("expected the preset to be written anyway: %v", err)
+	}
+
+	if _, err := optimizer.FindLatestCheckpoint(workDir); err != nil {
+		t.Fatalf("expected the final checkpoint to be written anyway: %v", err)
+	}
+}

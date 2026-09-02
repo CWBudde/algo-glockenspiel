@@ -19,7 +19,7 @@ import (
 //
 // The dependency is pinned to v0.1.0. That version has a measured defect above
 // a population of 256 in separable mode and 1024 in block mode, which does not
-// bite here: the fit runs at Hansen's default, twelve at nineteen dimensions,
+// bite here: the fit runs at Hansen's default, twelve at eighteen dimensions,
 // and --cmaes-lambda is not expected past 64. v0.2.0 changes the sampling
 // trajectory, so upgrading would make the numbers recorded before and after
 // incomparable; it is deferred until the 8.6 campaign figures are on record.
@@ -41,7 +41,7 @@ type CMAESOptimizer struct {
 	OnResolve func(ResolvedCMAES)
 
 	// Lambda is the population size. Zero takes Hansen's default,
-	// 4 + floor(3 ln n), which is twelve at nineteen dimensions.
+	// 4 + floor(3 ln n), which is twelve at eighteen dimensions.
 	Lambda int
 
 	// InitialSigma is the step size in the unit cube. Zero takes 0.3, which is
@@ -82,7 +82,7 @@ type ResolvedCMAES struct {
 }
 
 // The covariance modes this wrapper offers. The library also has a dense mode,
-// which is not exposed: nineteen dimensions of audio render per evaluation
+// which is not exposed: eighteen dimensions of audio render per evaluation
 // make the dense update's extra work irrelevant, but its extra samples are
 // not, and the block mode below is the structured middle ground this model has
 // an actual grouping for.
@@ -118,6 +118,15 @@ const (
 // OptimizeWithRestartsContext implements IPOP and BIPOP against an evaluation
 // budget, but the fit is bounded by wall-clock time, so the loop below runs
 // cold restarts until the time budget rather than a sample count is spent.
+//
+// A run must be given a budget of its own: opts.MaxIterations, opts.TimeBudget
+// or RestartLimit. A deadline on ctx is a stopping rule too, but it is not one
+// of the three, and it is not accepted in their place: with none of the three
+// the restart loop has no stopping rule it can see, so a caller that forgot
+// all of them gets a search that only a cancelled context ever ends, which as
+// a default is a hang rather than a search. A caller that genuinely wants
+// "until I cancel" can say so with a restart or iteration count it does not
+// expect to reach.
 func (o *CMAESOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc, initial []float64, bounds Bounds, opts OptimizeOptions) (*Result, error) {
 	if objective == nil {
 		return nil, fmt.Errorf("objective cannot be nil")
@@ -133,6 +142,13 @@ func (o *CMAESOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc, 
 
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	if opts.MaxIterations <= 0 && opts.TimeBudget <= 0 && o.RestartLimit <= 0 {
+		return nil, fmt.Errorf(
+			"cmaes needs a budget of its own: set max iterations, a time budget or a " +
+				"restart limit, a context deadline alone is not one",
+		)
 	}
 
 	start := time.Now()
@@ -187,9 +203,15 @@ func (o *CMAESOptimizer) runRestarts(
 		// preset or a resumed checkpoint into the search. Every later run is
 		// cold: a uniform mean makes it independent of the basin the previous
 		// runs settled in, which is the whole point of a restart.
+		//
+		// The mean's seed counts downwards from below the resolved seed, which
+		// keeps it clear of the library's own streams: those count upwards from
+		// resolved.Seed, and two generators built from one seed produce one
+		// sequence rather than two independent ones. It is still derived from
+		// the reported seed, so a restart is reproducible on its own.
 		mean := normalizedInitial
 		if completed > 0 {
-			mean = uniformMean(len(normalizedInitial), resolved.Seed+int64(completed))
+			mean = uniformMean(len(normalizedInitial), resolved.Seed-int64(completed)-1)
 		}
 
 		res, err := o.runOnce(ctx, tracker, resolved, mean, opts, completed)
@@ -308,8 +330,9 @@ func (o *CMAESOptimizer) config(resolved ResolvedCMAES, dims, iterations, restar
 }
 
 // uniformMean draws a cold run's starting mean uniformly in the unit cube. The
-// generator is derived from the run's seed rather than shared with the
-// library's, so the draw is reproducible from the reported seed alone.
+// caller derives the seed from the resolved one without colliding with the
+// library's stream for any run, so the draw is reproducible from the reported
+// seed alone and is not a replay of the samples the library then draws.
 func uniformMean(dims int, seed int64) []float64 {
 	rng := rand.New(rand.NewSource(seed))
 
@@ -384,7 +407,7 @@ func (o *CMAESOptimizer) resolve(dims int) (ResolvedCMAES, error) {
 }
 
 // hansenPopulationSize is 4 + floor(3 ln n), the default population the
-// library uses and the tutorial recommends. It is twelve at the nineteen
+// library uses and the tutorial recommends. It is twelve at the eighteen
 // dimensions the phase 8.3 fit encodes to.
 func hansenPopulationSize(dims int) int {
 	if dims <= 0 {
@@ -483,11 +506,11 @@ type cmaesTracker struct {
 	reports    int
 	restart    int
 
-	// completedIterations and libraryEvals accumulate what earlier runs spent.
-	// Each run numbers its iterations from one and its evaluations from zero,
-	// so without these the run totals would be the last restart's.
+	// completedIterations accumulates what earlier runs spent. Each run
+	// numbers its iterations from one, so without it the run total would be
+	// the last restart's. Evaluations need no such accumulator: the adapter
+	// above is called once per library evaluation of every run.
 	completedIterations int
-	libraryEvals        int
 
 	// converged records whether the last completed run ended on one of
 	// Hansen's stopping criteria rather than on its own budget.
@@ -529,16 +552,19 @@ func (t *cmaesTracker) seedBaseline(initial []float64) {
 // best-so-far bookkeeping below refuses invalidCost, so a penalised candidate
 // can never be reported as the answer.
 func (t *cmaesTracker) evaluate(pos []float64) float64 {
+	// Counted before anything can go wrong with it: the library spent a
+	// candidate on this call whether or not the wrapper can turn it into
+	// encoded units, and Result.Evaluations is what the caller budgets with.
+	t.mu.Lock()
+	t.evals++
+	t.mu.Unlock()
+
 	actual, err := t.bounds.Denormalize(pos)
 	if err != nil {
 		return invalidCost
 	}
 
 	cost := t.objective(actual)
-
-	t.mu.Lock()
-	t.evals++
-	t.mu.Unlock()
 
 	if !isFinite(cost) {
 		return invalidCost
@@ -614,7 +640,6 @@ func (t *cmaesTracker) finishRun(res *cmaes.Result) {
 
 	t.completedIterations += res.IterationCount
 	t.iterations = t.completedIterations
-	t.libraryEvals += res.FuncEvalCount
 	t.converged = hansenCriterion(res.TerminationReason)
 }
 
@@ -633,11 +658,9 @@ func hansenCriterion(reason cmaes.TerminationReason) bool {
 		cmaes.TerminationNoEffectAxis,
 		cmaes.TerminationNoEffectCoord:
 		return true
-	case cmaes.TerminationMaxIterations,
-		cmaes.TerminationMaxEvaluations,
-		cmaes.TerminationCancelled:
-		return false
 	default:
+		// Everything else is a budget that ran out or an abort:
+		// maximum_iterations, maximum_evaluations and cancelled.
 		return false
 	}
 }
@@ -650,18 +673,14 @@ func (t *cmaesTracker) completedIterationCount() int {
 	return t.completedIterations
 }
 
-// result builds the run's outcome. restartLimitReached is what separates a
+// result builds the run's outcome. The stop reason is what separates a
 // finished search from one that merely ran out of budget: a loop that restarts
 // until the clock stops it has no claim on convergence, whatever its last run
-// ended on.
+// ended on, so only "restart_limit" can report one.
 func (t *cmaesTracker) result(reason string, completed int) *Result {
 	t.mu.Lock()
 	evals := t.evals
 	t.mu.Unlock()
-
-	if t.libraryEvals > evals {
-		evals = t.libraryEvals
-	}
 
 	return &Result{
 		BestParams:  append([]float64(nil), t.bestParams...),

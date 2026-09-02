@@ -136,6 +136,18 @@ export function FitStatus({
             </dd>
           </div>
 
+          {snapshot.restart !== undefined && (
+            <div>
+              {/*
+                Only CMA-ES restarts, and the field is absent for the run that
+                has not: the row appears when a fit is on its second cold run
+                or later, which is the only time the number says anything.
+              */}
+              <dt>Restart</dt>
+              <dd>{snapshot.restart}</dd>
+            </div>
+          )}
+
           <div>
             <dt>Progress reports</dt>
             <dd>{snapshot.iteration}</dd>

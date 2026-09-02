@@ -93,12 +93,18 @@ type fitSnapshot struct {
 	// Iteration counts progress reports rather than optimizer iterations; see
 	// optimizer.Progress. OptimizerIterations is the backend's own count and is
 	// the one comparable with MaxIterations.
-	Iteration           int     `json:"iteration"`
-	OptimizerIterations int     `json:"optimizerIterations"`
-	Evaluations         int     `json:"evaluations"`
-	CurrentCost         float64 `json:"currentCost"`
-	BestCost            float64 `json:"bestCost"`
-	ElapsedMS           int64   `json:"elapsedMs"`
+	Iteration           int `json:"iteration"`
+	OptimizerIterations int `json:"optimizerIterations"`
+	Evaluations         int `json:"evaluations"`
+
+	// Restart is the zero-based index of the search in progress. Only the
+	// CMA-ES backend restarts, so it is omitted rather than sent as a zero
+	// every other backend would never move off.
+	Restart int `json:"restart,omitempty"`
+
+	CurrentCost float64 `json:"currentCost"`
+	BestCost    float64 `json:"bestCost"`
+	ElapsedMS   int64   `json:"elapsedMs"`
 
 	StopReason string `json:"stopReason,omitempty"`
 	Error      string `json:"error,omitempty"`
@@ -169,6 +175,7 @@ func (j *fitJob) snapshot() fitSnapshot {
 		Iteration:           j.progress.Iteration,
 		OptimizerIterations: j.progress.OptimizerIterations,
 		Evaluations:         j.progress.Evaluations,
+		Restart:             j.progress.Restart,
 		CurrentCost:         j.progress.CurrentCost,
 		BestCost:            j.progress.BestCost,
 		ElapsedMS:           j.progress.Elapsed.Milliseconds(),

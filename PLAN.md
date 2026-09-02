@@ -26,7 +26,7 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | 5     | Web app                      | open — 5.1–5.6 done; payload size remains   |
 | 6     | Split out VST3               | done                                        |
 | 7     | Documentation                | open — 7.1 and 7.2 done                     |
-| 8     | Training                     | open — 8.0 to 8.3 done 2026-09-02, 8.4 next |
+| 8     | Training                     | open — 8.0 to 8.4 done 2026-09-02, 8.5 next |
 
 Closed phases are summarised here and documented in full under [docs/](docs/); the detail that
 was in this file has moved there rather than been dropped.
@@ -206,18 +206,18 @@ Goal: fix the three level bugs. All of them live in Go and are unit-testable wit
       is the separate item below.
 
       **Redone.** The first pass divided the amplitudes by 8.72 to bring a +15.8 dBFS render
-              down, and that 6.174 peak was almost entirely the Chebyshev shaper's DC offset rather
-              than the instrument: the shaper summed `gains[k] * T_(k+1)(x)`, whose even members are
-              nonzero at the origin, so it emitted a constant −0.3 for silence, and at the excitation
-              stage that drove the bank forever. With the shaper made DC-free the same preset rendered
-              at −38.07 dBFS, its oscillator bank 18 dB *below* the dry `input_mix` path, and no
-              rescale could reach −3 dBFS: at velocity 100 the excitation reaching the bank peaks at
-              −31.5 dBFS, and with `AmplitudeMax = 2` the ceiling was about −31.7 dBFS. The preset was
-              re-fitted against `testdata/reference/legacy_synth_a4.wav` instead — readable at last,
-              see the decoder note below — which moved `filter_frequency` from 523 Hz to 1304 Hz and
-              bought the missing level there. It renders at −3.19 dBFS at 44.1 kHz, correlates 0.9655
-              with its reference against −0.5261 before, and its note decays to silence in 1.85 s
-              rather than sustaining for the full four. `just refit-default` is the command.
+                                          down, and that 6.174 peak was almost entirely the Chebyshev shaper's DC offset rather
+                                          than the instrument: the shaper summed `gains[k] * T_(k+1)(x)`, whose even members are
+                                          nonzero at the origin, so it emitted a constant −0.3 for silence, and at the excitation
+                                          stage that drove the bank forever. With the shaper made DC-free the same preset rendered
+                                          at −38.07 dBFS, its oscillator bank 18 dB *below* the dry `input_mix` path, and no
+                                          rescale could reach −3 dBFS: at velocity 100 the excitation reaching the bank peaks at
+                                          −31.5 dBFS, and with `AmplitudeMax = 2` the ceiling was about −31.7 dBFS. The preset was
+                                          re-fitted against `testdata/reference/legacy_synth_a4.wav` instead — readable at last,
+                                          see the decoder note below — which moved `filter_frequency` from 523 Hz to 1304 Hz and
+                                          bought the missing level there. It renders at −3.19 dBFS at 44.1 kHz, correlates 0.9655
+                                          with its reference against −0.5261 before, and its note decays to silence in 1.85 s
+                                          rather than sustaining for the full four. `just refit-default` is the command.
 
 - [x] Un-mute the low register. `scaledParamsForNote` divides `DecayMs` by the transposition
       ratio, which is correct, but the single `DecayMsMax = 500` served both as the validation
@@ -270,17 +270,17 @@ Goal: get synthesis off the main thread.
       render thread with no queue in front of it.
 
       Flow control is the buffer pool itself. `POOL_SIZE` buffers exist, `postMessage`
-              transfers one away and detaches it in the sender, so the worker renders only into a free
-              buffer and a buffer coming back is the request for the next block — no timer, no
-              unbounded queue, nothing allocated per block. Four 128-frame buffers is ~11.6 ms, which
-              is both the jitter tolerated and the worst case for note-on latency.
+                                          transfers one away and detaches it in the sender, so the worker renders only into a free
+                                          buffer and a buffer coming back is the request for the next block — no timer, no
+                                          unbounded queue, nothing allocated per block. Four 128-frame buffers is ~11.6 ms, which
+                                          is both the jitter tolerated and the worst case for note-on latency.
 
-              Two things that made the dropout counter lie and are fixed here: the node is connected
-              only after the producer is running, because `NewRealtimeEngine` measures the preset once
-              per playable note and the graph would otherwise pull against an empty queue for that
-              whole time; and Chrome calls `process()` on a source worklet node whether or not it is
-              connected, so `BlockQueue` counts no underrun before its first block (~120 of them
-              otherwise, none audible).
+                                          Two things that made the dropout counter lie and are fixed here: the node is connected
+                                          only after the producer is running, because `NewRealtimeEngine` measures the preset once
+                                          per playable note and the graph would otherwise pull against an empty queue for that
+                                          whole time; and Chrome calls `process()` on a source worklet node whether or not it is
+                                          connected, so `BlockQueue` counts no underrun before its first block (~120 of them
+                                          otherwise, none audible).
 
 ### Phase 5.3: WASM bridge and build
 
@@ -329,17 +329,17 @@ Goal: fast first paint, usable by keyboard, and no controls that lie.
       repeats its reading as visually-hidden live text.
 
       Not done: the Lighthouse ≥ 90 number in this phase's acceptance criteria has not been
-              measured. The individual items above were checked directly instead.
+                                          measured. The individual items above were checked directly instead.
 
 - [x] Wire or remove the inert controls: removed with the rewrite. The hamburger, the
       one-hardcoded-option preset select and the disabled Save/Load buttons are all gone.
       Deleting beats shipping controls that lie.
 
       Superseded for the preset select: it is back in the performance deck, with two
-              real sounds behind it. `assets/presets` is embedded as a directory, so adding a
-              preset is adding a file; `cmd/gen-presets` mirrors the list into the browser and
-              CI fails on a diff; and `cmd/glockenspiel-wasm` grew `setPreset`, which rebuilds
-              the engine around the chosen bar and replays the master gain onto it.
+                                          real sounds behind it. `assets/presets` is embedded as a directory, so adding a
+                                          preset is adding a file; `cmd/gen-presets` mirrors the list into the browser and
+                                          CI fails on a diff; and `cmd/glockenspiel-wasm` grew `setPreset`, which rebuilds
+                                          the engine around the chosen bar and replays the master gain onto it.
 
 - [x] Fix the `<h1>`, which still read "Algo Glockenspiel VST3" on a page that is not a VST3.
       It reads "Algo Glockenspiel".
@@ -943,7 +943,7 @@ Goal: remove the gauge, the symmetry, the plateau and the wrong bounds.
       authored note; the ceiling is 0.45 · fs at the fitted note, capped by the default box —
       the top of the keyboard is not enforced because a mode above Nyquist there is a wasted
       oscillator, not an invalid one, by the model's own rule. `TestEveryPointOfTheDefaultBox
-    Decodes` samples two thousand points and both corners; the log round trip at an edge is
+Decodes` samples two thousand points and both corners; the log round trip at an edge is
       clamped back into the box.
 - [x] Enforce mode order by frequency in the codec, to break the permutation symmetry. Done
       2026-09-02 by sorting on encode and decode: the same sound always writes the same list,
@@ -985,24 +985,57 @@ Goal: remove the gauge, the symmetry, the plateau and the wrong bounds.
 
 Goal: the engine shape CircleFit measured, plus a polish stage, behind the existing interface.
 
-- [ ] Add `github.com/CWBudde/go-cma-es v0.1.0` as `--optimizer cmaes` behind
+- [x] Add `github.com/CWBudde/go-cma-es v0.1.0` as `--optimizer cmaes` behind
       `optimizer.Optimizer` (`internal/optimizer/optimizer.go:20`): separable and block
       covariance with one block per mode triple and one for the scalars, `InitialSigma 0.3` in
       the unit cube, Hansen's λ by default (12 at 19 dimensions) with `--cmaes-lambda`,
       `WithInitialMean` from the 8.3 seed, and cold restarts **until the budget is spent** — a
-      count cannot express that, and CircleFit records it as its own open structural fix.
-- [ ] Upgrade Mayfly to v0.7.1. Delete `--mayfly-variant auto` and its limiter rather than port
+      count cannot express that, and CircleFit records it as its own open structural fix. Done
+      2026-09-02 (the encoded dimension is eighteen since 8.3 froze the base frequency, where
+      Hansen's λ is twelve): `optimizer.CMAESOptimizer` in `internal/optimizer/cmaes.go`,
+      `separable` by default and `block` from `ParamCodec.BlockGroups()`, run 0 from the seed
+      through `WithInitialMean` and every later run from a uniform mean, `--cmaes-covariance`,
+      `--cmaes-lambda`, `--cmaes-sigma` and `--cmaes-restarts` on the CLI with the same fields
+      on the service and the browser fit. **The restart loop is the wrapper's own**: the
+      library's IPOP and BIPOP budget evaluations and a fit is bounded by wall-clock time, so
+      the wrapper runs cold restarts until the budget is spent, `--cmaes-restarts N` caps the
+      count, and `Result.Restarts` and `Progress.Restart` report it.
+- [x] Upgrade Mayfly to v0.7.1. Delete `--mayfly-variant auto` and its limiter rather than port
       the `ClassifyProblem` call; let `Config.Seed` replace the hand-resolved seed; record in
-      `docs/optimizer.md` that every earlier Mayfly number is incomparable.
-- [ ] Remove Dragonfly from consideration, with the evidence, in `docs/training.md`.
-- [ ] A `--polish` stage: Nelder-Mead (the existing `SimpleOptimizer`) or CMA-ES at σ 0.02 from
+      `docs/optimizer.md` that every earlier Mayfly number is incomparable. Done 2026-09-02: the
+      `auto` variant and its limiter are gone, `hmma` is a selectable variant, the seed reaches
+      the library as `Config.Seed` with `resolved.Seed - round` per round, `cauchy_mutation_rate`
+      and `apply_obl_to_global_best` moved from `gsasma` to `hmma` where v0.7.1 reads them, and
+      a non-finite objective value is mapped to a finite penalty rather than rejected mid-run.
+      `docs/optimizer.md` records that every Mayfly number taken before today was measured under
+      v0.6.0 and does not compare.
+- [x] Remove Dragonfly from consideration, with the evidence, in `docs/training.md`. Done
+      2026-09-02: "Engines after 8.4" quotes the sibling numbers — zero of twelve blocks in
+      every arm, t = −16.8, the best of 576 restarts worse than every baseline block
+      (`docs/dragonfly-poc-report.md` in MayFlyCircleFit). It is not a candidate in 8.5's
+      designs.
+- [x] A `--polish` stage: Nelder-Mead (the existing `SimpleOptimizer`) or CMA-ES at σ 0.02 from
       the incumbent under the `polish` profile, accepting only improvements. `simple` stops being
-      a standalone default; the CLI default becomes `cmaes` with restarts until the budget.
-- [ ] Defaults that change: seed 0 (choose and report), a `--workers` flag whose width is
+      a standalone default; the CLI default becomes `cmaes` with restarts until the budget. Done
+      2026-09-02: `--polish none|nelder-mead|cmaes` (default `none`) with `--polish-iterations`
+      200, `--polish-budget` and `--polish-sigma` 0.02, running under the `polish` profile over
+      the primary objective's own codec and bounds. **Acceptance is judged under the primary
+      metric, not under `polish`**: the polished vector replaces the incumbent only when its
+      primary cost is strictly lower, because every report and every checkpoint scores under the
+      metric the fit was started with. The checkpoint keeps the pre-polish result. `--optimizer`
+      now defaults to `cmaes`, and **`simple` stays selectable** as the standalone local backend.
+- [x] Defaults that change: seed 0 (choose and report), a `--workers` flag whose width is
       recorded in the checkpoint, `--report-every` decoupled from the checkpoint cadence, and
-      `--mayfly-stagnation 0` writable.
-- [ ] Test: parallel equals serial to the bit per engine at a fixed seed and width; a
-      restart-until-budget run spends at least 95% of its cap.
+      `--mayfly-stagnation 0` writable. Done 2026-09-02: one `--seed` (default 0, chosen and
+      reported) feeds Mayfly, CMA-ES and the polish stage, with `--mayfly-seed` and `--cmaes-seed`
+      kept as deprecated aliases and combining one with `--seed` refused; `--workers` is recorded
+      as `OptimizerState.Workers` and reused by `--resume`; `--checkpoint-interval` counts
+      optimizer iterations rather than progress reports; `--mayfly-stagnation 0` is writable and
+      switches the rule off.
+- [x] Test: parallel equals serial to the bit per engine at a fixed seed and width; a
+      restart-until-budget run spends at least 95% of its cap. Done 2026-09-02: each engine
+      reproduces its result at a fixed seed and worker width, and the restart-until-budget test
+      measured 95.2% of the cap spent.
 
 ### Phase 8.5: A campaign harness
 
@@ -1084,7 +1117,10 @@ Goal: the UI a campaign needs — history, provenance, comparison.
   **multi-velocity fitting**. Both need recordings that do not exist yet.
 - **go-cma-es 0.2.0.** It fixes a measured covariance defect that does not bite at this
   dimensionality, and bumping it makes every recorded CMA-ES figure incomparable. Only after
-  8.6's tables exist, and then with a re-baseline.
+  8.6's tables exist, and then with a re-baseline. **Still deferred after 8.4**, which pinned
+  the dependency at v0.1.0 deliberately: the defect needs λ above 256 separable or 1024 block,
+  and this fit runs twelve by default with `--cmaes-lambda` not expected past 64, while v0.2.0
+  changes the sampling trajectory and would split 8.5's campaign numbers in two.
 
 ## Resume Point
 
@@ -1110,11 +1146,23 @@ and every front end reports what finished on a bound. The acceptance test recove
 target in twelve of twelve seeds. A first 90 s fit of the C5 recording reaches `balanced` 0.18
 against the shipped preset's 0.42, and its pinned report names the next model limit: the
 excitation lowpass and the amplitude ceiling together bound the spectral tilt, so the high
-partials go missing and the fake-beat cluster reappears at 8.2 kHz (`docs/training.md`). The
-next action is 8.4 — the CMA-ES backend behind the `Optimizer` interface with the seed as its
-mean, the Mayfly upgrade, the polish stage and the defaults that change — and the campaign
-harness after it. That model limit belongs with the deferred excitation work unless 8.6's
-campaign shows the search cannot live with it.
+partials go missing and the fake-beat cluster reappears at 8.2 kHz (`docs/training.md`). That
+model limit belongs with the deferred excitation work unless 8.6's campaign shows the search
+cannot live with it. 8.4 is done the same day: `--optimizer cmaes` is the CLI default and
+restarts cold until the wall-clock budget is spent, in its own loop rather than the library's
+evaluation-budgeted IPOP; Mayfly is at v0.7.1 with the `auto` variant gone; `--polish
+nelder-mead|cmaes` refines the incumbent under the `polish` profile and is kept only when the
+primary cost drops; one `--seed` feeds every engine, `--workers` is recorded in the checkpoint,
+and `--checkpoint-interval` counts optimizer iterations. `simple` stays selectable. Dragonfly is
+out on the sibling evidence, and `docs/training.md` records a three-engine smoke run on the C5
+recording with the warning that every Mayfly number taken before today was measured under
+v0.6.0.
+
+**The next action is 8.5, the campaign harness**: `cmd/glockenspiel-campaign` with registered
+designs in code, per-job run directories, an `analyze` that rebuilds the table from the CSV, and
+the `engine-shape` design over twelve paired blocks. Nothing in 8.4 chose a default engine
+shape by measurement, and the smoke run in `docs/training.md` is explicitly not that
+measurement.
 
 **Phase 5, payload size.** The one unaddressed sub-item. Adding the browser optimizer made the
 raw WASM larger, so this is now splitting or lazy-loading the Go payload rather than shaving

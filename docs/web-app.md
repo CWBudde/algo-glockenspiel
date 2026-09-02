@@ -466,9 +466,10 @@ audio queue full. The WAV, optional preset and optional bounds cross into the
 worker as transferred `ArrayBuffer`s and are decoded in memory by
 `internal/browserfit`; no upload or filesystem is involved.
 
-The browser backend exposes both Simple and Mayfly and uses the same objective,
-codec, bounds parser and artifact renderers as the native paths. Mayfly is held
-to one worker because Go's `js/wasm` target is single-threaded. The optimizer
+The browser backend exposes Simple, Mayfly and CMA-ES and uses the same
+objective, codec, bounds parser and artifact renderers as the native paths.
+Mayfly and CMA-ES are held to one worker because Go's `js/wasm` target is
+single-threaded. The optimizer
 reports internally once per iteration even when the user asks to display fewer
 points. Each internal report sleeps for one millisecond after updating the best
 preset, which cooperatively hands the worker event loop back to JavaScript so a

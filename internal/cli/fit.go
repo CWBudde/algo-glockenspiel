@@ -42,8 +42,19 @@ type fitOptions struct {
 	mayflyVariant   string
 	mayflyPreset    string
 	mayflyPop       int
-	mayflySeed      int64
 	cpuProfilePath  string
+
+	// seed is the one random stream selector every backend uses: Mayfly,
+	// CMA-ES and the polish stage. Zero means "choose one and report it", and
+	// the OnResolve callbacks replace it with the value the run drew, so the
+	// checkpoint records the stream that actually ran. --mayfly-seed and
+	// --cmaes-seed are deprecated aliases bound to this same field.
+	seed int64
+
+	// workers bounds parallel objective evaluation in every backend. Zero
+	// follows the machine's CPU count, and the resolved width is written into
+	// the checkpoint so a resume on another machine keeps it.
+	workers int
 
 	// mayflyTuningPath names an optional tuning document. The scalar flags
 	// below are folded into a document of their own and the file is overlaid on
@@ -58,6 +69,20 @@ type fitOptions struct {
 	mayflyNCRatio    float64
 	mayflySelection  string
 
+	// The CMA-ES knobs. The seed is not among them: it is the shared --seed
+	// above, which every backend and the polish stage read.
+	cmaesCovariance string
+	cmaesLambda     int
+	cmaesSigma      float64
+	cmaesRestarts   int
+
+	// The polish stage. It runs after the main search, under the polish
+	// profile, and keeps its result only when the primary cost drops.
+	polish           string
+	polishIterations int
+	polishBudget     time.Duration
+	polishSigma      float64
+
 	// mayflyTuning is the document a resumed checkpoint carried. It is not a
 	// flag: it is the base the current flags and --mayfly-tuning are overlaid
 	// on, so a resumed run keeps the tuning it was started with.
@@ -70,33 +95,42 @@ type fitOptions struct {
 
 func newFitCmd() *cobra.Command {
 	options := fitOptions{
-		note:            69,
-		velocity:        100,
-		sampleRate:      44100,
-		optimizerName:   "simple",
-		maxIter:         100,
-		timeBudget:      30 * time.Second,
-		reportEvery:     10,
-		checkpointEvery: 1,
-		workDir:         filepath.FromSlash("out/fit"),
-		resume:          false,
-		metric:          string(optimizer.MetricBalanced),
-		align:           true,
-		normalizeGain:   false,
-		mayflyVariant:   "desma",
-		mayflyPop:       10,
-		mayflySeed:      1,
-		mayflyEpochs:    1,
-		mayflyRestarts:  0,
-		mayflyNC:        -1,
+		note:             69,
+		velocity:         100,
+		sampleRate:       44100,
+		optimizerName:    "cmaes",
+		maxIter:          100,
+		timeBudget:       30 * time.Second,
+		reportEvery:      10,
+		checkpointEvery:  1,
+		workDir:          filepath.FromSlash("out/fit"),
+		resume:           false,
+		metric:           string(optimizer.MetricBalanced),
+		align:            true,
+		normalizeGain:    false,
+		mayflyVariant:    "desma",
+		mayflyPop:        10,
+		mayflyEpochs:     1,
+		mayflyRestarts:   0,
+		mayflyNC:         -1,
+		cmaesCovariance:  "separable",
+		cmaesSigma:       0.3,
+		polish:           optimizer.PolishEngineNone,
+		polishIterations: 200,
+		polishSigma:      0.02,
 	}
 
 	cmd := &cobra.Command{
 		Use:   "fit",
 		Short: "Fit model parameters to a reference recording",
 		Long:  "Optimize model parameters against a target audio file and save the best-fitting preset.",
-		Example: `  # Fit A4 from the built-in preset with the default optimizer
+		Example: `  # Fit A4 from the built-in preset with the default optimizer, CMA-ES
+  # restarting until the time budget is spent
   glockenspiel fit --reference a4.wav --output out/a4.json
+
+  # Follow the search with a local polish stage under the polish profile
+  glockenspiel fit --reference a4.wav --output out/a4.json \
+    --time-budget 10m --polish cmaes
 
   # Fit with Mayfly, a wall-clock budget and a narrowed search box
   glockenspiel fit --reference a4.wav --output out/a4.json \
@@ -118,12 +152,22 @@ func newFitCmd() *cobra.Command {
 	flags.IntVar(&options.note, "note", options.note, "MIDI note number to fit")
 	flags.IntVar(&options.velocity, "velocity", options.velocity, "MIDI velocity (0-127)")
 	flags.IntVar(&options.sampleRate, "sample-rate", options.sampleRate, "Reference/render sample rate in Hz")
-	flags.StringVar(&options.optimizerName, "optimizer", options.optimizerName, "Optimizer to use: simple|mayfly")
+	flags.StringVar(&options.optimizerName, "optimizer", options.optimizerName, "Optimizer to use: simple|mayfly|cmaes")
 	flags.IntVar(&options.maxIter, "max-iter", options.maxIter, "Maximum optimizer iterations")
 	flags.Var(durationFlag{value: &options.timeBudget}, "time-budget",
 		"Optimization time budget as a Go duration such as 30s or 10m (a bare number is read as seconds)")
 	flags.IntVar(&options.reportEvery, "report-every", options.reportEvery, "Write progress every N major iterations")
-	flags.IntVar(&options.checkpointEvery, "checkpoint-interval", options.checkpointEvery, "Write checkpoint every N progress reports (0 disables checkpointing entirely)")
+	flags.IntVar(&options.checkpointEvery, "checkpoint-interval", options.checkpointEvery,
+		"Write a checkpoint once this many optimizer iterations have passed since the last one, "+
+			"independently of --report-every (0 disables checkpointing entirely)")
+	flags.Int64Var(&options.seed, "seed", options.seed,
+		"Random seed for every backend, Mayfly, CMA-ES and the polish stage alike "+
+			"(0 picks one and reports it)")
+	flags.IntVar(&options.workers, "workers", options.workers,
+		"Goroutines evaluating candidates in parallel (0 follows the machine's CPU count). "+
+			"The resolved width is recorded in the checkpoint and reused by --resume, so a run "+
+			"continued on another machine keeps the width it started with. "+
+			"The simple (Nelder-Mead) backend is serial and ignores it")
 	flags.StringVar(&options.workDir, "work-dir", options.workDir, "Directory for checkpoints and rendered fit output, relative to the current directory")
 	flags.BoolVar(&options.resume, "resume", options.resume, "Resume fit from the latest checkpoint in work-dir")
 	flags.StringVar(&options.metric, "metric", options.metric,
@@ -145,7 +189,11 @@ func newFitCmd() *cobra.Command {
 		"Mayfly configuration preset. A preset already selects a variant, so it cannot be "+
 			"combined with --mayfly-variant")
 	flags.IntVar(&options.mayflyPop, "mayfly-pop", options.mayflyPop, "Male/female population size for Mayfly")
-	flags.Int64Var(&options.mayflySeed, "mayfly-seed", options.mayflySeed, "Random seed for Mayfly")
+	// The per-backend seed flags are bound to the shared field rather than to
+	// fields of their own, so a script that still passes one configures the
+	// same run --seed would. runFit refuses an alias combined with --seed.
+	flags.Int64Var(&options.seed, "mayfly-seed", options.seed, "Random seed for Mayfly")
+	_ = flags.MarkDeprecated("mayfly-seed", "use --seed")
 	flags.StringVar(&options.mayflyTuningPath, "mayfly-tuning", options.mayflyTuningPath, mayflyTuningFlagHelp)
 	flags.IntVar(&options.mayflyEpochs, "mayfly-epochs", options.mayflyEpochs,
 		"Number of warm rounds, each reseeded from the running best")
@@ -164,6 +212,27 @@ func newFitCmd() *cobra.Command {
 			"(0 keeps the variant's own ratio)")
 	flags.StringVar(&options.mayflySelection, "mayfly-selection", options.mayflySelection,
 		"How crossover pairs parents: rank|tournament")
+	flags.StringVar(&options.cmaesCovariance, "cmaes-covariance", options.cmaesCovariance,
+		"Covariance CMA-ES learns: separable for the diagonal only, block for a dense matrix "+
+			"per mode")
+	flags.IntVar(&options.cmaesLambda, "cmaes-lambda", options.cmaesLambda,
+		"Population size per generation (0 takes Hansen's default, 4 + floor(3 ln n))")
+	flags.Float64Var(&options.cmaesSigma, "cmaes-sigma", options.cmaesSigma,
+		"Initial step size, as a fraction of the normalized search box (0 takes the default, 0.3)")
+	flags.Int64Var(&options.seed, "cmaes-seed", options.seed,
+		"Random seed for CMA-ES (0 picks one and reports it)")
+	_ = flags.MarkDeprecated("cmaes-seed", "use --seed")
+	flags.IntVar(&options.cmaesRestarts, "cmaes-restarts", options.cmaesRestarts,
+		"Number of cold runs (0 restarts until the budget is spent)")
+	flags.StringVar(&options.polish, "polish", options.polish,
+		"Local refinement stage after the main search: none|nelder-mead|cmaes. It searches "+
+			"under the polish profile but keeps its result only when the primary cost drops")
+	flags.IntVar(&options.polishIterations, "polish-iterations", options.polishIterations,
+		"Maximum iterations for the polish stage")
+	flags.Var(durationFlag{value: &options.polishBudget}, "polish-budget",
+		"Time budget for the polish stage as a Go duration (0 leaves it uncapped)")
+	flags.Float64Var(&options.polishSigma, "polish-sigma", options.polishSigma,
+		"Initial polish step as a fraction of the normalized search box")
 	flags.StringVar(&options.cpuProfilePath, "cpu-profile", options.cpuProfilePath, "Write a CPU profile for the fit command to this path")
 	_ = flags.MarkHidden("cpu-profile")
 
@@ -210,6 +279,17 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return fmt.Errorf("checkpoint-interval must be >= 0, got %d", options.checkpointEvery)
 	}
 
+	if options.workers < 0 {
+		return fmt.Errorf("workers must be >= 0, got %d", options.workers)
+	}
+
+	// Before the checkpoint is read: the resume rules below ask whether a seed
+	// was written on the command line, and an ambiguous pair of seed flags has
+	// no answer to give them.
+	if err := checkSeedFlags(cmd); err != nil {
+		return err
+	}
+
 	if err := os.MkdirAll(options.workDir, 0o755); err != nil {
 		return fmt.Errorf("create work dir: %w", err)
 	}
@@ -232,8 +312,31 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		checkpoint, checkpointPath = loaded, path
 	}
 
-	if options.optimizerName != "simple" && options.optimizerName != "mayfly" {
+	switch options.optimizerName {
+	case "simple", "mayfly", "cmaes":
+	default:
 		return fmt.Errorf("unsupported optimizer %q", options.optimizerName)
+	}
+
+	switch options.polish {
+	case "", optimizer.PolishEngineNone, optimizer.PolishEngineNelderMead, optimizer.PolishEngineCMAES:
+	default:
+		return fmt.Errorf("unsupported polish engine %q: use none, nelder-mead or cmaes", options.polish)
+	}
+
+	// Only a run that actually polishes is held to the iteration count: the
+	// flag has a positive default, and a caller that leaves the stage off has
+	// no reason to be told about it.
+	if polishEnabled(options.polish) && options.polishIterations <= 0 {
+		return fmt.Errorf("polish-iterations must be positive, got %d", options.polishIterations)
+	}
+
+	// The step is a fraction of the normalized box for either engine, so a
+	// sigma above one is a global search rather than a polish. Checking it here
+	// rather than in the stage keeps a whole fit from running before the flag
+	// is refused.
+	if polishEnabled(options.polish) && (options.polishSigma <= 0 || options.polishSigma > 1) {
+		return fmt.Errorf("polish-sigma must be in (0, 1], got %g", options.polishSigma)
 	}
 
 	if options.metric == "" {
@@ -379,6 +482,7 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return filepath.Join(options.workDir, fmt.Sprintf("checkpoint_%04d.json", iter))
 	}
 	lastCheckpointIteration := 0
+	lastCheckpointOptimizerIteration := 0
 	saveCheckpoint := func(index, optimizerIterations int, params []float64, cost float64) error {
 		if len(params) == 0 {
 			return nil
@@ -416,18 +520,46 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 			Variant:    mayflyVariantFor(cmd, options, tuning),
 			Preset:     options.mayflyPreset,
 			Population: options.mayflyPop,
-			Seed:       options.mayflySeed,
+			Seed:       options.seed,
+			MaxWorkers: options.workers,
 			Tuning:     tuning,
 			OnResolve: func(resolved optimizer.ResolvedMayfly) {
-				// Record the effective seed before the search starts, so every
-				// checkpoint carries the stream the run actually used. With
-				// --mayfly-seed 0 that is the difference between a resumed run
-				// continuing the original stream and starting a new one.
-				options.mayflySeed = resolved.Seed
+				// Record the effective seed and width before the search starts,
+				// so every checkpoint carries what the run actually used. With
+				// --seed 0 that is the difference between a resumed run
+				// continuing the original stream and starting a new one, and
+				// with --workers 0 it is the difference between a resume that
+				// reproduces the run and one that follows a different machine.
+				options.seed = resolved.Seed
+				options.workers = resolved.Workers
 				options.mayflyVariant = resolved.Variant
 				options.mayflyPreset = resolved.Preset
 
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), formatResolvedMayfly(resolved))
+			},
+		}
+	case "cmaes":
+		selectedOptimizer = &optimizer.CMAESOptimizer{
+			Covariance: options.cmaesCovariance,
+			// The partition can only come from the codec, which is why the
+			// backend is built here rather than beside the flags: block mode
+			// learns one dense matrix per mode and the codec is what knows
+			// which encoded coordinates a mode owns.
+			BlockGroups:  objective.Codec().BlockGroups(),
+			Lambda:       options.cmaesLambda,
+			InitialSigma: options.cmaesSigma,
+			Seed:         options.seed,
+			MaxWorkers:   options.workers,
+			RestartLimit: options.cmaesRestarts,
+			OnResolve: func(resolved optimizer.ResolvedCMAES) {
+				// The effective seed and width, recorded before the search
+				// starts, for the reason the mayfly backend records its own:
+				// with --seed 0 and --workers 0 they are the difference between
+				// a resumed run reproducing this one and drifting off it.
+				options.seed = resolved.Seed
+				options.workers = resolved.Workers
+
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), formatResolvedCMAES(resolved))
 			},
 		}
 	}
@@ -448,9 +580,10 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", formatMetricsLine(metrics))
 			}
 
-			if shouldCheckpoint(progress.Iteration, options.checkpointEvery) {
+			if shouldCheckpoint(progress.OptimizerIterations, lastCheckpointOptimizerIteration, options.checkpointEvery) {
 				if saveCheckpoint(progress.Iteration, progress.OptimizerIterations, progress.BestParams, progress.BestCost) == nil {
 					lastCheckpointIteration = progress.Iteration
+					lastCheckpointOptimizerIteration = progress.OptimizerIterations
 				}
 			}
 		},
@@ -459,7 +592,12 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return err
 	}
 
-	bestParams, err := objective.Codec().DecodeParams(result.BestParams)
+	// The polish stage refines the search result locally under the polish
+	// profile. It runs here, before anything is written, so that the preset,
+	// the render and the reported terms all describe the same vector.
+	bestEncoded, bestCost := runPolishStage(ctx, cmd, options, objective, result)
+
+	bestParams, err := objective.Codec().DecodeParams(bestEncoded)
 	if err != nil {
 		return err
 	}
@@ -478,6 +616,9 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	// the resumable budget lives in OptimizerIterations.
 	if options.checkpointEvery > 0 {
 		finalIndex := maxInt(result.Iterations, lastCheckpointIteration+1)
+		// The search result, not the polished vector: the polish stage neither
+		// resumes from a checkpoint nor writes one, so the checkpoint stream
+		// stays the record of the search a --resume would continue.
 		if err := saveCheckpoint(finalIndex, result.Iterations, result.BestParams, result.BestCost); err != nil {
 			return err
 		}
@@ -500,11 +641,20 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	// earlier un-aligned, PCM16-quantised rms= and log= figures on this line
 	// were a different quantity from best= and disagreed with it by up to a
 	// hundred percentage points; a run is judged by its terms now.
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"Finished: best=%0.6g stop=%s iterations=%d evals=%d\n",
-		result.BestCost, result.StopReason, result.Iterations, result.Evaluations)
+	// The restart count is appended only when there were restarts, so the line
+	// keeps the shape every other backend has produced so far: only CMA-ES
+	// restarts, and a run of it that was cut before its first search finished
+	// has nothing to say either.
+	restarts := ""
+	if result.Restarts > 0 {
+		restarts = fmt.Sprintf(" restarts=%d", result.Restarts)
+	}
 
-	metrics, err := objective.EvaluateMetrics(result.BestParams)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+		"Finished: best=%0.6g stop=%s iterations=%d evals=%d%s\n",
+		bestCost, result.StopReason, result.Iterations, result.Evaluations, restarts)
+
+	metrics, err := objective.EvaluateMetrics(bestEncoded)
 	if err != nil {
 		return err
 	}
@@ -516,7 +666,7 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 
 	writeMetrics(cmd.OutOrStdout(), metrics, profile)
 
-	pinned, err := objective.Codec().Pinned(result.BestParams)
+	pinned, err := objective.Codec().Pinned(bestEncoded)
 	if err != nil {
 		return err
 	}
@@ -529,17 +679,89 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	return nil
 }
 
+// polishRun is optimizer.Polish behind a variable so a test can make the stage
+// fail without a fixture that provokes a real failure: every input the stage
+// takes is validated before the search starts, so there is no cheap way in.
+var polishRun = optimizer.Polish
+
+// polishEnabled reports whether a polish engine was asked for.
+func polishEnabled(engine string) bool {
+	return engine != "" && engine != optimizer.PolishEngineNone
+}
+
+// runPolishStage runs the optional local refinement and returns the vector the
+// run should ship along with its primary cost.
+//
+// Acceptance is judged under the primary metric even though the stage searches
+// under the polish profile, because every report, `distance` and the checkpoint
+// score the preset under the primary metric: a polish that lowered the waveform
+// term while raising the primary cost would ship a regression those reports go
+// on to show.
+//
+// A failing stage is reported and then ignored. The search has already run by
+// the time it starts, so returning its error would throw away the whole fit --
+// no preset, no final checkpoint, no metrics line -- over a refinement that is
+// optional by construction.
+func runPolishStage(
+	ctx context.Context,
+	cmd *cobra.Command,
+	options fitOptions,
+	objective *optimizer.ObjectiveFunction,
+	result *optimizer.Result,
+) ([]float64, float64) {
+	if !polishEnabled(options.polish) {
+		return result.BestParams, result.BestCost
+	}
+
+	polished, err := polishRun(ctx, objective, result.BestParams, optimizer.PolishOptions{
+		Engine:        options.polish,
+		Sigma:         options.polishSigma,
+		MaxIterations: options.polishIterations,
+		TimeBudget:    options.polishBudget,
+		Seed:          options.seed,
+		MaxWorkers:    options.workers,
+	})
+	if err != nil {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+			"polish (%s) failed: %v; keeping the search result\n", options.polish, err)
+
+		return result.BestParams, result.BestCost
+	}
+
+	verdict := "rejected"
+	if polished.Accepted {
+		verdict = "accepted"
+	}
+
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+		"polish (%s): primary %0.6g -> %0.6g, polish %0.6g -> %0.6g, %s\n",
+		options.polish, polished.PrimaryBefore, polished.PrimaryAfter,
+		polished.PolishBefore, polished.PolishAfter, verdict)
+
+	if !polished.Accepted {
+		return result.BestParams, result.BestCost
+	}
+
+	return polished.Params, polished.PrimaryAfter
+}
+
 // shouldCheckpoint reports whether a progress report should be checkpointed.
 //
-// Progress.Iteration counts progress reports and grows by one per report, so a
-// plain modulo gives the requested cadence. An interval of zero disables
-// checkpointing completely.
-func shouldCheckpoint(iteration, checkpointEvery int) bool {
-	if checkpointEvery <= 0 || iteration <= 0 {
+// The cadence is counted in the backend's own iterations, which is the unit
+// --max-iter and the resume budget are already in, rather than in progress
+// reports: a report count means different amounts of work per backend and
+// changes with --report-every, so the same --checkpoint-interval used to buy
+// wildly different checkpoint spacing. A report is checkpointed once at least
+// checkpointEvery optimizer iterations have passed since the last one was
+// written, which is "at least" rather than "exactly" because a backend reports
+// on its own schedule and may skip past the exact multiple. An interval of
+// zero disables checkpointing completely.
+func shouldCheckpoint(optimizerIterations, lastCheckpointed, checkpointEvery int) bool {
+	if checkpointEvery <= 0 || optimizerIterations <= 0 {
 		return false
 	}
 
-	return iteration%checkpointEvery == 0
+	return optimizerIterations-lastCheckpointed >= checkpointEvery
 }
 
 // durationFlag parses Go durations and, for compatibility with the earlier
@@ -734,10 +956,13 @@ func mayflyVariantFor(cmd *cobra.Command, options fitOptions, tuning *optimizer.
 // tuningFromFlags renders the scalar --mayfly-* flags as a tuning document.
 //
 // It returns nil when nothing was set, which is what keeps an untuned run
-// identical to one configured before tuning existed. The three-way flags --
-// --mayfly-nc and --mayfly-target-cost, where "not given" differs from a
-// written -1 or 0 -- are read through flagChanged rather than compared against
-// a sentinel, because both sentinels are legal values.
+// identical to one configured before tuning existed. Every knob whose "off" or
+// "derive it" value a caller can also write on purpose -- --mayfly-nc,
+// --mayfly-nc-ratio, --mayfly-stagnation and --mayfly-target-cost -- is read
+// through flagChanged rather than compared against a sentinel. Comparing
+// against one made an explicit --mayfly-stagnation 0 unwritable: it read as
+// "not given", so a preset's own stagnation rule stayed on when the caller had
+// just asked for it off.
 func tuningFromFlags(cmd *cobra.Command, options fitOptions) *optimizer.MayflyTuning {
 	tuning := &optimizer.MayflyTuning{}
 	written := false
@@ -754,13 +979,13 @@ func tuningFromFlags(cmd *cobra.Command, options fitOptions) *optimizer.MayflyTu
 		written = true
 	}
 
-	if options.mayflyNCRatio != 0 {
+	if flagChanged(cmd, "mayfly-nc-ratio") {
 		ratio := options.mayflyNCRatio
 		tuning.NCRatio = &ratio
 		written = true
 	}
 
-	if options.mayflyStagnation > 0 {
+	if flagChanged(cmd, "mayfly-stagnation") {
 		stagnation := options.mayflyStagnation
 		tuning.Convergence = &optimizer.MayflyConvergence{StagnationIterations: &stagnation}
 		written = true
@@ -815,15 +1040,29 @@ func formatResolvedMayfly(resolved optimizer.ResolvedMayfly) string {
 		line += " preset=" + resolved.Preset
 	}
 
-	line += fmt.Sprintf(" rounds=%dx%d", resolved.Rounds, resolved.IterationsPerRound)
+	line += fmt.Sprintf(" rounds=%dx%d workers=%d", resolved.Rounds, resolved.IterationsPerRound, resolved.Workers)
 
 	return line
+}
+
+// formatResolvedCMAES renders what a CMA-ES run actually settled on.
+//
+// Every field of it is a "choose one for me" input the run resolved: the
+// covariance mode is lower-cased, the population and the step size may be the
+// library's defaults, the seed may have been drawn, and the worker count
+// follows the machine. None of them can be read off the command line.
+func formatResolvedCMAES(resolved optimizer.ResolvedCMAES) string {
+	return fmt.Sprintf("cmaes: covariance=%s lambda=%d sigma=%g seed=%d workers=%d",
+		resolved.Covariance, resolved.Lambda, resolved.Sigma, resolved.Seed, resolved.Workers)
 }
 
 func checkpointStateForOptions(options fitOptions, tuning *optimizer.MayflyTuning) *optimizer.OptimizerState {
 	state := &optimizer.OptimizerState{
 		Kind:  options.optimizerName,
 		Modes: options.modes,
+		// The width OnResolve reported, not the zero that asked for the
+		// machine's own count, so a resume elsewhere keeps this run's width.
+		Workers: options.workers,
 	}
 	if options.optimizerName == "mayfly" {
 		// The schedule the run was given, not the one the flags asked for: a
@@ -845,13 +1084,25 @@ func checkpointStateForOptions(options fitOptions, tuning *optimizer.MayflyTunin
 			Variant:    options.mayflyVariant,
 			Preset:     options.mayflyPreset,
 			Population: options.mayflyPop,
-			Seed:       options.mayflySeed,
+			Seed:       options.seed,
 			Epochs:     epochs,
 			Restarts:   restarts,
 			// The merged document rather than the flags: it is what the run was
 			// actually configured with, so a resume reproduces it without
 			// needing the tuning file to still be on disk.
 			Tuning: tuning,
+		}
+	}
+
+	if options.optimizerName == "cmaes" {
+		state.CMAES = &optimizer.CMAESCheckpointEnv{
+			Covariance: options.cmaesCovariance,
+			Lambda:     options.cmaesLambda,
+			Sigma:      options.cmaesSigma,
+			// OnResolve has replaced a zero with the seed the run drew, so this
+			// is the stream the run actually used.
+			Seed:     options.seed,
+			Restarts: options.cmaesRestarts,
 		}
 	}
 
@@ -887,6 +1138,13 @@ func applyCheckpointResume(cmd *cobra.Command, options *fitOptions, cp *optimize
 		return
 	}
 
+	// The width the checkpoint recorded, so a fit continued on a machine with
+	// a different CPU count evaluates the same number of candidates at a time
+	// as the run it is continuing. A written --workers still wins.
+	if !flagChanged(cmd, "workers") && cp.State.Workers > 0 {
+		options.workers = cp.State.Workers
+	}
+
 	if !flagChanged(cmd, "optimizer") && cp.State.Kind != "" {
 		options.optimizerName = cp.State.Kind
 	}
@@ -900,8 +1158,8 @@ func applyCheckpointResume(cmd *cobra.Command, options *fitOptions, cp *optimize
 			options.mayflyPop = cp.State.Mayfly.Population
 		}
 
-		if !flagChanged(cmd, "mayfly-seed") {
-			options.mayflySeed = cp.State.Mayfly.Seed
+		if !seedFlagChanged(cmd) {
+			options.seed = cp.State.Mayfly.Seed
 		}
 
 		if !flagChanged(cmd, "mayfly-preset") && cp.State.Mayfly.Preset != "" {
@@ -921,6 +1179,82 @@ func applyCheckpointResume(cmd *cobra.Command, options *fitOptions, cp *optimize
 		// on the resume command still wins.
 		options.mayflyTuning = cp.State.Mayfly.Tuning
 	}
+
+	if cp.State.CMAES != nil {
+		if !flagChanged(cmd, "cmaes-covariance") && cp.State.CMAES.Covariance != "" {
+			options.cmaesCovariance = cp.State.CMAES.Covariance
+		}
+
+		// Zero is what the checkpoint records for a knob nobody set, and it
+		// means the same thing here as it did there: take the default. So it
+		// is restored as it stands, unlike the guarded fields above, which
+		// have a default of their own that a zero would silently undo.
+		if !flagChanged(cmd, "cmaes-lambda") {
+			options.cmaesLambda = cp.State.CMAES.Lambda
+		}
+
+		if !flagChanged(cmd, "cmaes-sigma") && cp.State.CMAES.Sigma > 0 {
+			options.cmaesSigma = cp.State.CMAES.Sigma
+		}
+
+		if !seedFlagChanged(cmd) {
+			options.seed = cp.State.CMAES.Seed
+		}
+
+		if !flagChanged(cmd, "cmaes-restarts") {
+			options.cmaesRestarts = cp.State.CMAES.Restarts
+		}
+	}
+}
+
+// deprecatedSeedFlags names the per-backend seed flags --seed replaced. They
+// are still bound to fitOptions.seed, so passing one configures the same run.
+var deprecatedSeedFlags = []string{"mayfly-seed", "cmaes-seed"}
+
+// checkSeedFlags rejects a command line that names the seed more than once.
+//
+// The deprecated aliases write the same option as --seed, so a second flag
+// silently overwrites the first depending on the order pflag happened to parse
+// them in. There is no reading of "--seed 1 --cmaes-seed 2" that is not a
+// mistake, so it is refused rather than resolved.
+func checkSeedFlags(cmd *cobra.Command) error {
+	written := make([]string, 0, len(deprecatedSeedFlags)+1)
+
+	if flagChanged(cmd, "seed") {
+		written = append(written, "--seed")
+	}
+
+	for _, name := range deprecatedSeedFlags {
+		if flagChanged(cmd, name) {
+			written = append(written, "--"+name)
+		}
+	}
+
+	if len(written) < 2 {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"%s and %s both set the run's seed, and %s is a deprecated alias for --seed: pass only one of them",
+		written[0], written[1], written[len(written)-1],
+	)
+}
+
+// seedFlagChanged reports whether the command line named the seed at all,
+// under --seed or either deprecated alias. A resume takes the checkpoint's
+// seed unless it did.
+func seedFlagChanged(cmd *cobra.Command) bool {
+	if flagChanged(cmd, "seed") {
+		return true
+	}
+
+	for _, name := range deprecatedSeedFlags {
+		if flagChanged(cmd, name) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func flagChanged(cmd *cobra.Command, name string) bool {

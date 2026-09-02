@@ -1,13 +1,16 @@
 # Optimizer design
 
 The fitting stack in `internal/optimizer` renders the current model against a reference WAV and
-scores each candidate with the RMS, log-RMS, or spectral objective. The CLI workflow and flags
-are documented in [user-guide.md](user-guide.md); this note records the less visible contracts
-that implementations and checkpoints depend on.
+scores each candidate with the composite objective below, or with one of the legacy single-term
+metrics. Three backends search it: `simple`, the gonum Nelder-Mead simplex, kept as the local
+one; `mayfly`, the swarm; and `cmaes`, which has been the default since Phase 8.4. A `--polish`
+stage may follow whichever ran. The CLI workflow and flags are documented in
+[user-guide.md](user-guide.md); this note records the less visible contracts that
+implementations and checkpoints depend on.
 
 ## Parameter space
 
-Both optimizer backends search the same unit cube. `ParamCodec` first encodes model parameters,
+Every optimizer backend searches the same unit cube. `ParamCodec` first encodes model parameters,
 using logarithmic coordinates for positive quantities such as frequencies and decay times, and
 then `Bounds.Normalize` maps every encoded dimension to `[0,1]`. This keeps step sizes comparable
 across dimensions whose physical ranges differ by orders of magnitude.
@@ -191,10 +194,10 @@ that matters without the dense matrix's cost. The library's dense mode is not ex
 
 The step size is `InitialSigma`, 0.3 by default, which is Hansen's recommendation for a box and
 covers a third of the cube. The population is `Lambda`, Hansen's `4 + floor(3 ln n)` by default,
-which is twelve at the nineteen dimensions the fit encodes. Both are checked by
-`CMAESOptimizer.Validate` before a run is accepted, except the block partition: it has to
-partition `[0, Dimension())` and the dimension is only known inside `Optimize`, which is where
-that check lives.
+which is twelve at the eighteen dimensions the default preset's four modes encode and fourteen
+at the thirty an eight-mode seed encodes. Both are checked by `CMAESOptimizer.Validate` before a
+run is accepted, except the block partition: it has to partition `[0, Dimension())` and the
+dimension is only known inside `Optimize`, which is where that check lives.
 
 The restart loop belongs to this wrapper, not to the library. `OptimizeWithRestartsContext`
 implements IPOP and BIPOP against an evaluation budget, and a fit is bounded by wall-clock time,
@@ -205,11 +208,15 @@ previous runs settled in. A run ends on one of Hansen's own criteria — TolX, T
 condition number, the no-effect tests — and the next one starts; each run is cut by a derived
 context so it stops mid-generation rather than overrunning the deadline, and a run that would
 start with less than 5 % of the budget left is not started at all. `RestartLimit` bounds the
-number of runs; zero means "until the budget is spent".
+number of runs; zero means "until the budget is spent". Some budget is required: `Optimize`
+refuses a run given neither an iteration cap, nor a time budget, nor a restart limit, because
+the loop would then have no stopping rule of its own and a deadline on the context is not one
+of the three.
 
 The seed is reported through `OnResolve` the way Mayfly's is, and zero means "choose one and say
-which". Run *k* uses `seed + k` for both the library's stream and the cold mean's draw, so a
-single restart can be reproduced on its own. `Progress.Restart` names the run in progress and
+which". Run _k_ uses `seed + k` for the library's stream and `seed - k - 1` for the cold mean's
+draw, so a single restart can be reproduced on its own without the two generators sharing a
+seed and replaying one sequence. `Progress.Restart` names the run in progress and
 `Result.Restarts` counts the runs completed. `Result.Converged` is true only when `RestartLimit`
 ended the loop and the last run stopped on a Hansen criterion: a loop the clock stopped has no
 claim on convergence, whatever its final run ended on.
@@ -219,6 +226,39 @@ in separable mode and 1024 in block mode, which does not bite at the populations
 twelve by default, and `--cmaes-lambda` is not expected past 64. v0.2.0 changes the sampling
 trajectory, which would make campaign numbers recorded before and after incomparable, so the
 upgrade waits until the 8.6 figures are on record.
+
+## The polish stage
+
+The main search stops where its own stopping rule fires, which is rarely the bottom of the basin
+it ended in. `optimizer.Polish` walks the incumbent the rest of the way down: `--polish
+nelder-mead` runs the gonum simplex with `SimplexSize` at `--polish-sigma`, `--polish cmaes` runs
+the CMA-ES backend with the same value as `InitialSigma` and `RestartLimit` 1. The default sigma
+is 0.02, a fiftieth of the normalized box: the stage is there to refine the basin the search
+found, not to search again, so the first simplex or generation has to land inside it. A restart
+limit of one is part of the same reasoning, since a cold restart samples the whole box.
+
+The stage searches under the `polish` profile, which weights the waveform term, and it runs over
+the primary objective's own codec and encoded bounds — `ObjectiveFunction.WithMetric` rebuilds the
+objective from the same template, reference, sample rate and configuration with only the metric
+swapped, and it hands over the composite reference it already holds, so the reference is not
+measured a second time. Dimension for dimension, an encoded vector means the same thing to both
+objectives.
+
+Acceptance is judged under the _primary_ metric, not under `polish`: the polished vector replaces
+the incumbent only when its primary cost is strictly lower. Every report, `glockenspiel distance`
+and every checkpoint score a preset under the metric the fit was started with, so a polish that
+lowered the waveform term while raising the primary cost would ship a regression those very
+reports go on to show. Both pairs of costs are printed, so an operator can see what the stage did
+even when it was rejected:
+
+```
+polish (cmaes): primary 0.0421 -> 0.0388, polish 0.0517 -> 0.0402, accepted
+```
+
+The stage is CLI-only: the server and the browser fit do not run it. It neither resumes from a
+checkpoint nor writes one, so the checkpoint stream stays the record of the search that
+`--resume` continues. A cancelled context ends the stage without an error — the incumbent is
+still the answer, and Ctrl-C during a polish costs the polish, not the fit.
 
 ## Tuning the Mayfly search
 
@@ -355,8 +395,18 @@ resolved before the configuration is built and reported alongside the resolved
 dialect, and the fit command records it in the checkpoint. Feeding the reported
 seed back in reproduces the run exactly.
 
-This matters for resume: a `--mayfly-seed 0` run now continues its original
-random stream rather than starting a new one.
+One flag carries it. `--seed` feeds Mayfly, CMA-ES and the polish stage
+alike, because a fit is one experiment however many engines it runs through,
+and three flags meant three answers to "what seeded this run?". `--mayfly-seed`
+and `--cmaes-seed` still work as deprecated aliases that write the same option;
+combining one with `--seed` is refused rather than resolved, since there is no
+reading of two different seeds for one run that is not a mistake.
+
+This matters for resume: a `--seed 0` run continues its original random stream
+rather than starting a new one. The checkpoint records the resolved seed in the
+engine's own environment block, which is where it was recorded before the flags
+were merged, so a checkpoint written by an older build resumes unchanged. A
+resume takes that recorded seed unless the resume command names a seed itself.
 
 The seed reaches mayfly as `Config.Seed` rather than as a caller-owned
 `*rand.Rand`, so the value the library reports back in `Result.Seed` is the one
@@ -391,7 +441,17 @@ Two counters have intentionally different meanings:
 - `Iteration` counts progress reports and orders `checkpoint_*.json` files.
 - `OptimizerIterations` is the backend's own iteration count, in the same unit as `--max-iter`.
 
-Only `OptimizerIterations` may be subtracted from the remaining iteration budget on resume.
+Only `OptimizerIterations` may be subtracted from the remaining iteration budget on resume, and
+it is also what `--checkpoint-interval` counts. Pacing the cadence by report count tied it to
+`--report-every` and to how talkative a backend happens to be, so the same interval bought
+wildly different checkpoint spacing per engine. A checkpoint is written once at least
+`--checkpoint-interval` optimizer iterations have passed since the last one -- "at least",
+because a backend reports on its own schedule and may step past the exact multiple -- plus the
+final one every run writes. `--report-every` keeps its own meaning: it is about printing.
+
+The checkpoint also records the resolved worker count in `OptimizerState.Workers`. A resume
+reuses it unless `--workers` is written again, so a fit continued on a machine with a different
+CPU count evaluates the same number of candidates at a time as the run it is continuing.
 Mayfly checkpoints also retain the variant, preset, population, effective seed, round schedule,
 and tuning document, but neither backend stores its complete internal population or simplex.
 Resume continues from the best encoded parameter vector and the remaining budget; it is a coarse

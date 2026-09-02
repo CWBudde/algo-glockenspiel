@@ -69,7 +69,21 @@ glockenspiel synth \
 
 The `fit` command optimizes preset parameters against a mono reference WAV.
 
-Basic local-refinement example:
+The default optimizer is `cmaes`, restarting until the budget is spent. A plain
+run needs no backend flag at all:
+
+```bash
+glockenspiel fit \
+  --reference testdata/reference/legacy_synth_a4.wav \
+  --preset assets/presets/default.json \
+  --output out/fitted-a4.json \
+  --time-budget 60s \
+  --polish cmaes \
+  --work-dir out/fit-a4
+```
+
+Basic local-refinement example, with the standalone Nelder-Mead backend that
+used to be the default:
 
 ```bash
 glockenspiel fit \
@@ -99,6 +113,19 @@ glockenspiel fit \
   --work-dir out/fit-a4
 ```
 
+Covariance-adapting search with CMA-ES, restarting until the budget is spent:
+
+```bash
+glockenspiel fit \
+  --reference testdata/reference/legacy_synth_a4.wav \
+  --preset assets/presets/default.json \
+  --output out/fitted-a4.json \
+  --optimizer cmaes \
+  --cmaes-covariance block \
+  --time-budget 60s \
+  --work-dir out/fit-a4
+```
+
 Resume from the latest checkpoint in the work directory:
 
 ```bash
@@ -119,7 +146,7 @@ glockenspiel fit \
 - `--note`: note number used when rendering candidates
 - `--velocity`: strike velocity for candidate renders
 - `--sample-rate`: must match the reference WAV sample rate
-- `--optimizer`: `simple` or `mayfly`
+- `--optimizer`: `simple`, `mayfly` or `cmaes` (the default since Phase 8.4; `simple` stays selectable)
 - `--metric`: a composite profile — `balanced` (the default), `placement` or `polish` — or a single legacy term, `rms`, `log` or `spectral`. See [Choosing Optimizer And Metric](#choosing-optimizer-and-metric)
 - `--downmix`: which channel of a multi-channel reference the fit sees, `first` (the default) or `mean`
 - `--window`: cut the reference to this length after its onset instead of where the strike ends; by default the loader cuts at a second event or where the tail stops falling
@@ -130,22 +157,31 @@ glockenspiel fit \
 - `--time-budget`: wall-clock budget as a Go duration, for example `30s` or `10m`; a bare number is still read as seconds
 - `--align`: time-align each candidate to the reference before scoring, on by default. Leave it on for recorded references: a few samples of offset invert the phase of a high partial, so the correct parameters would score worse than incorrect ones
 - `--normalize-gain`: under a legacy metric, divide out the scalar gain that best matches the reference level, off by default. Use it when the reference level is unknown; it makes the model's amplitude parameters unidentifiable, so leave it off when the level is meaningful. A composite profile solves its gain in closed form regardless
-- `--report-every`: progress print interval, counted in the chosen optimizer's own iterations. The default follows the backend -- 10 for `simple`, 1 for `mayfly` -- because a mayfly iteration is a whole generation, roughly fifty renders, against about one for a simple major iteration
-- `--checkpoint-interval`: checkpoint write interval in progress reports; `0` disables checkpointing entirely, including the final checkpoint
+- `--report-every`: progress print interval, counted in the chosen optimizer's own iterations. The default is 10, and 1 under `mayfly`, because a mayfly iteration is a whole generation, roughly fifty renders, against about one for a simple major iteration
+- `--checkpoint-interval`: write a checkpoint once this many of the backend's own iterations have passed since the last one, counted in the same unit as `--max-iter` and independent of `--report-every`; `0` disables checkpointing entirely, including the final checkpoint. A backend reports on its own schedule, so the spacing is "at least this many" rather than exactly
+- `--seed`: the one random seed for every backend, Mayfly, CMA-ES and the polish stage alike. `0` (the default) picks a seed, prints it, and records it in the checkpoint, so the run stays reproducible and a resume continues the same stream. `--mayfly-seed` and `--cmaes-seed` remain as deprecated aliases that write the same option; combining one with `--seed` is an error. Run _k_ of a restarting CMA-ES fit uses `seed + k`
+- `--workers`: how many goroutines evaluate candidates in parallel; `0` (the default) follows the machine's CPU count. The resolved width is printed, recorded in the checkpoint, and reused by `--resume` unless `--workers` is written again, so a fit continued on another machine reproduces the run it is continuing rather than the machine it lands on
 - `--work-dir`: stores checkpoints and `fitted_output.wav`, resolved relative to the current directory (default `out/fit`)
 - `--resume`: restart from the latest `checkpoint_*.json` in `work-dir`
 - `--mayfly-variant`: which of Mayfly's eight dialects to run. The measured effect of the choice is small, so it is rarely the setting worth reaching for first
 - `--mayfly-pop`: Mayfly male/female population size. Bigger is not better at a fixed budget: larger populations were measured as _worse_, because each iteration costs more
-- `--mayfly-seed`: random seed for Mayfly. `0` picks a seed, prints it, and records it, so the run stays reproducible and a resume continues the same stream
 - `--mayfly-preset`: start from one of Mayfly's named configurations, which pick a dialect and its knobs together. Cannot be combined with `--mayfly-variant`, and does not override `--max-iter` or `--mayfly-pop`
 - `--mayfly-tuning`: JSON file setting individual Mayfly knobs, see [Tuning Mayfly](#tuning-mayfly)
 - `--mayfly-epochs`: split the run into this many warm rounds, each reseeded from the best result so far (default `1`)
 - `--mayfly-restarts`: append this many cold rounds, each starting from a fresh random population (default `0`)
-- `--mayfly-stagnation`: stop a round after this many iterations without progress; `0` disables it. Must be narrower than a round, or it could never fire
+- `--mayfly-stagnation`: stop a round after this many iterations without progress. Must be narrower than a round, or it could never fire. Writing `0` switches the rule off, which is how a `--mayfly-preset` or a tuning document that brought its own stagnation window is overridden; leaving the flag out changes nothing
 - `--mayfly-target-cost`: stop once the best cost reaches this value
 - `--mayfly-nc`: crossover offspring per iteration; `-1` derives it from the ratio, `0` disables crossover
-- `--mayfly-nc-ratio`: offspring count as a multiple of the population
+- `--mayfly-nc-ratio`: offspring count as a multiple of the population, used only when `--mayfly-nc` is `-1`. Writing `0` keeps the variant's own ratio, and it is written into the tuning document like any other value; leaving the flag out changes nothing
 - `--mayfly-selection`: `rank` or `tournament` parent selection
+- `--cmaes-covariance`: what CMA-ES learns, `separable` (the default) for the diagonal only or `block` for a dense matrix per mode. A mode's amplitude, frequency and decay are the numbers that genuinely trade against each other, which is the structure `block` buys
+- `--cmaes-lambda`: population size per generation; `0` (the default) takes Hansen's `4 + floor(3 ln n)`, which is twelve at the eighteen dimensions the default preset's four modes encode and fourteen at the thirty an eight-mode seed encodes
+- `--cmaes-sigma`: initial step size as a fraction of the normalized search box, at most `1` (default `0.3`, which covers a third of it). A `0` takes that same default, as a zero population and a zero seed take theirs
+- `--cmaes-restarts`: number of cold runs; `0` (the default) restarts until the budget is spent. Each run after the first starts from a fresh mean drawn uniformly in the box, so it is independent of the basin the previous one settled in
+- `--polish`: run a local refinement stage after the main search, `none` (the default), `nelder-mead` or `cmaes`. The stage searches under the `polish` profile from the search result, but the result is kept only when it lowers the cost under the metric the fit was started with. See [The polish stage](optimizer.md#the-polish-stage)
+- `--polish-iterations`: iteration cap for the polish stage (default `200`)
+- `--polish-budget`: wall-clock budget for the polish stage as a Go duration; `0` (the default) leaves it uncapped, so only `--polish-iterations` ends the stage
+- `--polish-sigma`: the stage's initial step as a fraction of the normalized search box (default `0.02`): the Nelder-Mead simplex size, or the CMA-ES step size
 
 ### Tuning Mayfly
 
@@ -253,6 +289,13 @@ Use `mayfly` when:
 - `simple` gets stuck too early
 - you are willing to spend more memory and wall-clock time per run to search more broadly
 
+Use `cmaes` when:
+
+- the starting preset is weak and the budget is a wall-clock one, so a run that converges early
+  is better spent on a cold restart than on more generations
+- the dimensions trade against each other, which `--cmaes-covariance block` learns per mode
+- you want the search to adapt its own step size rather than be told one
+
 Benchmark snapshot from `internal/optimizer/perf_test.go` on 2026-09-02, short legacy fit,
 Go 1.26.0 on twelve hardware threads (`go test ./internal/optimizer -run '^$' -bench LegacyShort -benchmem`):
 
@@ -261,7 +304,9 @@ Go 1.26.0 on twelve hardware threads (`go test ./internal/optimizer -run '^$' -b
 
 Both rows were measured under Mayfly v0.6.0. v0.7.0 changed the update rules, so any Mayfly
 number recorded here before 2026-09-02 describes a different search; see
-[optimizer.md](optimizer.md#the-version-this-is-pinned-to).
+[optimizer.md](optimizer.md#the-version-this-is-pinned-to). `cmaes` has no row here because it
+arrived with Phase 8.4 and the benchmark predates it; [training.md](training.md) has a smoke run
+of all three engines on the C5 recording, which is a wiring check rather than a comparison.
 
 An earlier snapshot in this place was taken before `internal/wavio` learned to decode 32-bit
 float WAVs, so it timed fits against a square wave; it has been replaced, not corrected. Read
@@ -473,11 +518,13 @@ Check:
 
 When a checkpoint contains optimizer state, resume restores:
 
-- optimizer identity (`simple` or `mayfly`) unless you explicitly override it
+- optimizer identity (`simple`, `mayfly` or `cmaes`) unless you explicitly override it
 - metric unless you explicitly override it
 - the best encoded parameter vector found so far
 - remaining iteration budget relative to the saved checkpoint iteration
-- Mayfly variant, population, and seed unless you explicitly override them
+- Mayfly variant and population, and the CMA-ES covariance, population and step size, unless you explicitly override them
+- the resolved seed, unless `--seed` (or one of its deprecated aliases) is written on the resume command
+- the resolved worker count, unless `--workers` is written on the resume command
 
 Resume does not restore a full internal simplex or full Mayfly population snapshot. It resumes from the saved best point plus the persisted optimizer settings.
 

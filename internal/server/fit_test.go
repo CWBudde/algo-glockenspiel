@@ -30,6 +30,7 @@ type fitSnapshot struct {
 	Iteration           int     `json:"iteration"`
 	OptimizerIterations int     `json:"optimizerIterations"`
 	Evaluations         int     `json:"evaluations"`
+	Restart             int     `json:"restart"`
 	CurrentCost         float64 `json:"currentCost"`
 	BestCost            float64 `json:"bestCost"`
 	ElapsedMS           int64   `json:"elapsedMs"`

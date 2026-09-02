@@ -323,14 +323,21 @@ func TestCMAESOptimizerSurvivesANonFiniteRegion(t *testing.T) {
 	}
 }
 
+// TestCMAESOptimizerCapsTotalIterationsAcrossRestarts pins that
+// OptimizeOptions.MaxIterations is the total across every restart, not each
+// run's own cap. The objective is flat, so TolFun ends a run as soon as its
+// history window is full and the loop restarts many times inside the budget; a
+// per-run cap would let the total run past it.
 func TestCMAESOptimizerCapsTotalIterationsAcrossRestarts(t *testing.T) {
 	const (
 		dims  = 4
-		total = 25
+		total = 400
 	)
 
+	flat := func(_ []float64) float64 { return 1 }
+
 	result, err := (&CMAESOptimizer{Seed: 29, MaxWorkers: 1}).Optimize(
-		context.Background(), unitSphere(cmaesOptimum(dims)), badStart(dims),
+		context.Background(), flat, badStart(dims),
 		UnitBounds(dims), OptimizeOptions{MaxIterations: total},
 	)
 	if err != nil {
@@ -341,8 +348,26 @@ func TestCMAESOptimizerCapsTotalIterationsAcrossRestarts(t *testing.T) {
 		t.Fatalf("expected %d iterations across every run, got %d", total, result.Iterations)
 	}
 
+	if result.Restarts < 2 {
+		t.Fatalf("expected the cap to span several runs, got %d", result.Restarts)
+	}
+
 	if result.StopReason != "max_iterations" {
 		t.Fatalf("expected max_iterations, got %q", result.StopReason)
+	}
+}
+
+// TestCMAESOptimizerRejectsARunWithoutABudget covers the one combination that
+// has no stopping rule: no iteration cap, no time budget and no restart limit.
+func TestCMAESOptimizerRejectsARunWithoutABudget(t *testing.T) {
+	const dims = 4
+
+	_, err := (&CMAESOptimizer{Seed: 31}).Optimize(
+		context.Background(), unitSphere(cmaesOptimum(dims)), badStart(dims),
+		UnitBounds(dims), OptimizeOptions{},
+	)
+	if err == nil {
+		t.Fatal("a run with no budget of any kind must be rejected")
 	}
 }
 

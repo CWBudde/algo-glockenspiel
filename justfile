@@ -65,14 +65,31 @@ bench-arm64 *ARGS:
 # so the result is a v2 preset with as many modes as the analysis lists.
 
 # Re-fit the shipped default preset against its reference recording
+#
+# This is the default pipeline as of Phase 8.4: CMA-ES restarting until the time
+# budget is spent, followed by the local polish stage. --optimizer is left out
+# on purpose, so the recipe follows the CLI default rather than pinning a
+# backend of its own.
 refit-default *ARGS:
     go run ./cmd/glockenspiel fit \
         --reference testdata/reference/legacy_synth_a4.wav \
         --output out/refit/default.json \
-        --optimizer mayfly --mayfly-pop 30 --mayfly-seed 1 \
         --max-iter 100000 --time-budget 8m \
+        --polish cmaes \
         --sample-rate 44100 --note 69 --velocity 100 \
         --work-dir out/refit {{ ARGS }}
+
+# Re-fit the shipped default preset with Mayfly, the pre-8.4 recipe
+#
+# Kept as a Mayfly recipe so the figures recorded under it stay reproducible.
+refit-default-mayfly *ARGS:
+    go run ./cmd/glockenspiel fit \
+        --reference testdata/reference/legacy_synth_a4.wav \
+        --output out/refit/default-mayfly.json \
+        --optimizer mayfly --mayfly-pop 30 --seed 1 \
+        --max-iter 100000 --time-budget 8m \
+        --sample-rate 44100 --note 69 --velocity 100 \
+        --work-dir out/refit-mayfly {{ ARGS }}
 
 # Run the web app's checks: typecheck, lint, unit tests
 test-web:

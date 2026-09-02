@@ -87,6 +87,32 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 		return settings, err
 	}
 
+	if settings.CmaesLambda, err = formInt(request, "cmaesLambda", settings.CmaesLambda, 0, maxCMAESLambda); err != nil {
+		return settings, err
+	}
+
+	if settings.CmaesSeed, err = formInt64(request, "cmaesSeed", settings.CmaesSeed); err != nil {
+		return settings, err
+	}
+
+	if settings.CmaesRestarts, err = formInt(request, "cmaesRestarts", settings.CmaesRestarts, 0, maxCMAESRestarts); err != nil {
+		return settings, err
+	}
+
+	// The step size is read through the pointer helper only to reuse its
+	// parsing: an absent field keeps the default rather than becoming zero.
+	// A submitted zero is not refused: it means the same thing as a zero
+	// population or a zero seed, which is "take the backend's default", 0.3
+	// here.
+	sigma, err := formFloat64Ptr(request, "cmaesSigma", 0, 1)
+	if err != nil {
+		return settings, err
+	}
+
+	if sigma != nil {
+		settings.CmaesSigma = *sigma
+	}
+
 	budget, err := formDuration(request, "timeBudget", settings.timeBudget())
 	if err != nil {
 		return settings, err
@@ -141,6 +167,13 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 		settings.MayflySelection = value
 	}
 
+	// The covariance mode is passed through unchecked for the reason the
+	// mayfly variant is: optimizer.CMAESOptimizer owns that name list, and a
+	// second copy here would drift out of step with it.
+	if value := request.FormValue("cmaesCovariance"); value != "" {
+		settings.CmaesCovariance = value
+	}
+
 	switch value := request.FormValue("mayflyVariant"); {
 	case value != "":
 		settings.MayflyVariant = value
@@ -169,7 +202,7 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 	// The metric and the optimizer name are validated by the packages that own
 	// their vocabularies -- optimizer.ParseMetric and selectOptimizer -- rather
 	// than by a second list here that could fall out of step with them.
-	if _, err := selectOptimizer(settings); err != nil {
+	if _, err := selectOptimizer(settings, nil); err != nil {
 		return settings, err
 	}
 

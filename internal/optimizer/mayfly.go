@@ -86,6 +86,11 @@ type ResolvedMayfly struct {
 	// IterationsPerRound is the budget of the longest round. Rounds differ by
 	// at most one iteration, because the remainder goes to the earliest ones.
 	IterationsPerRound int
+	// Workers is the number of goroutines evaluating one generation, after a
+	// zero MaxWorkers has been replaced by the machine's CPU count. It mirrors
+	// ResolvedCMAES.Workers so a caller can record and restore the width
+	// whichever backend it ran.
+	Workers int
 }
 
 // Optimize runs Mayfly in a normalized [0,1] search space and maps candidates back into bounds.
@@ -158,6 +163,10 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 	resolved.Variant = variantNameForConfig(cfg)
 	resolved.Rounds = len(budgets)
 	resolved.IterationsPerRound = budgets[0]
+	// buildConfig is where a zero MaxWorkers becomes the machine's CPU count,
+	// so the width is read back off the configuration rather than derived a
+	// second time here.
+	resolved.Workers = cfg.MaxWorkers
 
 	if o.OnResolve != nil {
 		o.OnResolve(resolved)

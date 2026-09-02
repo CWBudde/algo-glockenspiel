@@ -128,6 +128,10 @@ type ObjectiveFunction struct {
 	composite     *compositeReference
 	compositeOnce sync.Once
 	analysis      *analysis.Measurement
+
+	// config is the configuration the objective was built with, kept so that
+	// WithMetric can rebuild the same objective under another metric.
+	config ObjectiveConfig
 }
 
 // newRenderState builds an independent preset/synthesizer pair from the template.
@@ -159,6 +163,20 @@ func NewObjectiveFunctionWithBounds(reference []float32, template *preset.Preset
 // NewObjectiveFunctionWithConfig creates an objective with full control over
 // metric, bounds, time alignment and level normalisation.
 func NewObjectiveFunctionWithConfig(reference []float32, template *preset.Preset, sampleRate, note, velocity int, config ObjectiveConfig) (*ObjectiveFunction, error) {
+	return newObjectiveFunction(reference, template, sampleRate, note, velocity, config, nil)
+}
+
+// newObjectiveFunction is the shared constructor. A non-nil shared composite
+// reference is adopted instead of measuring the reference again, which is what
+// WithMetric hands over: the composite reference depends only on the reference
+// signal and is immutable once built.
+func newObjectiveFunction(
+	reference []float32,
+	template *preset.Preset,
+	sampleRate, note, velocity int,
+	config ObjectiveConfig,
+	shared *compositeReference,
+) (*ObjectiveFunction, error) {
 	if err := validateObjectiveInputs(reference, template, sampleRate, note, velocity, config.Metric); err != nil {
 		return nil, err
 	}
@@ -212,6 +230,11 @@ func NewObjectiveFunctionWithConfig(reference []float32, template *preset.Preset
 		logFloor: defaultLogErrorFloor,
 		profile:  profile,
 		analysis: config.Analysis,
+		config:   config,
+	}
+
+	if shared != nil {
+		obj.compositeOnce.Do(func() { obj.composite = shared })
 	}
 
 	if config.Metric.Composite() {
@@ -342,6 +365,39 @@ func (o *ObjectiveFunction) metrics(rendered []float32, params *model.BarParams)
 // the zero Profile for a legacy metric.
 func (o *ObjectiveFunction) Profile() Profile {
 	return o.profile
+}
+
+// Config returns the configuration the objective was built with.
+func (o *ObjectiveFunction) Config() ObjectiveConfig {
+	return o.config
+}
+
+// WithMetric returns an objective over the same reference, template, sample
+// rate and configuration, scored under another metric. The reference is not
+// measured again: the composite terms' reference side is derived from the
+// reference signal alone, so the new objective shares the one this objective
+// already holds. Because the bounds and the template are unchanged, the new
+// objective's codec has the same dimension and the same encoded bounds, and an
+// encoded vector means the same thing to both.
+//
+// Asking for the metric the objective already has returns the objective
+// itself, since there is nothing to rebuild.
+func (o *ObjectiveFunction) WithMetric(metric Metric) (*ObjectiveFunction, error) {
+	if metric == o.metric {
+		return o, nil
+	}
+
+	config := o.config
+	config.Metric = metric
+
+	var shared *compositeReference
+	if o.metric.Composite() || metric.Composite() {
+		shared = o.compositeReference()
+	}
+
+	template := o.template
+
+	return newObjectiveFunction(o.reference, &template, o.sampleRate, o.note, o.velocity, config, shared)
 }
 
 // Metric returns the metric the objective was built with.

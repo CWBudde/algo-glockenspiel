@@ -55,16 +55,22 @@ type Result struct {
 
 	// Restarts is the number of independent searches the run completed. Only
 	// the CMA-ES backend restarts, so it is zero for every other backend and
-	// for a run that was cut before its first search finished.
+	// for a run that was cut before its first search finished. "Completed" is
+	// not the same as "converged": a run the clock or the context ended is
+	// counted too whenever the backend hands back its partial result instead of
+	// an error, because the loop records that result like any other.
 	Restarts int
 }
 
 // Progress describes one optimizer progress update.
 type Progress struct {
 	// Iteration counts progress callbacks, not optimizer iterations and not
-	// objective evaluations. Backends differ in how often they can report, so
-	// this is the only value callers can use for checkpoint cadence and for
-	// subtracting resumed work from a budget.
+	// objective evaluations. It orders the reports a run produced, which is
+	// what the fit command's checkpoint file names are derived from. It is not
+	// a budget: subtracting it from an iteration cap would charge a run with
+	// --report-every 10 a tenth of the work it did, and it cannot pace a
+	// checkpoint cadence either, because backends differ in how often they
+	// report. Use OptimizerIterations for both.
 	Iteration int
 
 	// OptimizerIterations is the backend's own iteration count at the time of

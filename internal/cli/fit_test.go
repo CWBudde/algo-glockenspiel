@@ -400,23 +400,27 @@ func TestRunFitRejectsInvalidMetric(t *testing.T) {
 
 func TestShouldCheckpoint(t *testing.T) {
 	tests := []struct {
-		name            string
-		iteration       int
-		checkpointEvery int
-		want            bool
+		name                string
+		optimizerIterations int
+		lastCheckpointed    int
+		checkpointEvery     int
+		want                bool
 	}{
-		{name: "every report", iteration: 3, checkpointEvery: 1, want: true},
-		{name: "on cadence", iteration: 4, checkpointEvery: 2, want: true},
-		{name: "off cadence", iteration: 5, checkpointEvery: 2, want: false},
-		{name: "disabled", iteration: 4, checkpointEvery: 0, want: false},
-		{name: "negative interval", iteration: 4, checkpointEvery: -1, want: false},
-		{name: "zero iteration", iteration: 0, checkpointEvery: 1, want: false},
+		{name: "every iteration", optimizerIterations: 3, lastCheckpointed: 2, checkpointEvery: 1, want: true},
+		{name: "interval reached", optimizerIterations: 4, lastCheckpointed: 2, checkpointEvery: 2, want: true},
+		{name: "interval overshot", optimizerIterations: 9, lastCheckpointed: 2, checkpointEvery: 5, want: true},
+		{name: "interval not reached", optimizerIterations: 5, lastCheckpointed: 4, checkpointEvery: 2, want: false},
+		{name: "disabled", optimizerIterations: 4, checkpointEvery: 0, want: false},
+		{name: "negative interval", optimizerIterations: 4, checkpointEvery: -1, want: false},
+		{name: "backend reports no iteration count", optimizerIterations: 0, checkpointEvery: 1, want: false},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := shouldCheckpoint(tc.iteration, tc.checkpointEvery); got != tc.want {
-				t.Fatalf("shouldCheckpoint(%d, %d) = %v, want %v", tc.iteration, tc.checkpointEvery, got, tc.want)
+			got := shouldCheckpoint(tc.optimizerIterations, tc.lastCheckpointed, tc.checkpointEvery)
+			if got != tc.want {
+				t.Fatalf("shouldCheckpoint(%d, %d, %d) = %v, want %v",
+					tc.optimizerIterations, tc.lastCheckpointed, tc.checkpointEvery, got, tc.want)
 			}
 		})
 	}
@@ -980,7 +984,7 @@ func mayflyFitOptions(referencePath, outputPath, workDir string) fitOptions {
 	options := baseFitOptions(referencePath, outputPath, workDir)
 	options.optimizerName = "mayfly"
 	options.mayflyPop = 2
-	options.mayflySeed = 3
+	options.seed = 3
 	options.maxIter = 2
 
 	return options
@@ -1230,7 +1234,7 @@ func TestRunFitResumeRestoresEffectiveMayflySeed(t *testing.T) {
 	options := mayflyFitOptions(referencePath, outputPath, workDir)
 	// Zero means "pick one and report it", so the resolved value is the only
 	// record of the stream the run used.
-	options.mayflySeed = 0
+	options.seed = 0
 
 	if err := runFit(cmd, options); err != nil {
 		t.Fatalf("runFit failed: %v", err)
@@ -1251,7 +1255,7 @@ func TestRunFitResumeRestoresEffectiveMayflySeed(t *testing.T) {
 	resumed := mayflyFitOptions(referencePath, outputPath, workDir)
 	resumed.maxIter = 4
 	resumed.resume = true
-	resumed.mayflySeed = 0
+	resumed.seed = 0
 
 	if err := runFit(resume, resumed); err != nil {
 		t.Fatalf("resumed runFit failed: %v", err)

@@ -50,6 +50,7 @@ type Checkpoint struct {
 type OptimizerState struct {
 	Kind   string               `json:"kind"`
 	Mayfly *MayflyCheckpointEnv `json:"mayfly,omitempty"`
+	CMAES  *CMAESCheckpointEnv  `json:"cmaes,omitempty"`
 
 	// Modes is how the run's modes were chosen: the number seeded from the
 	// reference's partials, or KeepTemplateModes for the template's own. A
@@ -58,6 +59,13 @@ type OptimizerState struct {
 	// existed, which is read as the template's modes, because that is what
 	// every such run used.
 	Modes int `json:"modes,omitempty"`
+
+	// Workers is the number of goroutines the run resolved for parallel
+	// objective evaluation, never the zero that asked for the machine's own
+	// count. A resumed run reuses it so a fit moved between machines keeps the
+	// width it was started with. Absent -- zero -- in a checkpoint written
+	// before the width was recorded, which is read as "follow this machine".
+	Workers int `json:"workers,omitempty"`
 }
 
 // MayflyCheckpointEnv stores the Mayfly settings needed to resume consistently.
@@ -78,6 +86,21 @@ type MayflyCheckpointEnv struct {
 	// Tuning is the merged document the run was configured with, so a resume
 	// reproduces it without the tuning file having to still be on disk.
 	Tuning *MayflyTuning `json:"tuning,omitempty"`
+}
+
+// CMAESCheckpointEnv stores the CMA-ES settings needed to resume consistently.
+//
+// Lambda, Sigma and Restarts are written as the run was asked for them, where
+// zero still means the wrapper's own default. Seed is the exception: it is the
+// value the run resolved, never the zero that asked for one, because a resumed
+// run has to continue the stream it was started with rather than draw a new
+// one.
+type CMAESCheckpointEnv struct {
+	Covariance string  `json:"covariance"`
+	Lambda     int     `json:"lambda,omitempty"`
+	Sigma      float64 `json:"sigma,omitempty"`
+	Seed       int64   `json:"seed"`
+	Restarts   int     `json:"restarts,omitempty"`
 }
 
 // SaveCheckpoint writes a checkpoint atomically to disk.

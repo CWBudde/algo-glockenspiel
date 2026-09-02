@@ -64,6 +64,17 @@ const (
 	// own that could drift away from it.
 	maxMayflyPopulation = 4096
 
+	// maxCMAESLambda caps the CMA-ES population. It is the mayfly cap for the
+	// same reason: one generation evaluates the whole population, so a
+	// population above it is a request to spend an entire fit on a single
+	// generation.
+	maxCMAESLambda = 4096
+
+	// maxCMAESRestarts caps the restart count, mirroring the bound the mayfly
+	// schedule is held to: every run costs at least one iteration, so an
+	// unbounded count is a request to slice the budget too thin to search.
+	maxCMAESRestarts = 1000
+
 	// maxFitTargetCost bounds the convergence target. A cost is whatever the
 	// metric produces, so there is no meaningful ceiling; the bound exists only
 	// to keep the value finite and inside a range the engine can validate.
@@ -125,6 +136,16 @@ type fitRequest struct {
 	MayflyNC         *int     `json:"mayflyNc"`
 	MayflyNCRatio    *float64 `json:"mayflyNcRatio"`
 
+	// The CMA-ES settings, spelled as the `fit` command spells its flags. A
+	// zero lambda takes Hansen's default population, a zero restart count
+	// restarts until the budget is spent, and a zero seed asks the backend to
+	// pick one.
+	CmaesCovariance string  `json:"cmaesCovariance"`
+	CmaesLambda     int     `json:"cmaesLambda"`
+	CmaesSigma      float64 `json:"cmaesSigma"`
+	CmaesSeed       int64   `json:"cmaesSeed"`
+	CmaesRestarts   int     `json:"cmaesRestarts"`
+
 	// MayflyTuning is the uploaded tuning document. It arrives as a multipart
 	// file part rather than as a scalar field -- exactly as the bounds
 	// document does -- so it is never part of the JSON form of a request.
@@ -147,6 +168,10 @@ func (r fitRequest) loadOptions() analysis.LoadOptions {
 // mayflyOptimizerName is the backend name selectOptimizer answers to, spelled
 // once so the cadence default below and the switch cannot drift apart.
 const mayflyOptimizerName = "mayfly"
+
+// cmaesOptimizerName is the backend name selectOptimizer answers to, spelled
+// once for the same reason mayflyOptimizerName is.
+const cmaesOptimizerName = "cmaes"
 
 // defaultMayflyReportEvery is the progress cadence a mayfly run gets when the
 // client names no cadence of its own: every generation, which is what
@@ -174,6 +199,8 @@ func defaultFitRequest() fitRequest {
 		MayflyEpochs:     1,
 		MayflyRestarts:   0,
 		MayflyStagnation: 0,
+		CmaesCovariance:  "separable",
+		CmaesSigma:       0.3,
 	}
 }
 
@@ -297,7 +324,7 @@ func (s *Server) runFit(
 ) {
 	settings := job.request
 
-	backend, err := selectOptimizer(settings)
+	backend, err := selectOptimizer(settings, objective.Codec())
 	if err != nil {
 		job.finish(fitFailed, nil, nil, nil, nil, err)
 
@@ -781,11 +808,36 @@ func buildObjective(
 }
 
 // selectOptimizer maps the request's backend name onto an implementation.
-func selectOptimizer(settings fitRequest) (optimizer.Optimizer, error) {
+//
+// The codec is the objective's, and it is nil at parse time, where the request
+// is validated before a reference has been read and no codec exists yet. It
+// carries one thing: the CMA-ES block partition, which is the codec's to know
+// because only it knows which encoded coordinates a mode owns. Leaving it out
+// costs nothing there, because Optimize checks the partition against the
+// dimension it is finally run at anyway.
+func selectOptimizer(settings fitRequest, codec *optimizer.ParamCodec) (optimizer.Optimizer, error) {
 	switch settings.Optimizer {
 	case "simple":
 		return &optimizer.SimpleOptimizer{}, nil
-	case "mayfly":
+	case cmaesOptimizerName:
+		backend := &optimizer.CMAESOptimizer{
+			Covariance:   settings.CmaesCovariance,
+			Lambda:       settings.CmaesLambda,
+			InitialSigma: settings.CmaesSigma,
+			Seed:         settings.CmaesSeed,
+			RestartLimit: settings.CmaesRestarts,
+		}
+
+		if codec != nil {
+			backend.BlockGroups = codec.BlockGroups()
+		}
+
+		if err := backend.Validate(settings.MaxIterations); err != nil {
+			return nil, err
+		}
+
+		return backend, nil
+	case mayflyOptimizerName:
 		backend := &optimizer.MayflyOptimizer{
 			Variant:    settings.MayflyVariant,
 			Preset:     settings.MayflyPreset,

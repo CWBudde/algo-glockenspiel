@@ -83,6 +83,13 @@ See [optimizer.md](optimizer.md) for how the document fits into a run.
 | `cooling_schedule`    | enum  | `exponential`, `linear`, `logarithmic` | Shape of the temperature decay.                                                                                                  |
 | `golden_factor`       | float | any finite                             | Weight of the golden-sine step.                                                                                                  |
 
+## HMMA
+
+| Key                        | Type  | Range       | Description                                                                 |
+| -------------------------- | ----- | ----------- | --------------------------------------------------------------------------- |
+| `cauchy_mutation_rate`     | float | [0, 1]      | Share of mutations drawn from a Cauchy rather than a Gaussian distribution. |
+| `apply_obl_to_global_best` | bool  | true, false | Apply opposition-based learning to the global best every tenth iteration.   |
+
 ## MPMA
 
 | Key                   | Type  | Range                              | Description                                                           |

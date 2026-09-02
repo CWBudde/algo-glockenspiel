@@ -71,11 +71,15 @@ glockenspiel fit \
   --reference testdata/reference/legacy_synth_a4.wav \
   --preset assets/presets/default.json \
   --output out/fitted-a4.json \
-  --optimizer simple \
   --max-iter 100 \
   --time-budget 30s \
+  --polish cmaes \
   --work-dir out/fit-a4
 ```
+
+The default optimizer is CMA-ES, restarting until the budget is spent; `--optimizer simple` still
+selects the standalone Nelder-Mead run that used to be the default. `--polish` adds a local
+refinement stage after the search, kept only when it lowers the cost under the fit's own metric.
 
 Resume from the latest checkpoint in a work directory:
 
@@ -88,7 +92,7 @@ glockenspiel fit \
   --resume
 ```
 
-Flags: `--reference`, `--preset`, `--bounds`, `--output`, `--note`, `--velocity`, `--sample-rate`, `--optimizer` (`simple` or `mayfly`), `--metric` (a composite profile, `balanced`, `placement` or `polish`, or a legacy term, `rms`, `log` or `spectral`), `--downmix`, `--window`, `--keep-level`, `--analysis`, `--modes` (`0` seeds one starting mode per measured partial, `N` the strongest `N`, `-1` keeps the preset's own), `--max-iter`, `--time-budget` (a Go duration such as `30s` or `10m`; a bare number is read as seconds), `--align`, `--normalize-gain`, `--report-every`, `--checkpoint-interval`, `--work-dir`, `--resume`, `--mayfly-variant` (one of eight dialects), `--mayfly-pop`, `--mayfly-seed`, `--mayfly-preset`, `--mayfly-tuning`, `--mayfly-epochs`, `--mayfly-restarts`, `--mayfly-stagnation`, `--mayfly-target-cost`, `--mayfly-nc`, `--mayfly-nc-ratio`, `--mayfly-selection`. See [docs/mayfly-tuning.md](docs/mayfly-tuning.md) for the tuning document.
+Flags: `--reference`, `--preset`, `--bounds`, `--output`, `--note`, `--velocity`, `--sample-rate`, `--optimizer` (`simple`, `mayfly` or `cmaes`, the default), `--metric` (a composite profile, `balanced`, `placement` or `polish`, or a legacy term, `rms`, `log` or `spectral`), `--downmix`, `--window`, `--keep-level`, `--analysis`, `--modes` (`0` seeds one starting mode per measured partial, `N` the strongest `N`, `-1` keeps the preset's own), `--max-iter`, `--time-budget` (a Go duration such as `30s` or `10m`; a bare number is read as seconds), `--align`, `--normalize-gain`, `--report-every`, `--checkpoint-interval`, `--seed`, `--workers`, `--work-dir`, `--resume`, `--mayfly-variant` (one of eight dialects), `--mayfly-pop`, `--mayfly-preset`, `--mayfly-tuning`, `--mayfly-epochs`, `--mayfly-restarts`, `--mayfly-stagnation`, `--mayfly-target-cost`, `--mayfly-nc`, `--mayfly-nc-ratio`, `--mayfly-selection`, `--cmaes-covariance` (`separable` or `block`), `--cmaes-lambda`, `--cmaes-sigma`, `--cmaes-restarts`, `--polish` (`none`, `nelder-mead` or `cmaes`), `--polish-iterations`, `--polish-budget`, `--polish-sigma`. `--mayfly-seed` and `--cmaes-seed` still work as deprecated aliases for `--seed`. See [docs/mayfly-tuning.md](docs/mayfly-tuning.md) for the tuning document.
 
 It writes the fitted preset to `--output`, the best-fit render to `<work-dir>/fitted_output.wav` and checkpoints to `<work-dir>/checkpoint_*.json`.
 

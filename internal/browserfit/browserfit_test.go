@@ -158,6 +158,45 @@ func TestBrowserFitValidatesBrowserControlledSettingsFirst(t *testing.T) {
 	}
 }
 
+func TestBrowserFitRunsWithTheCMAESBackend(t *testing.T) {
+	t.Parallel()
+
+	templateData, referenceData := testReference(t)
+
+	request := defaultRequest()
+	request.Optimizer = "cmaes"
+	// Block mode is the one that needs the codec's partition, so it is the mode
+	// worth running here: a backend built without it is refused by Optimize.
+	request.CmaesCovariance = "block"
+	request.CmaesLambda = 4
+	request.CmaesSigma = 0.3
+	request.CmaesSeed = 5
+	request.CmaesRestarts = 1
+	request.MaxIterations = 2
+
+	prepared, err := browserfit.New(request, referenceData, templateData, nil)
+	if err != nil {
+		t.Fatalf("prepare browser fit: %v", err)
+	}
+
+	result, err := prepared.Run(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("run browser fit: %v", err)
+	}
+
+	if result.Evaluations == 0 {
+		t.Fatal("fit reported no objective evaluations")
+	}
+
+	if result.Restarts != 1 {
+		t.Fatalf("result reports %d restarts, want the one the limit allows", result.Restarts)
+	}
+
+	if _, err = prepared.Preset(result.BestParams); err != nil {
+		t.Fatalf("decode fitted preset: %v", err)
+	}
+}
+
 func defaultRequest() browserfit.Request {
 	return browserfit.Request{
 		Note:             69,
