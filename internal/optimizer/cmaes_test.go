@@ -416,3 +416,240 @@ func TestCMAESOptimizerRejectsBlockModeWithoutGroups(t *testing.T) {
 		t.Fatal("a partition missing a coordinate must be rejected")
 	}
 }
+
+// TestCMAESStopsAtTheEvaluationCap is the evaluation-matching guarantee the
+// campaign harness rests on: two backends given the same cap must spend the
+// same renders, so the cap has to bind rather than be rounded up to a whole
+// generation.
+func TestCMAESStopsAtTheEvaluationCap(t *testing.T) {
+	const (
+		dims   = 4
+		budget = 500
+	)
+
+	bounds := unitBoundsFor(dims)
+	optimum := cmaesOptimum(dims)
+
+	result, err := (&CMAESOptimizer{Seed: 5, MaxWorkers: 1}).Optimize(
+		context.Background(), unitSphere(optimum), midpoint(dims), bounds,
+		OptimizeOptions{MaxEvaluations: budget},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	// One generation is the overrun the contract allows. The library truncates
+	// its last generation to what is left, so in practice the cap is exact.
+	generation := HansenPopulationSize(dims)
+	if result.Evaluations < budget || result.Evaluations >= budget+generation {
+		t.Fatalf("evaluations = %d, want in [%d, %d)", result.Evaluations, budget, budget+generation)
+	}
+
+	if result.StopReason != "max_evaluations" {
+		t.Fatalf("stop reason = %q, want max_evaluations", result.StopReason)
+	}
+}
+
+// TestCMAESRunEvaluationsRestartsOnASchedule pins the shape CircleFit records
+// as its open structural fix: a run that learns nothing is abandoned after a
+// fixed number of evaluations, and the budget buys restarts rather than one
+// long stagnation. The objective is flat, so no Hansen criterion can end a run
+// early and the restart count is exactly the budget divided by the run length.
+func TestCMAESRunEvaluationsRestartsOnASchedule(t *testing.T) {
+	const (
+		dims     = 4
+		budget   = 1000
+		perRun   = 100
+		expected = budget / perRun
+	)
+
+	flat := func([]float64) float64 { return 1 }
+
+	result, err := (&CMAESOptimizer{Seed: 5, MaxWorkers: 1, RunEvaluations: perRun}).Optimize(
+		context.Background(), flat, midpoint(dims), unitBoundsFor(dims),
+		OptimizeOptions{MaxEvaluations: budget},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if result.Restarts != expected {
+		t.Fatalf("restarts = %d, want %d", result.Restarts, expected)
+	}
+
+	generation := HansenPopulationSize(dims)
+	if result.Evaluations < budget || result.Evaluations >= budget+generation {
+		t.Fatalf("evaluations = %d, want in [%d, %d)", result.Evaluations, budget, budget+generation)
+	}
+}
+
+// TestCMAESRunIterationsUnderAnEvaluationBudgetIgnoresTheCeiling is the
+// regression test for the IPOP arm ending its first run on maximum_iterations.
+// The fixed thousand-iteration ceiling exists only so that a run with no
+// iteration total of its own still has a positive cap the library accepts.
+// Under an evaluation budget the budget is what bounds the run, and a small
+// population buys far more than a thousand iterations, so the ceiling must not
+// be what the run is started with. The cap is checked directly because the
+// library reports a run's termination to the wrapper alone; the search below
+// only shows that the budget, not an iteration count, is what ends the loop.
+func TestCMAESRunIterationsUnderAnEvaluationBudgetIgnoresTheCeiling(t *testing.T) {
+	const (
+		lambda = 6
+		budget = 12000
+	)
+
+	optimizer := &CMAESOptimizer{}
+	tracker := newCMAESTracker(func([]float64) float64 { return 1 }, unitBoundsFor(3), time.Now(), OptimizeOptions{})
+
+	iterations := optimizer.runIterations(tracker, OptimizeOptions{MaxEvaluations: budget}, lambda)
+	if want := budget/lambda + 1; iterations != want {
+		t.Fatalf("run iterations under an evaluation budget = %d, want %d", iterations, want)
+	}
+
+	if iterations <= uncappedRunIterations {
+		t.Fatalf("run iterations = %d, want more than the %d ceiling", iterations, uncappedRunIterations)
+	}
+
+	// An iteration total still wins: it is the caller's own bound and the
+	// budget is only a second one.
+	iterations = optimizer.runIterations(tracker, OptimizeOptions{MaxIterations: 40, MaxEvaluations: budget}, lambda)
+	if iterations != 40 {
+		t.Fatalf("run iterations under an iteration total = %d, want 40", iterations)
+	}
+
+	// The time-budget-only case is what the ceiling is left for.
+	iterations = optimizer.runIterations(tracker, OptimizeOptions{TimeBudget: time.Second}, lambda)
+	if iterations != uncappedRunIterations {
+		t.Fatalf("run iterations under a time budget = %d, want %d", iterations, uncappedRunIterations)
+	}
+}
+
+// TestCMAESUnderAnEvaluationBudgetStopsOnTheBudget checks the same ruling from
+// the outside: an IPOP-shaped search with a small population spends its whole
+// budget and says so, rather than reporting an iteration ceiling nobody set.
+func TestCMAESUnderAnEvaluationBudgetStopsOnTheBudget(t *testing.T) {
+	const (
+		dims   = 3
+		budget = 12000
+	)
+
+	flat := func([]float64) float64 { return 1 }
+
+	result, err := (&CMAESOptimizer{Seed: 5, MaxWorkers: 1, Lambda: 6, LambdaGrowth: 2}).Optimize(
+		context.Background(), flat, midpoint(dims), unitBoundsFor(dims),
+		OptimizeOptions{MaxEvaluations: budget},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if result.StopReason != "max_evaluations" {
+		t.Fatalf("stop reason = %q, want max_evaluations", result.StopReason)
+	}
+
+	generation := 6
+	if result.Evaluations < budget || result.Evaluations >= budget+generation {
+		t.Fatalf("evaluations = %d, want in [%d, %d)", result.Evaluations, budget, budget+generation)
+	}
+}
+
+// TestCMAESLambdaGrowthDoublesEveryRestart covers IPOP: the population of
+// restart k is the initial one doubled k times, and the progress reports say
+// so, which is what lets a trace record the generation behind each line.
+func TestCMAESLambdaGrowthDoublesEveryRestart(t *testing.T) {
+	// Two dimensions keep Hansen's population at six, so a budget of two
+	// thousand is long enough for the ladder to climb three rungs before the
+	// generations grow expensive.
+	const (
+		dims   = 2
+		budget = 2000
+	)
+
+	var (
+		resolved ResolvedCMAES
+		observed []int
+	)
+
+	report := func(progress Progress) {
+		if len(observed) == 0 || observed[len(observed)-1] != progress.Lambda {
+			observed = append(observed, progress.Lambda)
+		}
+	}
+
+	optimizer := &CMAESOptimizer{
+		Seed:         5,
+		MaxWorkers:   1,
+		LambdaGrowth: 2,
+		OnResolve:    func(r ResolvedCMAES) { resolved = r },
+	}
+
+	_, err := optimizer.Optimize(
+		context.Background(), unitSphere(cmaesOptimum(dims)), midpoint(dims), unitBoundsFor(dims),
+		OptimizeOptions{MaxEvaluations: budget, ReportEvery: 1, Report: report},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if resolved.LambdaGrowth != 2 {
+		t.Fatalf("resolved lambda growth = %v, want 2", resolved.LambdaGrowth)
+	}
+
+	if len(observed) < 3 {
+		t.Fatalf("saw %d distinct populations, want at least 3: %v", len(observed), observed)
+	}
+
+	for restart, lambda := range observed {
+		want := resolved.Lambda << restart
+		if lambda != want {
+			t.Fatalf("restart %d searched with lambda %d, want %d (%v)", restart, lambda, want, observed)
+		}
+	}
+}
+
+// TestCMAESAcceptsAnEvaluationCapAsItsOnlyBudget is the regression test for the
+// budget check that predates evaluation caps: a campaign arm sets no iteration
+// cap at all, and refusing it would leave the harness with no way to run.
+func TestCMAESAcceptsAnEvaluationCapAsItsOnlyBudget(t *testing.T) {
+	_, err := (&CMAESOptimizer{Seed: 1, MaxWorkers: 1}).Optimize(
+		context.Background(), unitSphere(cmaesOptimum(2)), midpoint(2), unitBoundsFor(2),
+		OptimizeOptions{MaxEvaluations: 100},
+	)
+	if err != nil {
+		t.Fatalf("an evaluation cap must be a budget of its own: %v", err)
+	}
+}
+
+func TestCMAESRejectsAShrinkingLambdaLadder(t *testing.T) {
+	for _, growth := range []float64{-1, 0.5, math.NaN()} {
+		if err := (&CMAESOptimizer{LambdaGrowth: growth}).Validate(100); err == nil {
+			t.Fatalf("lambda growth %v must be rejected", growth)
+		}
+	}
+
+	if err := (&CMAESOptimizer{LambdaGrowth: 2}).Validate(100); err != nil {
+		t.Fatalf("lambda growth 2 must be accepted: %v", err)
+	}
+}
+
+// midpoint is a starting point at the centre of the box, which normalizes to
+// the centre of the unit cube the backends search.
+func midpoint(dims int) []float64 {
+	initial := make([]float64, dims)
+	for i := range initial {
+		initial[i] = 0.5
+	}
+
+	return initial
+}
+
+// unitBoundsFor is the identity box, so encoded units and the unit cube agree
+// and a stated optimum is where the test wrote it.
+func unitBoundsFor(dims int) Bounds {
+	ranges := make([]Range, dims)
+	for i := range ranges {
+		ranges[i] = Range{Min: 0, Max: 1}
+	}
+
+	return Bounds{Ranges: ranges}
+}

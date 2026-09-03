@@ -74,8 +74,16 @@ func (s mayflySchedule) plan(total int) []int {
 		rounds = total
 	}
 
-	budgets := make([]int, rounds)
-	base, remainder := total/rounds, total%rounds
+	return splitEvenly(total, rounds)
+}
+
+// splitEvenly divides a budget into parts of as equal a size as integers
+// allow, giving the remainder to the earliest parts so the total is spent
+// exactly. Both the iteration budget and the evaluation cap are split this
+// way, so a caller comparing the two sees the same round boundaries.
+func splitEvenly(total, parts int) []int {
+	budgets := make([]int, parts)
+	base, remainder := total/parts, total%parts
 
 	for i := range budgets {
 		budgets[i] = base
@@ -91,7 +99,11 @@ func (s mayflySchedule) plan(total int) []int {
 // a convergence window has to fit inside, because a window wider than a round
 // can never be reached before the round ends.
 func (s mayflySchedule) shortestRound(total int) int {
-	budgets := s.plan(total)
+	return shortestBudget(s.plan(total))
+}
 
+// shortestBudget is the smallest round in a plan. plan gives the remainder to
+// the earliest rounds, so the last one is always the smallest.
+func shortestBudget(budgets []int) int {
 	return budgets[len(budgets)-1]
 }

@@ -60,8 +60,21 @@ func TestRunFitWritesArtifacts(t *testing.T) {
 		t.Fatalf("runFit failed: %v", err)
 	}
 
-	if _, err := os.Stat(outputPath); err != nil {
-		t.Fatalf("expected fitted preset to exist: %v", err)
+	fitted, err := preset.Load(outputPath)
+	if err != nil {
+		t.Fatalf("expected fitted preset to load: %v", err)
+	}
+
+	if fitted.Provenance == nil {
+		t.Fatal("the fitted preset carries no provenance block")
+	}
+
+	if fitted.Provenance.GeneratedBy != "glockenspiel fit" || fitted.Provenance.Reference.SHA256 == "" {
+		t.Errorf("provenance = %#v, want the fit marker and the reference hash", fitted.Provenance)
+	}
+
+	if fitted.Provenance.Engine.Name != "simple" || len(fitted.Provenance.Terms) == 0 {
+		t.Errorf("provenance engine = %#v, terms = %s", fitted.Provenance.Engine, fitted.Provenance.Terms)
 	}
 
 	if _, err := os.Stat(filepath.Join(workDir, "fitted_output.wav")); err != nil {

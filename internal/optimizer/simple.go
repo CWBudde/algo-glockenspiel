@@ -66,6 +66,13 @@ func (o *SimpleOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 
 	settings := &gonumoptimize.Settings{
 		MajorIterations: opts.MaxIterations,
+		// gonum owns the evaluation cap the same way it owns the iteration
+		// one, and it reports its own status string when the cap ends the run.
+		// That string is left as the stop reason rather than rewritten to
+		// "max_evaluations": nothing compares Nelder-Mead runs against the
+		// population backends, so the count is what has to agree, not the
+		// vocabulary.
+		FuncEvaluations: opts.MaxEvaluations,
 		Runtime:         opts.TimeBudget,
 		Converger: &gonumoptimize.FunctionConverge{
 			Absolute:   o.absoluteTolerance(),

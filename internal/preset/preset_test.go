@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cwbudde/algo-glockenspiel/model"
 )
@@ -107,5 +108,75 @@ func validPreset() *Preset {
 				HarmonicGains: []float64{1.0, 0.5, 0.3, 0.2},
 			},
 		},
+	}
+}
+
+func TestProvenanceSurvivesASaveAndLoadRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fitted.json")
+
+	want := validPreset()
+	want.Provenance = &Provenance{
+		GeneratedBy: "glockenspiel fit",
+		Version:     "abc123",
+		Timestamp:   time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC),
+		Reference:   ReferenceProvenance{Path: "reference.wav", SHA256: "0f0f"},
+		Note:        69,
+		Profile:     "balanced",
+		Seed:        7,
+		Engine:      EngineProvenance{Name: "cmaes", Covariance: "separable", Lambda: 12, Restarts: 2},
+		Score:       0.25,
+		Terms:       json.RawMessage(`{"waveform":0.5}`),
+		Evaluations: 300,
+		Libraries:   map[string]string{"mayfly": "v0.7.1", "go-cma-es": "v0.1.0"},
+	}
+
+	if err := Save(want, path); err != nil {
+		t.Fatalf("save failed: %v", err)
+	}
+
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	if got.Provenance == nil {
+		t.Fatal("the provenance block did not survive the round trip")
+	}
+
+	if got.Provenance.GeneratedBy != want.Provenance.GeneratedBy || got.Provenance.Score != want.Provenance.Score {
+		t.Errorf("provenance = %#v, want %#v", got.Provenance, want.Provenance)
+	}
+
+	if !got.Provenance.Timestamp.Equal(want.Provenance.Timestamp) {
+		t.Errorf("provenance timestamp = %s, want %s", got.Provenance.Timestamp, want.Provenance.Timestamp)
+	}
+
+	if got.Provenance.Engine != want.Provenance.Engine {
+		t.Errorf("provenance engine = %#v, want %#v", got.Provenance.Engine, want.Provenance.Engine)
+	}
+
+	if got.Provenance.Libraries["mayfly"] != "v0.7.1" {
+		t.Errorf("provenance libraries = %v, want mayfly v0.7.1", got.Provenance.Libraries)
+	}
+
+	// A clone owns its own maps and raw message, so writing through one copy
+	// cannot rewrite the other's record.
+	clone := got.Clone()
+	clone.Provenance.Libraries["mayfly"] = "v9.9.9"
+
+	if got.Provenance.Libraries["mayfly"] != "v0.7.1" {
+		t.Error("Clone shares the provenance libraries map with the original")
+	}
+}
+
+func TestAShippedPresetCarriesNoProvenance(t *testing.T) {
+	shipped, err := Load(filepath.FromSlash("../../assets/presets/default.json"))
+	if err != nil {
+		t.Fatalf("load shipped preset: %v", err)
+	}
+
+	if shipped.Provenance != nil {
+		t.Errorf("the shipped preset carries a provenance block: %#v", shipped.Provenance)
 	}
 }

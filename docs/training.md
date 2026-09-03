@@ -313,6 +313,82 @@ population doing what 8.3 built it for. And the Mayfly run reads 0.224 against t
 90 s fit above reads, but that fit ran under v0.6.0 for half again the budget, so the pair is an
 illustration of the incomparability warning rather than a measurement of either.
 
+## The campaign harness, 2026-09-02
+
+Phase 8.5 built the instrument the smoke run above says is missing. `cmd/glockenspiel-campaign`
+plans, runs, collects and analyses a designed comparison: every arm of a design runs on every one
+of a set of paired seed blocks, at a matched evaluation budget, and every job leaves a run
+directory that records what it was given and what it found.
+[docs/campaign.md](campaign.md) is the harness; what follows is only what it means for the
+numbers in this file.
+
+Two designs are registered. `engine-shape` puts `mayfly-single`, `mayfly-r16`, `sep-cmaes-r`,
+`blk-cmaes-r` and `sep-cmaes-ipop` on the C5 recording at note 72 under `balanced`, twelve blocks
+of five arms at 24,000 evaluations each, with `blk-cmaes-r` against `mayfly-r16` as the
+registered primary contrast and two secondary ones. `seed-hunt` then takes whichever CMA-ES arm
+won and compares it at Hansen's default population against twice it over forty eight blocks,
+descriptively.
+
+Arms are matched on evaluations rather than on time, and scored at the best cost their trace
+recorded at or below the cap, because a generation is atomic and a run may overrun the budget by
+one of them. The score a job finished with is kept in its own column, so the tables in 8.6 can
+say what was matched and what was spent.
+
+Nothing here measures anything yet. The only campaign that has run is `smoke`, four jobs of 1,200
+evaluations on the synthetic A4 reference, which exists to prove that plan, run, collect and
+analyze agree about the files between them. **This is a wiring check, not a comparison**: two
+arms over two blocks at a budget a twentieth the size of the real one, and two blocks cannot
+separate anything whatever the budget.
+
+```
+design smoke: 2 blocks, budget 1200 evaluations, balanced on testdata/reference/legacy_synth_a4.wav, revision 7ae77b00c4c609c9bda5c69703dde076eef5026e+dirty
+
+Four short jobs on the synthetic A4 reference, to exercise plan, run and collect.
+
+### Table 1: arms against mayfly-single
+
+| arm | mean | sd | median | best | gain vs mayfly-single | t (df=1) | p | Holm | blocks won |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| sep-cmaes-r | 0.127159 | 0.000000 | 0.127159 | 0.127159 | -0.0028 | -13.32 | 0.04770 | reject | 0/2 |
+| mayfly-single | 0.124365 | 0.000297 | 0.124365 | 0.124155 | control | control | control | control | control |
+
+### Table 2: score by block
+
+| block | seed | sep-cmaes-r | mayfly-single |
+| --- | --- | --- | --- |
+| 0 | 120000 | 0.127159 | **0.124155** |
+| 1 | 120001 | 0.127159 | **0.124575** |
+
+### Table 3: best of each arm
+
+| arm | best | block | seed | within 5% of best | median | q25 | q75 | mean evaluations | spent at best |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| sep-cmaes-r | 0.127159 | 0 | 120000 | 2/2 | 0.127159 | 0.127159 | 0.127159 | 1200 | 0.9% |
+| mayfly-single | 0.124155 | 0 | 120000 | 2/2 | 0.124365 | 0.124260 | 0.124470 | 1239 | 91.0% |
+
+Holm step-down over 1 paired contrasts at a family-wise alpha of 0.05.
+the registered primary contrast is sep-cmaes-r against mayfly-single.
+```
+
+Read it as plumbing and nothing else. The mayfly arm moved off the seeded vector in both blocks,
+by different amounts, which is what the sd of 0.000297 and the differing block scores say; the
+CMA-ES arm did not, which is why its two blocks agree to the last digit and its sd is zero. Three
+cold runs of four hundred evaluations each over eighteen dimensions is not enough search to
+improve on a vector the analysis already placed well, so the Holm "reject" here is an artefact of
+one arm having no variance at all across two blocks, not a finding. The mayfly row's 1,239
+evaluations against the cap of 1,200 is the overrun the scoring rule exists for: the run stopped
+at the first iteration boundary past the budget, and both arms are scored on what their traces
+held at 1,200. In this run the cap discarded nothing: neither mayfly block improved after
+evaluation 1,200, so every row's `final_score` equals its `score`. At the previous budget of 300
+it did discard something, which is the case the two columns exist for.
+
+The report is rebuilt from `results.csv` plus the registered design, which supplies the block
+count, budget, profile and contrast family; the manifest is the frozen record of what ran and is
+not consulted by `analyze`.
+
+Phase 8.6 runs `engine-shape` for real, which is about an hour, and this section is replaced by
+its tables.
+
 ## What the baseline is for
 
 - **Norms.** Phase 8.2 scaled each term of the composite objective so that no term saturates on

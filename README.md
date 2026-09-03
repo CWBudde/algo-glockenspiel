@@ -226,6 +226,7 @@ The optimizer layer is kept separate from the synthesis engine so new metrics an
 - [docs/oscillator-bank.md](docs/oscillator-bank.md) — the recursion, the AoSoA layout, the three packed kernels, the numeric contract they are held to, the realtime render path, and measured performance.
 - [docs/optimizer.md](docs/optimizer.md) — parameter encoding, objective evaluation, analysing and reading references, and checkpoint contracts.
 - [docs/user-guide.md](docs/user-guide.md) — the full CLI walkthrough, including `--bounds` and how to choose an optimizer and a metric.
+- [docs/campaign.md](docs/campaign.md) — the campaign harness: designed comparisons of optimizer arms over paired seed blocks, and the rules the tables are read under.
 - [docs/training.md](docs/training.md) — what the shipped presets score today through the fit objective's own code, and what those numbers say about it.
 - [docs/web-app.md](docs/web-app.md) — the front end's architecture, the WASM bridge, the two-step build, and the Optimize loop.
 - [docs/serve.md](docs/serve.md) — the `serve` command and the fit API it exposes.

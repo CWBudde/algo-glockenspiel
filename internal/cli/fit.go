@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -13,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/cwbudde/algo-glockenspiel/internal/synth"
@@ -69,12 +72,26 @@ type fitOptions struct {
 	mayflyNCRatio    float64
 	mayflySelection  string
 
+	// maxEvals caps the objective evaluations the whole search may spend, which
+	// is the budget a campaign matches arms on: an evaluation is one render
+	// whichever backend spends it, while an iteration means a generation to one
+	// backend and a swarm round to another. Zero leaves the search bounded by
+	// --max-iter and --time-budget alone.
+	maxEvals int
+
 	// The CMA-ES knobs. The seed is not among them: it is the shared --seed
 	// above, which every backend and the polish stage read.
 	cmaesCovariance string
 	cmaesLambda     int
 	cmaesSigma      float64
 	cmaesRestarts   int
+
+	// cmaesRunEvals and cmaesLambdaGrowth are the restart ladder's shape, the
+	// two knobs a campaign arm is written in: a per-run cap with no restart
+	// limit restarts cold until the budget is spent, and a growth of two on the
+	// same loop is IPOP.
+	cmaesRunEvals     int
+	cmaesLambdaGrowth float64
 
 	// The polish stage. It runs after the main search, under the polish
 	// profile, and keeps its result only when the primary cost drops.
@@ -154,6 +171,10 @@ func newFitCmd() *cobra.Command {
 	flags.IntVar(&options.sampleRate, "sample-rate", options.sampleRate, "Reference/render sample rate in Hz")
 	flags.StringVar(&options.optimizerName, "optimizer", options.optimizerName, "Optimizer to use: simple|mayfly|cmaes")
 	flags.IntVar(&options.maxIter, "max-iter", options.maxIter, "Maximum optimizer iterations")
+	flags.IntVar(&options.maxEvals, "max-evals", options.maxEvals,
+		"Maximum objective evaluations for the whole search (0 is unlimited). It is the budget "+
+			"two backends can be compared on, because an evaluation is one render whichever "+
+			"backend spends it. A run may overrun it by at most one generation")
 	flags.Var(durationFlag{value: &options.timeBudget}, "time-budget",
 		"Optimization time budget as a Go duration such as 30s or 10m (a bare number is read as seconds)")
 	flags.IntVar(&options.reportEvery, "report-every", options.reportEvery, "Write progress every N major iterations")
@@ -224,6 +245,12 @@ func newFitCmd() *cobra.Command {
 	_ = flags.MarkDeprecated("cmaes-seed", "use --seed")
 	flags.IntVar(&options.cmaesRestarts, "cmaes-restarts", options.cmaesRestarts,
 		"Number of cold runs (0 restarts until the budget is spent)")
+	flags.IntVar(&options.cmaesRunEvals, "cmaes-run-evals", options.cmaesRunEvals,
+		"Objective evaluations one cold run may spend before the next restart "+
+			"(0 gives every run whatever is left of --max-evals)")
+	flags.Float64Var(&options.cmaesLambdaGrowth, "cmaes-lambda-growth", options.cmaesLambdaGrowth,
+		"Factor the population is multiplied by on every restart (0 or 1 keeps it fixed, "+
+			"2 is IPOP)")
 	flags.StringVar(&options.polish, "polish", options.polish,
 		"Local refinement stage after the main search: none|nelder-mead|cmaes. It searches "+
 			"under the polish profile but keeps its result only when the primary cost drops")
@@ -265,6 +292,14 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 
 	if options.maxIter <= 0 {
 		return fmt.Errorf("max-iter must be positive, got %d", options.maxIter)
+	}
+
+	if options.maxEvals < 0 {
+		return fmt.Errorf("max-evals must not be negative, got %d", options.maxEvals)
+	}
+
+	if options.cmaesRunEvals < 0 {
+		return fmt.Errorf("cmaes-run-evals must not be negative, got %d", options.cmaesRunEvals)
 	}
 
 	if options.timeBudget <= 0 {
@@ -353,11 +388,12 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 			return err
 		}
 
-		// A mayfly iteration is a whole generation -- roughly 47.7 objective
-		// evaluations at a population of ten -- against about one for a simple
-		// major iteration, so the shared default of ten would mean the first
-		// progress line lands after some five hundred renders. The default
-		// follows the backend; a cadence the caller passed is left alone.
+		// A mayfly iteration is a whole generation -- roughly 43 objective
+		// evaluations at a population of ten, the figure
+		// optimizer.MayflyEvaluationsPerIteration records -- against about one
+		// for a simple major iteration, so the shared default of ten would mean
+		// the first progress line lands after some four hundred renders. The
+		// default follows the backend; a cadence the caller passed is left alone.
 		if !cmd.Flags().Changed("report-every") {
 			options.reportEvery = 1
 		}
@@ -534,6 +570,13 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 				options.workers = resolved.Workers
 				options.mayflyVariant = resolved.Variant
 				options.mayflyPreset = resolved.Preset
+				// The swarm the run was configured with, for the reason the
+				// CMA-ES backend writes back its population: a preset or a
+				// tuning document chooses one privately, and the provenance
+				// would otherwise name the flag's value instead.
+				if resolved.Population > 0 {
+					options.mayflyPop = resolved.Population
+				}
 
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), formatResolvedMayfly(resolved))
 			},
@@ -545,12 +588,14 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 			// backend is built here rather than beside the flags: block mode
 			// learns one dense matrix per mode and the codec is what knows
 			// which encoded coordinates a mode owns.
-			BlockGroups:  objective.Codec().BlockGroups(),
-			Lambda:       options.cmaesLambda,
-			InitialSigma: options.cmaesSigma,
-			Seed:         options.seed,
-			MaxWorkers:   options.workers,
-			RestartLimit: options.cmaesRestarts,
+			BlockGroups:    objective.Codec().BlockGroups(),
+			Lambda:         options.cmaesLambda,
+			InitialSigma:   options.cmaesSigma,
+			Seed:           options.seed,
+			MaxWorkers:     options.workers,
+			RestartLimit:   options.cmaesRestarts,
+			RunEvaluations: options.cmaesRunEvals,
+			LambdaGrowth:   options.cmaesLambdaGrowth,
 			OnResolve: func(resolved optimizer.ResolvedCMAES) {
 				// The effective seed and width, recorded before the search
 				// starts, for the reason the mayfly backend records its own:
@@ -558,6 +603,10 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 				// a resumed run reproducing this one and drifting off it.
 				options.seed = resolved.Seed
 				options.workers = resolved.Workers
+				// The population too: with --cmaes-lambda 0 the preset's
+				// provenance would otherwise record the zero that asked for
+				// Hansen's default rather than the generation that ran.
+				options.cmaesLambda = resolved.Lambda
 
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), formatResolvedCMAES(resolved))
 			},
@@ -565,9 +614,10 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	}
 
 	result, err := selectedOptimizer.Optimize(ctx, objective.Objective(), initialEncoded, optBounds, optimizer.OptimizeOptions{
-		MaxIterations: options.maxIter,
-		TimeBudget:    options.timeBudget,
-		ReportEvery:   options.reportEvery,
+		MaxIterations:  options.maxIter,
+		MaxEvaluations: options.maxEvals,
+		TimeBudget:     options.timeBudget,
+		ReportEvery:    options.reportEvery,
 		Report: func(progress optimizer.Progress) {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
 				"iteration %d: current=%0.6g best=%0.6g evals=%d elapsed=%s\n",
@@ -664,6 +714,18 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		profile = optimizer.ProfileBalanced
 	}
 
+	// Written a second time, now with its provenance: the terms and the
+	// profile the block records are only known here, and a preset that says
+	// which reference and which search produced it is worth one extra write.
+	fittedPreset.Provenance, err = fitProvenance(cmd.ErrOrStderr(), options, profile, metrics, bestCost, result.Evaluations)
+	if err != nil {
+		return err
+	}
+
+	if err := preset.Save(&fittedPreset, options.outputPath); err != nil {
+		return err
+	}
+
 	writeMetrics(cmd.OutOrStdout(), metrics, profile)
 
 	pinned, err := objective.Codec().Pinned(bestEncoded)
@@ -677,6 +739,61 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		"Saved preset to %s and rendered fit to %s\n", options.outputPath, renderedPath)
 
 	return nil
+}
+
+// fitProvenance records where a fitted preset came from, so that a preset
+// copied out of a work directory still answers for itself: which recording it
+// was scored against, which search found it, and what it scored.
+//
+// A reference that cannot be hashed here is reported and survived. The search
+// is over by the time this runs, and losing a finished fit because the
+// recording was unplugged in the meantime costs more than the missing digest,
+// which the empty field says is missing.
+func fitProvenance(
+	logTo io.Writer,
+	options fitOptions,
+	profile optimizer.Profile,
+	metrics optimizer.Metrics,
+	score float64,
+	evaluations int,
+) (*preset.Provenance, error) {
+	sum, err := fitrun.FileSHA256(options.referencePath)
+	if err != nil {
+		_, _ = fmt.Fprintf(logTo, "provenance: %v; preset written without it\n", err)
+
+		sum = ""
+	}
+
+	terms, err := json.Marshal(metrics)
+	if err != nil {
+		return nil, fmt.Errorf("encode provenance terms: %w", err)
+	}
+
+	engine := preset.EngineProvenance{Name: options.optimizerName}
+
+	switch options.optimizerName {
+	case "mayfly":
+		engine.Variant, engine.Population, engine.Restarts = options.mayflyVariant, options.mayflyPop, options.mayflyRestarts
+	case "cmaes":
+		engine.Covariance, engine.Lambda, engine.Restarts = options.cmaesCovariance, options.cmaesLambda, options.cmaesRestarts
+	}
+
+	return &preset.Provenance{
+		GeneratedBy: "glockenspiel fit",
+		Version:     version,
+		Timestamp:   time.Now().UTC(),
+		Reference:   preset.ReferenceProvenance{Path: options.referencePath, SHA256: sum},
+		Note:        options.note,
+		Profile:     profile.Name,
+		// The seed OnResolve reported, so a preset drawn from a zero seed
+		// still names the stream that produced it.
+		Seed:        options.seed,
+		Engine:      engine,
+		Score:       score,
+		Terms:       terms,
+		Evaluations: evaluations,
+		Libraries:   fitrun.ReadIdentity().Libraries,
+	}, nil
 }
 
 // polishRun is optimizer.Polish behind a variable so a test can make the stage
@@ -1028,34 +1145,6 @@ func tuningFromFlags(cmd *cobra.Command, options fitOptions) *optimizer.MayflyTu
 	return tuning
 }
 
-// formatResolvedMayfly renders what a run actually settled on.
-//
-// variant= and seed= stay first and keep their spelling: they were the whole
-// line before the tuning surface existed, and a reader -- human or script --
-// already looks for them there.
-func formatResolvedMayfly(resolved optimizer.ResolvedMayfly) string {
-	line := fmt.Sprintf("Mayfly: variant=%s seed=%d", resolved.Variant, resolved.Seed)
-
-	if resolved.Preset != "" {
-		line += " preset=" + resolved.Preset
-	}
-
-	line += fmt.Sprintf(" rounds=%dx%d workers=%d", resolved.Rounds, resolved.IterationsPerRound, resolved.Workers)
-
-	return line
-}
-
-// formatResolvedCMAES renders what a CMA-ES run actually settled on.
-//
-// Every field of it is a "choose one for me" input the run resolved: the
-// covariance mode is lower-cased, the population and the step size may be the
-// library's defaults, the seed may have been drawn, and the worker count
-// follows the machine. None of them can be read off the command line.
-func formatResolvedCMAES(resolved optimizer.ResolvedCMAES) string {
-	return fmt.Sprintf("cmaes: covariance=%s lambda=%d sigma=%g seed=%d workers=%d",
-		resolved.Covariance, resolved.Lambda, resolved.Sigma, resolved.Seed, resolved.Workers)
-}
-
 func checkpointStateForOptions(options fitOptions, tuning *optimizer.MayflyTuning) *optimizer.OptimizerState {
 	state := &optimizer.OptimizerState{
 		Kind:  options.optimizerName,
@@ -1097,12 +1186,16 @@ func checkpointStateForOptions(options fitOptions, tuning *optimizer.MayflyTunin
 	if options.optimizerName == "cmaes" {
 		state.CMAES = &optimizer.CMAESCheckpointEnv{
 			Covariance: options.cmaesCovariance,
-			Lambda:     options.cmaesLambda,
-			Sigma:      options.cmaesSigma,
-			// OnResolve has replaced a zero with the seed the run drew, so this
-			// is the stream the run actually used.
-			Seed:     options.seed,
-			Restarts: options.cmaesRestarts,
+			// OnResolve has replaced a zero with the population the run
+			// resolved, as it has with the seed, so both name what ran.
+			Lambda: options.cmaesLambda,
+			Sigma:  options.cmaesSigma,
+			Seed:   options.seed,
+			// The ladder's shape. A resume that dropped it would continue as a
+			// single fixed-population search.
+			Restarts:       options.cmaesRestarts,
+			RunEvaluations: options.cmaesRunEvals,
+			LambdaGrowth:   options.cmaesLambdaGrowth,
 		}
 	}
 
@@ -1199,6 +1292,16 @@ func applyCheckpointResume(cmd *cobra.Command, options *fitOptions, cp *optimize
 
 		if !seedFlagChanged(cmd) {
 			options.seed = cp.State.CMAES.Seed
+		}
+
+		// The ladder's shape, restored for the reason the checkpoint records it:
+		// a resume that dropped it would continue as a different optimizer.
+		if !flagChanged(cmd, "cmaes-run-evals") {
+			options.cmaesRunEvals = cp.State.CMAES.RunEvaluations
+		}
+
+		if !flagChanged(cmd, "cmaes-lambda-growth") {
+			options.cmaesLambdaGrowth = cp.State.CMAES.LambdaGrowth
 		}
 
 		if !flagChanged(cmd, "cmaes-restarts") {

@@ -101,6 +101,12 @@ type CMAESCheckpointEnv struct {
 	Sigma      float64 `json:"sigma,omitempty"`
 	Seed       int64   `json:"seed"`
 	Restarts   int     `json:"restarts,omitempty"`
+
+	// RunEvaluations and LambdaGrowth are the restart ladder's shape. A resume
+	// that dropped them would continue as a single fixed-population search,
+	// which is a different optimizer from the one that wrote the checkpoint.
+	RunEvaluations int     `json:"run_evaluations,omitempty"`
+	LambdaGrowth   float64 `json:"lambda_growth,omitempty"`
 }
 
 // SaveCheckpoint writes a checkpoint atomically to disk.

@@ -154,6 +154,7 @@ glockenspiel fit \
 - `--analysis`: an `analysis.json` from `glockenspiel analyze` whose partials the partial term, the seed and the frequency box use; by default the reference is measured before the fit starts
 - `--modes`: where the starting modes come from. `0` (the default) seeds one mode per partial the analysis lists, at its frequency, attack level and half-life; `N` seeds the strongest `N`; `-1` keeps the starting preset's own modes. A seeded fit from a v1 preset writes a v2 preset, because v1 holds exactly four modes
 - `--max-iter`: iteration cap passed to the optimizer
+- `--max-evals`: cap on the objective evaluations the whole search may spend; `0` (the default) leaves it uncapped and only `--max-iter` and `--time-budget` bound the run. It is the budget two backends can be compared on, because an evaluation is one audio render whichever backend spends it while an iteration means a generation to one and a simplex step to another. A generation is the smallest unit a population method can abandon, so a run may overrun the cap by at most one of them, and a run the cap ended reports `stop=max_evaluations`
 - `--time-budget`: wall-clock budget as a Go duration, for example `30s` or `10m`; a bare number is still read as seconds
 - `--align`: time-align each candidate to the reference before scoring, on by default. Leave it on for recorded references: a few samples of offset invert the phase of a high partial, so the correct parameters would score worse than incorrect ones
 - `--normalize-gain`: under a legacy metric, divide out the scalar gain that best matches the reference level, off by default. Use it when the reference level is unknown; it makes the model's amplitude parameters unidentifiable, so leave it off when the level is meaningful. A composite profile solves its gain in closed form regardless
@@ -178,6 +179,8 @@ glockenspiel fit \
 - `--cmaes-lambda`: population size per generation; `0` (the default) takes Hansen's `4 + floor(3 ln n)`, which is twelve at the eighteen dimensions the default preset's four modes encode and fourteen at the thirty an eight-mode seed encodes
 - `--cmaes-sigma`: initial step size as a fraction of the normalized search box, at most `1` (default `0.3`, which covers a third of it). A `0` takes that same default, as a zero population and a zero seed take theirs
 - `--cmaes-restarts`: number of cold runs; `0` (the default) restarts until the budget is spent. Each run after the first starts from a fresh mean drawn uniformly in the box, so it is independent of the basin the previous one settled in
+- `--cmaes-run-evals`: evaluations one cold run may spend before the next restart; `0` (the default) gives every run whatever is left of `--max-evals`. Together with `--cmaes-restarts 0` this is "restart on a fixed schedule until the budget is spent", which is how a campaign arm expresses a ladder of equal cold runs
+- `--cmaes-lambda-growth`: the factor the population is multiplied by on every restart; `0` or `1` (the default) keeps it fixed, `2` is IPOP. Each run then ends on Hansen's own criteria and the next doubles the population, until the evaluation budget ends the ladder. The population of the run in progress is reported to every progress callback and recorded in each trace line
 - `--polish`: run a local refinement stage after the main search, `none` (the default), `nelder-mead` or `cmaes`. The stage searches under the `polish` profile from the search result, but the result is kept only when it lowers the cost under the metric the fit was started with. See [The polish stage](optimizer.md#the-polish-stage)
 - `--polish-iterations`: iteration cap for the polish stage (default `200`)
 - `--polish-budget`: wall-clock budget for the polish stage as a Go duration; `0` (the default) leaves it uncapped, so only `--polish-iterations` ends the stage
@@ -295,6 +298,11 @@ Use `cmaes` when:
   is better spent on a cold restart than on more generations
 - the dimensions trade against each other, which `--cmaes-covariance block` learns per mode
 - you want the search to adapt its own step size rather than be told one
+
+Which of the three actually fits better on this objective is not a question a single run answers,
+and this guide does not claim one. [docs/campaign.md](campaign.md) describes the harness that
+compares them over paired seed blocks at a matched evaluation budget, and `just campaign-smoke`
+runs it end to end in seconds.
 
 Benchmark snapshot from `internal/optimizer/perf_test.go` on 2026-09-02, short legacy fit,
 Go 1.26.0 on twelve hardware threads (`go test ./internal/optimizer -run '^$' -bench LegacyShort -benchmem`):

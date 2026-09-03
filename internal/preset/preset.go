@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/cwbudde/algo-glockenspiel/model"
 )
@@ -34,6 +35,72 @@ type Preset struct {
 	Name       string          `json:"name"`
 	Note       int             `json:"note"`
 	Parameters model.BarParams `json:"parameters"`
+
+	// Provenance records where a fitted preset came from. It is metadata and
+	// not a schema field: Validate ignores it, and a v1 document that carries
+	// one is still a v1 document, because nothing about it changes how the
+	// parameters render.
+	Provenance *Provenance `json:"provenance,omitempty"`
+}
+
+// Provenance is the record a fit leaves in the preset it writes: which
+// reference it was fitted against, which engine found it, what it scored, and
+// which build did the work. It is what makes a preset in a campaign directory
+// answer "where did this come from" without the run directory beside it.
+type Provenance struct {
+	// GeneratedBy names the tool, "glockenspiel fit" or the campaign harness.
+	GeneratedBy string `json:"generated_by"`
+
+	// Version is the build's revision. What an unstamped build writes here
+	// depends on the writer: the fit command writes its own version variable,
+	// which is "dev" in a plain `go build`, while a campaign job writes the
+	// build identity's revision, which is "unknown". Both mean the same thing,
+	// that nothing named the commit this preset came from.
+	Version string `json:"version"`
+
+	Timestamp time.Time `json:"timestamp"`
+
+	// Reference identifies the recording the fit was scored against. The hash
+	// is what makes two presets comparable: the path alone is a name someone
+	// can reuse for a different recording.
+	Reference ReferenceProvenance `json:"reference"`
+
+	Note    int    `json:"note"`
+	Profile string `json:"profile"`
+	Seed    int64  `json:"seed"`
+
+	Engine EngineProvenance `json:"engine"`
+
+	Score float64 `json:"score"`
+
+	// Terms is the optimizer.Metrics JSON of the shipped vector. It is a raw
+	// message so this package keeps no dependency on the optimizer, which
+	// depends on it.
+	Terms json.RawMessage `json:"terms"`
+
+	Evaluations int `json:"evaluations"`
+
+	// Libraries are the search library versions the run was built against,
+	// keyed by short name, because a change in either moves the numbers.
+	Libraries map[string]string `json:"libraries"`
+}
+
+// ReferenceProvenance identifies the recording a fit was scored against.
+type ReferenceProvenance struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+}
+
+// EngineProvenance is the search that produced the preset, in the fields that
+// differ between engines. The ones that do not apply are omitted rather than
+// written as zero, so a mayfly block does not claim a population of nothing.
+type EngineProvenance struct {
+	Name       string `json:"name"`
+	Covariance string `json:"covariance,omitempty"`
+	Variant    string `json:"variant,omitempty"`
+	Lambda     int    `json:"lambda,omitempty"`
+	Population int    `json:"population,omitempty"`
+	Restarts   int    `json:"restarts,omitempty"`
 }
 
 // Clone returns a deep copy of the preset.
@@ -44,6 +111,29 @@ func (p *Preset) Clone() *Preset {
 
 	clone := *p
 	clone.Parameters = p.Parameters.Clone()
+	clone.Provenance = p.Provenance.Clone()
+
+	return &clone
+}
+
+// Clone returns a deep copy of the provenance block.
+func (p *Provenance) Clone() *Provenance {
+	if p == nil {
+		return nil
+	}
+
+	clone := *p
+
+	if p.Terms != nil {
+		clone.Terms = append(json.RawMessage(nil), p.Terms...)
+	}
+
+	if p.Libraries != nil {
+		clone.Libraries = make(map[string]string, len(p.Libraries))
+		for name, version := range p.Libraries {
+			clone.Libraries[name] = version
+		}
+	}
 
 	return &clone
 }

@@ -995,3 +995,248 @@ func TestMayflyHMMAIsSelectableAndNamed(t *testing.T) {
 		t.Fatal("expected an hmma knob to be refused under gsasma")
 	}
 }
+
+// TestMayflyEvaluationsPerIterationIsRecorded pins the exchange rate between
+// the two budgets. A campaign that matches arms on evaluations has to size a
+// mayfly run in iterations, which is the only budget the library understands,
+// and a library upgrade that changes what an iteration costs would silently
+// hand mayfly a different budget from every other arm.
+func TestMayflyEvaluationsPerIterationIsRecorded(t *testing.T) {
+	const iterations = 20
+
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	sphere := func(x []float64) float64 { return square(x[0]) + square(x[1]) }
+
+	result, err := (&MayflyOptimizer{Variant: "desma", Population: 10, Seed: 7, MaxWorkers: 1}).Optimize(
+		context.Background(), sphere, []float64{1, 1}, bounds,
+		OptimizeOptions{MaxIterations: iterations},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if result.Iterations != iterations {
+		t.Fatalf("iterations = %d, want %d", result.Iterations, iterations)
+	}
+
+	measured := float64(result.Evaluations) / float64(result.Iterations)
+
+	tolerance := 0.2 * MayflyEvaluationsPerIteration()
+	if math.Abs(measured-MayflyEvaluationsPerIteration()) > tolerance {
+		t.Fatalf(
+			"an iteration cost %.2f evaluations, but mayflyEvaluationsPerIteration says %.2f: "+
+				"remeasure it and update the constant",
+			measured, MayflyEvaluationsPerIteration(),
+		)
+	}
+}
+
+// TestMayflyStopsAtTheEvaluationCap covers the cap the wrapper has to enforce
+// itself, because mayfly has no evaluation budget of its own.
+func TestMayflyStopsAtTheEvaluationCap(t *testing.T) {
+	const budget = 500
+
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	sphere := func(x []float64) float64 { return square(x[0]) + square(x[1]) }
+
+	result, err := (&MayflyOptimizer{Population: 10, Seed: 5, MaxWorkers: 1}).Optimize(
+		context.Background(), sphere, []float64{3, 3}, bounds,
+		OptimizeOptions{MaxEvaluations: budget},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	// The library checks its context at iteration boundaries, so the overrun
+	// is bounded by the generation that was in flight when the cap fired.
+	generation := int(math.Ceil(MayflyEvaluationsPerIteration()))
+	if result.Evaluations < budget || result.Evaluations >= budget+generation {
+		t.Fatalf("evaluations = %d, want in [%d, %d)", result.Evaluations, budget, budget+generation)
+	}
+
+	if result.StopReason != "max_evaluations" {
+		t.Fatalf("stop reason = %q, want max_evaluations", result.StopReason)
+	}
+
+	if result.Converged {
+		t.Fatal("a run the cap ended has proved nothing and must not report convergence")
+	}
+}
+
+// TestMayflyEvaluationCapIsSplitAcrossRounds checks that every round of a
+// schedule gets its share and hands the budget on. Without the split the first
+// round would spend the whole cap and the cold restarts the schedule asked for
+// would never run at all.
+func TestMayflyEvaluationCapIsSplitAcrossRounds(t *testing.T) {
+	const (
+		budget = 1200
+		rounds = 4
+		share  = budget / rounds
+	)
+
+	restarts := rounds - 1
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	sphere := func(x []float64) float64 { return square(x[0]) + square(x[1]) }
+
+	var reported []int
+
+	optimizer := &MayflyOptimizer{
+		Population: 10,
+		Seed:       5,
+		MaxWorkers: 1,
+		Tuning:     &MayflyTuning{Schedule: &MayflySchedule{Restarts: &restarts}},
+	}
+
+	result, err := optimizer.Optimize(
+		context.Background(), sphere, []float64{3, 3}, bounds,
+		OptimizeOptions{
+			MaxEvaluations: budget,
+			ReportEvery:    1,
+			Report:         func(progress Progress) { reported = append(reported, progress.Evaluations) },
+		},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	generation := int(math.Ceil(MayflyEvaluationsPerIteration()))
+
+	// Every round boundary has to be crossed, and crossed close to its share:
+	// a round that stopped early would leave the next boundary far behind, and
+	// one that ignored the cap would run past it by more than a generation.
+	for round := 1; round <= rounds; round++ {
+		boundary := round * share
+
+		crossing, ok := firstAtLeast(reported, boundary)
+		if !ok {
+			t.Fatalf("round %d never reached %d evaluations: %v", round, boundary, reported)
+		}
+
+		if crossing >= boundary+generation {
+			t.Fatalf("round %d crossed %d at %d, more than a generation late", round, boundary, crossing)
+		}
+	}
+
+	if result.Evaluations < budget || result.Evaluations >= budget+generation {
+		t.Fatalf("evaluations = %d, want in [%d, %d)", result.Evaluations, budget, budget+generation)
+	}
+
+	if result.StopReason != "max_evaluations" {
+		t.Fatalf("stop reason = %q, want max_evaluations", result.StopReason)
+	}
+
+	// Restarts stay a CMA-ES concept: mayfly rounds are the schedule's, and
+	// the field has always been zero for this backend.
+	if result.Restarts != 0 {
+		t.Fatalf("restarts = %d, want 0 for mayfly", result.Restarts)
+	}
+}
+
+// TestMayflyEvaluationCapKeepsCancellationDistinct is the regression test for
+// the cap borrowing the abort path: both end a round by cancelling a context,
+// and a caller that cancelled deserves to be told so.
+func TestMayflyEvaluationCapKeepsCancellationDistinct(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	evaluations := 0
+	sphere := func(x []float64) float64 {
+		evaluations++
+		if evaluations == 50 {
+			cancel()
+		}
+
+		return square(x[0]) + square(x[1])
+	}
+
+	defer cancel()
+
+	result, err := (&MayflyOptimizer{Population: 10, Seed: 5, MaxWorkers: 1}).Optimize(
+		ctx, sphere, []float64{3, 3}, bounds, OptimizeOptions{MaxEvaluations: 5000},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if result.StopReason != "context_canceled" {
+		t.Fatalf("stop reason = %q, want context_canceled", result.StopReason)
+	}
+}
+
+// firstAtLeast is the first reported value that reached a boundary.
+func firstAtLeast(values []int, boundary int) (int, bool) {
+	for _, value := range values {
+		if value >= boundary {
+			return value, true
+		}
+	}
+
+	return 0, false
+}
+
+// TestMayflyEvaluationCapIsReproducibleAcrossWorkerCounts is the regression
+// test for the cap being fired from the objective adapter, which is to say
+// from whichever worker goroutine happened to reach the cap-th candidate.
+// Mayfly checks its context before every item of a parallel batch, so the cut
+// landed on a different candidate at every width: the same seeded run spent
+// 1215 evaluations at one worker and 1207 at eight, reaching a different best,
+// and with a schedule the difference seeded the next round. A job has to
+// replay at its recorded width, so the cut is taken at an iteration boundary
+// instead.
+func TestMayflyEvaluationCapIsReproducibleAcrossWorkerCounts(t *testing.T) {
+	const budget = 1200
+
+	restarts := 3
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}, {Min: -10, Max: 10}}}
+	sphere := func(x []float64) float64 { return square(x[0]) + square(x[1]) }
+
+	run := func(workers int) *Result {
+		t.Helper()
+
+		optimizer := &MayflyOptimizer{
+			Population: 10,
+			Seed:       5,
+			MaxWorkers: workers,
+			Tuning:     &MayflyTuning{Schedule: &MayflySchedule{Restarts: &restarts}},
+		}
+
+		result, err := optimizer.Optimize(
+			context.Background(), sphere, []float64{3, 3}, bounds,
+			OptimizeOptions{MaxEvaluations: budget},
+		)
+		if err != nil {
+			t.Fatalf("Optimize failed at %d workers: %v", workers, err)
+		}
+
+		return result
+	}
+
+	serial := run(1)
+
+	// Twice at four workers as well: a scheduling-dependent cut need not differ
+	// from the serial run every time, but it does differ between repeats.
+	for _, workers := range []int{4, 4} {
+		parallel := run(workers)
+
+		if parallel.Evaluations != serial.Evaluations {
+			t.Fatalf(
+				"%d workers spent %d evaluations, one worker spent %d",
+				workers, parallel.Evaluations, serial.Evaluations,
+			)
+		}
+
+		if parallel.BestCost != serial.BestCost {
+			t.Fatalf(
+				"%d workers reached %.17g, one worker reached %.17g",
+				workers, parallel.BestCost, serial.BestCost,
+			)
+		}
+
+		if parallel.Iterations != serial.Iterations {
+			t.Fatalf(
+				"%d workers ran %d iterations, one worker ran %d",
+				workers, parallel.Iterations, serial.Iterations,
+			)
+		}
+	}
+}

@@ -62,6 +62,22 @@ type CMAESOptimizer struct {
 	// RestartLimit bounds the number of runs. Zero restarts until the budget
 	// is spent, N runs at most N times.
 	RestartLimit int
+
+	// RunEvaluations caps a single run's evaluations. Zero gives every run the
+	// whole remaining budget, so the run ends on a Hansen criterion or on the
+	// total. A positive value with RestartLimit zero is "cold restarts of a
+	// fixed length until the budget is spent", the shape CircleFit records as
+	// its open structural fix: a run that stagnates early is abandoned on a
+	// schedule rather than left to spend the campaign's whole budget proving
+	// it. The last run gets the smaller of this and what is left.
+	RunEvaluations int
+
+	// LambdaGrowth multiplies the population on every restart. Zero and one
+	// both mean a fixed population; two is IPOP, where restart k searches with
+	// 2^k times the initial lambda and so trades the number of restarts for
+	// the reach of the later ones. Mu follows lambda/2 as it does for the
+	// initial population.
+	LambdaGrowth float64
 }
 
 // ResolvedCMAES is what a run settled on once every "choose one for me" input
@@ -70,8 +86,14 @@ type CMAESOptimizer struct {
 type ResolvedCMAES struct {
 	// Covariance is the covariance mode the run uses, after defaulting.
 	Covariance string
-	// Lambda is the population size, after Hansen's default is filled in.
+	// Lambda is the initial population size, after Hansen's default is filled
+	// in. It is run zero's population; LambdaGrowth says what the later runs
+	// use.
 	Lambda int
+	// LambdaGrowth is the factor applied to the population on every restart,
+	// with the zero that asked for a fixed population reported as one, so the
+	// resolve report shows the ladder rather than a blank.
+	LambdaGrowth float64
 	// Seed is the value run zero's generator was constructed from, never zero.
 	// Run k uses Seed + k.
 	Seed int64
@@ -79,6 +101,11 @@ type ResolvedCMAES struct {
 	Sigma float64
 	// Workers is the number of goroutines evaluating one generation.
 	Workers int
+	// RunEvaluations is the per-run evaluation cap, or zero when a run may
+	// spend whatever is left of the total. It is reported rather than derived
+	// because it, the restart limit and the growth factor together are what
+	// distinguish one restart shape from another in a recorded run.
+	RunEvaluations int
 }
 
 // The covariance modes this wrapper offers. The library also has a dense mode,
@@ -96,11 +123,15 @@ const (
 	// recommendation for a box-bounded problem and the library's own default.
 	defaultCMAESSigma = 0.3
 
-	// uncappedRunIterations is the per-run iteration cap used when the caller
-	// set no total. The library rejects a non-positive MaxIterations, so an
-	// uncapped run still needs a number; this is the library's own default and
-	// is far more than a run of this objective survives before a Hansen
-	// criterion ends it and the next restart begins.
+	// uncappedRunIterations is the per-run iteration cap used when neither an
+	// iteration total nor an evaluation budget bounds the run, which leaves the
+	// time-budget-only case. The library rejects a non-positive MaxIterations,
+	// so an uncapped run still needs a number; this is the library's own
+	// default and is far more than a run of this objective survives before a
+	// Hansen criterion ends it and the next restart begins. Under an evaluation
+	// budget it must not be used: at a small population the budget allows many
+	// more than a thousand iterations, and the ceiling would end the run on
+	// maximum_iterations instead of the criterion or the budget.
 	uncappedRunIterations = 1000
 
 	// minRestartBudgetFraction is the share of the time budget a fresh run
@@ -119,14 +150,14 @@ const (
 // budget, but the fit is bounded by wall-clock time, so the loop below runs
 // cold restarts until the time budget rather than a sample count is spent.
 //
-// A run must be given a budget of its own: opts.MaxIterations, opts.TimeBudget
-// or RestartLimit. A deadline on ctx is a stopping rule too, but it is not one
-// of the three, and it is not accepted in their place: with none of the three
-// the restart loop has no stopping rule it can see, so a caller that forgot
-// all of them gets a search that only a cancelled context ever ends, which as
-// a default is a hang rather than a search. A caller that genuinely wants
-// "until I cancel" can say so with a restart or iteration count it does not
-// expect to reach.
+// A run must be given a budget of its own: opts.MaxIterations,
+// opts.MaxEvaluations, opts.TimeBudget or RestartLimit. A deadline on ctx is a
+// stopping rule too, but it is not one of the four, and it is not accepted in
+// their place: with none of the four the restart loop has no stopping rule it
+// can see, so a caller that forgot all of them gets a search that only a
+// cancelled context ever ends, which as a default is a hang rather than a
+// search. A caller that genuinely wants "until I cancel" can say so with a
+// restart or iteration count it does not expect to reach.
 func (o *CMAESOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc, initial []float64, bounds Bounds, opts OptimizeOptions) (*Result, error) {
 	if objective == nil {
 		return nil, fmt.Errorf("objective cannot be nil")
@@ -144,10 +175,10 @@ func (o *CMAESOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc, 
 		ctx = context.Background()
 	}
 
-	if opts.MaxIterations <= 0 && opts.TimeBudget <= 0 && o.RestartLimit <= 0 {
+	if opts.MaxIterations <= 0 && opts.MaxEvaluations <= 0 && opts.TimeBudget <= 0 && o.RestartLimit <= 0 {
 		return nil, fmt.Errorf(
-			"cmaes needs a budget of its own: set max iterations, a time budget or a " +
-				"restart limit, a context deadline alone is not one",
+			"cmaes needs a budget of its own: set max iterations, max evaluations, a time " +
+				"budget or a restart limit, a context deadline alone is not one",
 		)
 	}
 
@@ -194,7 +225,7 @@ func (o *CMAESOptimizer) runRestarts(
 	completed := 0
 
 	for {
-		reason, stop := o.stopReason(ctx, tracker, opts, completed)
+		reason, stop := o.stopReason(ctx, tracker, resolved, opts, completed)
 		if stop {
 			return tracker.result(reason, completed), nil
 		}
@@ -229,6 +260,7 @@ func (o *CMAESOptimizer) runRestarts(
 func (o *CMAESOptimizer) stopReason(
 	ctx context.Context,
 	tracker *cmaesTracker,
+	resolved ResolvedCMAES,
 	opts OptimizeOptions,
 	completed int,
 ) (string, bool) {
@@ -238,6 +270,18 @@ func (o *CMAESOptimizer) stopReason(
 
 	if o.RestartLimit > 0 && completed >= o.RestartLimit {
 		return "restart_limit", true
+	}
+
+	if opts.MaxEvaluations > 0 {
+		remaining := opts.MaxEvaluations - tracker.evaluationCount()
+
+		// A run needs a full generation to be worth starting, and the library
+		// refuses a MaxEvaluations below Lambda outright, so a remainder
+		// smaller than the next run's population ends the loop rather than
+		// being handed to a run that cannot accept it.
+		if remaining < lambdaForRestart(resolved, completed) {
+			return "max_evaluations", true
+		}
 	}
 
 	if opts.MaxIterations > 0 && tracker.completedIterationCount() >= opts.MaxIterations {
@@ -274,10 +318,13 @@ func (o *CMAESOptimizer) runOnce(
 		defer cancel()
 	}
 
-	cfg := o.config(resolved, len(mean), o.runIterations(tracker, opts), restart)
-	cfg.ObjectiveFunc = tracker.evaluate
+	lambda := lambdaForRestart(resolved, restart)
 
-	tracker.beginRun(restart)
+	cfg := o.config(resolved, len(mean), o.runIterations(tracker, opts, lambda), restart)
+	cfg.ObjectiveFunc = tracker.evaluate
+	cfg.MaxEvaluations = o.runEvaluations(tracker, opts, cfg.Lambda)
+
+	tracker.beginRun(restart, cfg.Lambda)
 
 	return cmaes.OptimizeContext(runCtx, cfg,
 		cmaes.WithInitialMean(mean, resolved.Sigma),
@@ -288,12 +335,78 @@ func (o *CMAESOptimizer) runOnce(
 // runIterations is one run's share of the total iteration budget. The library
 // rejects a non-positive cap, and stopReason has already established that the
 // remainder is positive when a total was given.
-func (o *CMAESOptimizer) runIterations(tracker *cmaesTracker, opts OptimizeOptions) int {
-	if opts.MaxIterations <= 0 {
-		return uncappedRunIterations
+//
+// When only an evaluation budget was given, the budget is what bounds the run,
+// so the iteration cap merely has to be loose enough never to bind. A run
+// spends one generation of lambda evaluations per iteration, so the remaining
+// budget cannot buy more than remaining/lambda of them; the extra iteration
+// covers the truncated last generation the library allows itself. Handing back
+// the fixed ceiling here instead would end a run of a small population on
+// maximum_iterations long before the budget was spent, which is not a
+// termination anyone asked for.
+func (o *CMAESOptimizer) runIterations(tracker *cmaesTracker, opts OptimizeOptions, lambda int) int {
+	if opts.MaxIterations > 0 {
+		return opts.MaxIterations - tracker.completedIterationCount()
 	}
 
-	return opts.MaxIterations - tracker.completedIterationCount()
+	if opts.MaxEvaluations > 0 && lambda > 0 {
+		return (opts.MaxEvaluations-tracker.evaluationCount())/lambda + 1
+	}
+
+	return uncappedRunIterations
+}
+
+// runEvaluations is the evaluation cap one run is started with, which the
+// library honours itself: it truncates the last generation to whatever is left
+// and terminates with maximum_evaluations, so the wrapper never has to abandon
+// a run mid-generation the way the mayfly wrapper does.
+//
+// Zero, meaning no cap, survives only when the caller set neither a total nor
+// a per-run cap. RunEvaluations shortens a run below the remaining total, and
+// the last run of a fixed-length ladder is shortened again by what is left.
+//
+// A cap below one generation is raised to one. The library refuses it outright,
+// and a run of less than a generation is not a search anyway; the restart loop
+// has already established that a whole generation is left to spend.
+func (o *CMAESOptimizer) runEvaluations(tracker *cmaesTracker, opts OptimizeOptions, lambda int) int {
+	remaining := 0
+
+	if opts.MaxEvaluations > 0 {
+		remaining = opts.MaxEvaluations - tracker.evaluationCount()
+	}
+
+	budget := remaining
+
+	if o.RunEvaluations > 0 && (remaining <= 0 || o.RunEvaluations < remaining) {
+		budget = o.RunEvaluations
+	}
+
+	if budget > 0 && budget < lambda {
+		budget = lambda
+	}
+
+	return budget
+}
+
+// lambdaForRestart is the population of a given run on the growth ladder.
+// Restart zero uses the resolved initial population, and each later one
+// multiplies it, so the ladder is derived from the initial value rather than
+// accumulated, which keeps run k's population independent of how the loop
+// arrived there.
+func lambdaForRestart(resolved ResolvedCMAES, restart int) int {
+	if resolved.LambdaGrowth <= 1 || restart <= 0 {
+		return resolved.Lambda
+	}
+
+	scaled := float64(resolved.Lambda) * math.Pow(resolved.LambdaGrowth, float64(restart))
+
+	// A ladder long enough to overflow an int is not a search anyone can run;
+	// pinning it keeps the arithmetic honest and lets the budget end the loop.
+	if scaled > math.MaxInt32 {
+		return math.MaxInt32
+	}
+
+	return int(math.Round(scaled))
 }
 
 // config builds the configuration for one run.
@@ -312,11 +425,13 @@ func (o *CMAESOptimizer) config(resolved ResolvedCMAES, dims, iterations, restar
 	cfg.LowerBound = 0
 	cfg.UpperBound = 1
 	cfg.InitialSigma = resolved.Sigma
-	cfg.Lambda = resolved.Lambda
+
+	lambda := lambdaForRestart(resolved, restart)
+	cfg.Lambda = lambda
 
 	// Mu comes from the constructor's default lambda, so it has to follow an
 	// overridden one; Hansen's ratio is half the population.
-	cfg.Mu = maxInt(1, resolved.Lambda/2)
+	cfg.Mu = maxInt(1, lambda/2)
 	cfg.MaxIterations = iterations
 	cfg.MaxWorkers = resolved.Workers
 	cfg.EnableParallel = true
@@ -389,7 +504,28 @@ func (o *CMAESOptimizer) resolve(dims int) (ResolvedCMAES, error) {
 
 	lambda := o.Lambda
 	if lambda == 0 {
-		lambda = hansenPopulationSize(dims)
+		lambda = HansenPopulationSize(dims)
+	}
+
+	// A growth below one shrinks the population every restart, which after a
+	// few restarts is a population of two searching an eighteen-dimensional
+	// box. It is refused rather than clamped, because a caller that wrote it
+	// meant something the ladder cannot express.
+	if !isFinite(o.LambdaGrowth) || o.LambdaGrowth < 0 || (o.LambdaGrowth > 0 && o.LambdaGrowth < 1) {
+		return ResolvedCMAES{}, fmt.Errorf(
+			"cmaes lambda growth must be zero or at least 1 (got %v)", o.LambdaGrowth,
+		)
+	}
+
+	growth := o.LambdaGrowth
+	if growth == 0 {
+		growth = 1
+	}
+
+	if o.RunEvaluations < 0 {
+		return ResolvedCMAES{}, fmt.Errorf(
+			"cmaes run evaluations must not be negative (got %d)", o.RunEvaluations,
+		)
 	}
 
 	workers := o.MaxWorkers
@@ -398,18 +534,22 @@ func (o *CMAESOptimizer) resolve(dims int) (ResolvedCMAES, error) {
 	}
 
 	return ResolvedCMAES{
-		Covariance: covariance,
-		Lambda:     lambda,
-		Seed:       o.resolveSeed(),
-		Sigma:      sigma,
-		Workers:    workers,
+		Covariance:     covariance,
+		Lambda:         lambda,
+		LambdaGrowth:   growth,
+		Seed:           o.resolveSeed(),
+		Sigma:          sigma,
+		Workers:        workers,
+		RunEvaluations: o.RunEvaluations,
 	}, nil
 }
 
-// hansenPopulationSize is 4 + floor(3 ln n), the default population the
+// HansenPopulationSize is 4 + floor(3 ln n), the default population the
 // library uses and the tutorial recommends. It is twelve at the eighteen
-// dimensions the phase 8.3 fit encodes to.
-func hansenPopulationSize(dims int) int {
+// dimensions the phase 8.3 fit encodes to. It is exported because a campaign
+// that budgets in evaluations has to know how many of them a generation costs
+// before it runs anything.
+func HansenPopulationSize(dims int) int {
 	if dims <= 0 {
 		return 0
 	}
@@ -506,6 +646,10 @@ type cmaesTracker struct {
 	reports    int
 	restart    int
 
+	// lambda is the population of the run in progress, which the growth ladder
+	// makes differ from the resolved initial one.
+	lambda int
+
 	// completedIterations accumulates what earlier runs spent. Each run
 	// numbers its iterations from one, so without it the run total would be
 	// the last restart's. Evaluations need no such accumulator: the adapter
@@ -573,9 +717,11 @@ func (t *cmaesTracker) evaluate(pos []float64) float64 {
 	return cost
 }
 
-// beginRun records which restart is about to start, for Progress.Restart.
-func (t *cmaesTracker) beginRun(restart int) {
+// beginRun records which restart is about to start and how large its
+// generation is, for Progress.Restart and Progress.Lambda.
+func (t *cmaesTracker) beginRun(restart, lambda int) {
 	t.restart = restart
+	t.lambda = lambda
 }
 
 // observe forwards one run's per-iteration progress. Progress.Iteration counts
@@ -608,6 +754,7 @@ func (t *cmaesTracker) observe(progress cmaes.Progress) {
 		Elapsed:     time.Since(t.start),
 		Evaluations: evals,
 		Restart:     t.restart,
+		Lambda:      t.lambda,
 	})
 }
 
@@ -671,6 +818,17 @@ func (t *cmaesTracker) elapsed() time.Duration {
 
 func (t *cmaesTracker) completedIterationCount() int {
 	return t.completedIterations
+}
+
+// evaluationCount is what the run has spent so far, including the baseline
+// evaluation of the caller's starting point. The restart loop budgets with it,
+// so it counts everything the objective was asked for rather than only what
+// the library attributes to a run.
+func (t *cmaesTracker) evaluationCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.evals
 }
 
 // result builds the run's outcome. The stop reason is what separates a

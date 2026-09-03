@@ -263,3 +263,60 @@ func TestLoadCheckpointWithoutTuningStaysReadable(t *testing.T) {
 		t.Fatalf("expected the tuning fields to stay empty, got %#v", env)
 	}
 }
+
+// TestCheckpointCarriesTheCMAESRestartLadder pins the two keys a resumed
+// CMA-ES run needs to keep searching the way the run that wrote the checkpoint
+// did. The JSON names are a contract: a run directory's checkpoint.json is
+// read back by tooling that never sees this struct.
+func TestCheckpointCarriesTheCMAESRestartLadder(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "checkpoint_0001.json")
+
+	want := &Checkpoint{
+		Version:    CheckpointVersion,
+		Iteration:  9,
+		BestCost:   0.75,
+		BestParams: []float64{0.5},
+		Optimizer:  "cmaes",
+		Metric:     "rms",
+		State: &OptimizerState{
+			Kind: "cmaes",
+			CMAES: &CMAESCheckpointEnv{
+				Covariance:     "separable",
+				Lambda:         12,
+				Sigma:          0.3,
+				Seed:           23,
+				RunEvaluations: 4000,
+				LambdaGrowth:   2,
+			},
+		},
+	}
+	if err := SaveCheckpoint(path, want); err != nil {
+		t.Fatalf("SaveCheckpoint failed: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read checkpoint: %v", err)
+	}
+
+	for _, key := range []string{`"run_evaluations": 4000`, `"lambda_growth": 2`} {
+		if !strings.Contains(string(raw), key) {
+			t.Fatalf("expected the checkpoint to hold %s, got %s", key, raw)
+		}
+	}
+
+	got, err := LoadCheckpoint(path)
+	if err != nil {
+		t.Fatalf("LoadCheckpoint failed: %v", err)
+	}
+
+	env := got.State.CMAES
+	if env == nil {
+		t.Fatal("expected the checkpoint to carry cmaes state")
+	}
+
+	if env.RunEvaluations != 4000 || env.LambdaGrowth != 2 {
+		t.Fatalf("unexpected restart ladder round-trip: %#v", env)
+	}
+}

@@ -24,9 +24,26 @@ type Optimizer interface {
 // OptimizeOptions controls shared optimizer behavior.
 type OptimizeOptions struct {
 	MaxIterations int
-	TimeBudget    time.Duration
-	ReportEvery   int
-	Report        func(Progress)
+
+	// MaxEvaluations caps the number of objective evaluations a run may spend.
+	// Zero is unlimited. It is what makes two backends comparable: an
+	// iteration means something different to each of them, while an
+	// evaluation is one audio render either way, so a campaign that wants a
+	// fair comparison matches this rather than MaxIterations.
+	//
+	// A backend stops as soon as it can once its own count reaches the cap. It
+	// may overrun by at most one generation's worth of evaluations, because a
+	// generation is the smallest unit a population method can abandon, and
+	// Result.Evaluations reports the overrun honestly rather than clipping to
+	// the cap. A run the cap ended reports StopReason "max_evaluations". The
+	// simple backend is the exception to the reason, not the count: gonum
+	// stops on Settings.FuncEvaluations and reports its own status string,
+	// which is left alone because nothing compares gonum runs across backends.
+	MaxEvaluations int
+
+	TimeBudget  time.Duration
+	ReportEvery int
+	Report      func(Progress)
 }
 
 // Result describes the outcome of an optimization run.
@@ -89,4 +106,11 @@ type Progress struct {
 	// Restart is the zero-based index of the search in progress. Only the
 	// CMA-ES backend restarts, so it is zero for every other backend.
 	Restart int
+
+	// Lambda is the population of the CMA-ES run in progress, and zero for
+	// every other backend. It is reported because a restart ladder changes it:
+	// with CMAESOptimizer.LambdaGrowth the population of restart k is not the
+	// resolved initial one, so a trace that only recorded the initial lambda
+	// could not say how large the generation behind a given report was.
+	Lambda int
 }

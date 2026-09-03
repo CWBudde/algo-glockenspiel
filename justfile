@@ -117,6 +117,48 @@ build-wasm *ARGS:
 install:
     go install ./cmd/glockenspiel
 
+# A campaign is identified by the binary that planned it: the manifest records the
+# file's SHA-256 and `run` refuses a different one. So the recipes below drive one
+# built file rather than `go run`, which would rebuild between plan and run and
+# strand the campaign on a binary that no longer exists. They resolve their paths
+# against the repository root, so run them from there.
+
+# Build the campaign harness into out/campaign/bin (see docs/campaign.md)
+campaign-build:
+    go build -trimpath -o out/campaign/bin/glockenspiel-campaign ./cmd/glockenspiel-campaign
+
+# Plan a campaign into out/campaign/DESIGN (refuses to overwrite an existing one)
+campaign-plan DESIGN *ARGS: campaign-build
+    ./out/campaign/bin/glockenspiel-campaign plan {{ DESIGN }} --dir out/campaign/{{ DESIGN }} {{ ARGS }}
+
+# Run a planned campaign; Ctrl-C stops after the job in flight and a rerun resumes
+campaign-run DESIGN *ARGS:
+    ./out/campaign/bin/glockenspiel-campaign run --dir out/campaign/{{ DESIGN }} {{ ARGS }}
+
+# Write out/campaign/DESIGN/results.csv from the run directories
+campaign-collect DESIGN *ARGS:
+    ./out/campaign/bin/glockenspiel-campaign collect --dir out/campaign/{{ DESIGN }} {{ ARGS }}
+
+# Rebuild the report from results.csv and write it beside it
+campaign-analyze DESIGN *ARGS:
+    ./out/campaign/bin/glockenspiel-campaign analyze --dir out/campaign/{{ DESIGN }} \
+        --out out/campaign/{{ DESIGN }}/report.md {{ ARGS }}
+
+# The smoke campaign is a wiring check and not a measurement: four jobs of 300
+# evaluations on the short synthetic reference say that plan, run, collect and
+# analyze agree about the files between them, and say nothing about which engine is
+# better. The directory is removed first because `plan` refuses to overwrite a
+# manifest.
+
+# Run the whole harness end to end on the smoke design, which takes seconds
+campaign-smoke:
+    rm -rf out/campaign/smoke
+    just campaign-build
+    just campaign-plan smoke
+    just campaign-run smoke
+    just campaign-collect smoke
+    just campaign-analyze smoke
+
 # Regenerate the TypeScript mirror of the Mayfly tuning knob table
 gen-mayfly-tuning:
     go run ./cmd/gen-mayfly-tuning

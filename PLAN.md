@@ -26,7 +26,7 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | 5     | Web app                      | open — 5.1–5.6 done; payload size remains   |
 | 6     | Split out VST3               | done                                        |
 | 7     | Documentation                | open — 7.1 and 7.2 done                     |
-| 8     | Training                     | open — 8.0 to 8.4 done 2026-09-02, 8.5 next |
+| 8     | Training                     | open — 8.0 to 8.5 done 2026-09-02, 8.6 next |
 
 Closed phases are summarised here and documented in full under [docs/](docs/); the detail that
 was in this file has moved there rather than been dropped.
@@ -205,19 +205,19 @@ Goal: fix the three level bugs. All of them live in Go and are unit-testable wit
       closes the item as written, at the preset's own note; levelling the rest of the keyboard
       is the separate item below.
 
-      **Redone.** The first pass divided the amplitudes by 8.72 to bring a +15.8 dBFS render
-                                          down, and that 6.174 peak was almost entirely the Chebyshev shaper's DC offset rather
-                                          than the instrument: the shaper summed `gains[k] * T_(k+1)(x)`, whose even members are
-                                          nonzero at the origin, so it emitted a constant −0.3 for silence, and at the excitation
-                                          stage that drove the bank forever. With the shaper made DC-free the same preset rendered
-                                          at −38.07 dBFS, its oscillator bank 18 dB *below* the dry `input_mix` path, and no
-                                          rescale could reach −3 dBFS: at velocity 100 the excitation reaching the bank peaks at
-                                          −31.5 dBFS, and with `AmplitudeMax = 2` the ceiling was about −31.7 dBFS. The preset was
-                                          re-fitted against `testdata/reference/legacy_synth_a4.wav` instead — readable at last,
-                                          see the decoder note below — which moved `filter_frequency` from 523 Hz to 1304 Hz and
-                                          bought the missing level there. It renders at −3.19 dBFS at 44.1 kHz, correlates 0.9655
-                                          with its reference against −0.5261 before, and its note decays to silence in 1.85 s
-                                          rather than sustaining for the full four. `just refit-default` is the command.
+  **Redone.** The first pass divided the amplitudes by 8.72 to bring a +15.8 dBFS render
+  down, and that 6.174 peak was almost entirely the Chebyshev shaper's DC offset rather
+  than the instrument: the shaper summed `gains[k] * T_(k+1)(x)`, whose even members are
+  nonzero at the origin, so it emitted a constant −0.3 for silence, and at the excitation
+  stage that drove the bank forever. With the shaper made DC-free the same preset rendered
+  at −38.07 dBFS, its oscillator bank 18 dB _below_ the dry `input_mix` path, and no
+  rescale could reach −3 dBFS: at velocity 100 the excitation reaching the bank peaks at
+  −31.5 dBFS, and with `AmplitudeMax = 2` the ceiling was about −31.7 dBFS. The preset was
+  re-fitted against `testdata/reference/legacy_synth_a4.wav` instead — readable at last,
+  see the decoder note below — which moved `filter_frequency` from 523 Hz to 1304 Hz and
+  bought the missing level there. It renders at −3.19 dBFS at 44.1 kHz, correlates 0.9655
+  with its reference against −0.5261 before, and its note decays to silence in 1.85 s
+  rather than sustaining for the full four. `just refit-default` is the command.
 
 - [x] Un-mute the low register. `scaledParamsForNote` divides `DecayMs` by the transposition
       ratio, which is correct, but the single `DecayMsMax = 500` served both as the validation
@@ -269,18 +269,18 @@ Goal: get synthesis off the main thread.
       `setTimeout`, and that scope has none of them; and it would put Go's collector on the
       render thread with no queue in front of it.
 
-      Flow control is the buffer pool itself. `POOL_SIZE` buffers exist, `postMessage`
-                                          transfers one away and detaches it in the sender, so the worker renders only into a free
-                                          buffer and a buffer coming back is the request for the next block — no timer, no
-                                          unbounded queue, nothing allocated per block. Four 128-frame buffers is ~11.6 ms, which
-                                          is both the jitter tolerated and the worst case for note-on latency.
+  Flow control is the buffer pool itself. `POOL_SIZE` buffers exist, `postMessage`
+  transfers one away and detaches it in the sender, so the worker renders only into a free
+  buffer and a buffer coming back is the request for the next block — no timer, no
+  unbounded queue, nothing allocated per block. Four 128-frame buffers is ~11.6 ms, which
+  is both the jitter tolerated and the worst case for note-on latency.
 
-                                          Two things that made the dropout counter lie and are fixed here: the node is connected
-                                          only after the producer is running, because `NewRealtimeEngine` measures the preset once
-                                          per playable note and the graph would otherwise pull against an empty queue for that
-                                          whole time; and Chrome calls `process()` on a source worklet node whether or not it is
-                                          connected, so `BlockQueue` counts no underrun before its first block (~120 of them
-                                          otherwise, none audible).
+  Two things that made the dropout counter lie and are fixed here: the node is connected
+  only after the producer is running, because `NewRealtimeEngine` measures the preset once
+  per playable note and the graph would otherwise pull against an empty queue for that
+  whole time; and Chrome calls `process()` on a source worklet node whether or not it is
+  connected, so `BlockQueue` counts no underrun before its first block (~120 of them
+  otherwise, none audible).
 
 ### Phase 5.3: WASM bridge and build
 
@@ -328,18 +328,18 @@ Goal: fast first paint, usable by keyboard, and no controls that lie.
       `aria-live="polite"`, and the cost chart — a canvas, opaque to a screen reader —
       repeats its reading as visually-hidden live text.
 
-      Not done: the Lighthouse ≥ 90 number in this phase's acceptance criteria has not been
-                                          measured. The individual items above were checked directly instead.
+  Not done: the Lighthouse ≥ 90 number in this phase's acceptance criteria has not been
+  measured. The individual items above were checked directly instead.
 
 - [x] Wire or remove the inert controls: removed with the rewrite. The hamburger, the
       one-hardcoded-option preset select and the disabled Save/Load buttons are all gone.
       Deleting beats shipping controls that lie.
 
-      Superseded for the preset select: it is back in the performance deck, with two
-                                          real sounds behind it. `assets/presets` is embedded as a directory, so adding a
-                                          preset is adding a file; `cmd/gen-presets` mirrors the list into the browser and
-                                          CI fails on a diff; and `cmd/glockenspiel-wasm` grew `setPreset`, which rebuilds
-                                          the engine around the chosen bar and replays the master gain onto it.
+  Superseded for the preset select: it is back in the performance deck, with two
+  real sounds behind it. `assets/presets` is embedded as a directory, so adding a
+  preset is adding a file; `cmd/gen-presets` mirrors the list into the browser and
+  CI fails on a diff; and `cmd/glockenspiel-wasm` grew `setPreset`, which rebuilds
+  the engine around the chosen bar and replays the master gain onto it.
 
 - [x] Fix the `<h1>`, which still read "Algo Glockenspiel VST3" on a page that is not a VST3.
       It reads "Algo Glockenspiel".
@@ -1041,24 +1041,59 @@ Goal: the engine shape CircleFit measured, plus a polish stage, behind the exist
 
 Goal: the instrument CircleFit's `scripts/cmaes-measurement` is, for this objective.
 
-- [ ] `cmd/glockenspiel-campaign` with registered designs in code, not flags: arms × paired seed
+- [x] `cmd/glockenspiel-campaign` with registered designs in code, not flags: arms × paired seed
       blocks, evaluation-matched by construction, one identified binary per campaign, block-major
       order, `plan | run | collect | analyze`, and a manifest that refuses to be overwritten.
-- [ ] Every job gets its own run directory: `config.json` with the full echo, `analysis.json`,
+      Done 2026-09-02: designs are Go values in `internal/campaign/designs.go` and the only
+      design-shaping flag is `--winner`, for `seed-hunt`, whose arms are the winner of
+      `engine-shape` and cannot be known until 8.6. Evaluation matching is cap plus trace
+      scoring: every arm gets the same `MaxEvaluations`, a backend may overrun by at most one
+      generation, and `collect` scores each job at the best trace cost at or below the cap, with
+      the finished score kept in its own column. Jobs run in-process and sequentially at a worker
+      width the manifest pins, which 8.4 showed costs nothing. The manifest is written `O_EXCL`
+      and carries the design, its hash, the binary's path and hash, the build identity and the
+      reference's hash; `run` refuses a different binary or reference and there is no override.
+      That is the fix for CircleFit's recorded registration discrepancy
+      (`cmaes-budget-split-report.md` in MayFlyCircleFit), where a contrast was changed after
+      partial results were visible. `just campaign-build|plan|run|collect|analyze|smoke` drive
+      it, and [docs/campaign.md](docs/campaign.md) is the document.
+- [x] Every job gets its own run directory: `config.json` with the full echo, `analysis.json`,
       `trace.jsonl` (per-iteration best cost, per-term breakdown, restart index, evaluations),
       `checkpoint.json`, `preset.json` carrying provenance (reference hash, profile, seed,
-      engine, version, score, terms) and `render.wav`.
-- [ ] `analyze` rebuilds the table from the CSV alone: mean, sd, blocks won, paired t, Holm over
+      engine, version, score, terms) and `render.wav`. Done 2026-09-02 in the new
+      `internal/fitrun` package, which also writes `result.json` and `log.txt`. A directory whose
+      summary reports `context_canceled` is not a finished job: `run` clears and repeats it and
+      `collect` refuses it unless `--partial`.
+- [x] `analyze` rebuilds the table from the CSV alone: mean, sd, blocks won, paired t, Holm over
       a registered contrast family, and a best-of table, which is the rare-basin instrument.
-- [ ] First design, `engine-shape`: `mayfly-single`, `mayfly-r16`, `sep-cmaes-r`,
+      Done 2026-09-02: the CSV header is a contract and a file whose header differs is refused.
+      A descriptive design gets no inferential statistics. The rules carried from CircleFit are
+      recorded in the document: contrast families are registered rather than derived, a design is
+      frozen at plan time, a mean-versus-win-count mismatch is not acted on, cap-matched is not
+      spend-matched, and absence of evidence is stated as such.
+- [x] First design, `engine-shape`: `mayfly-single`, `mayfly-r16`, `sep-cmaes-r`,
       `blk-cmaes-r`, `sep-cmaes-ipop` at one budget, twelve blocks, on the C5 recording under
       `balanced`; primary contrast `blk-cmaes-r` against `mayfly-r16`. Second design,
-      `seed-hunt`: best-of over 48 seeds at two λ for the winner.
+      `seed-hunt`: best-of over 48 seeds at two λ for the winner. Done 2026-09-02 and planned but
+      not run; 8.6 runs them. The budget is 24,000 evaluations per job, because the 8.4 smoke run
+      spent about 24,000 evaluations in 60 s on twelve threads, so sixty jobs are about an hour.
+      "Restart until the budget is spent" is a per-run cap of 4,800 with no restart limit on the
+      wrapper's own loop, and IPOP is `LambdaGrowth 2` on that same loop; `mayfly-r16` is one warm
+      round plus fifteen cold restarts, and the mayfly arms take an iteration cap of the budget
+      over the measured 43.05 evaluations an iteration costs, so annealing sees a realistic
+      length. `seed-hunt` is descriptive and takes `--winner` at plan time. Seed bases 120,000,
+      121,000 and 122,000 are disjoint and pinned by a test. Only the four-job `smoke` design has
+      been run, as a wiring check, and its output is in [docs/training.md](docs/training.md).
 
 ### Phase 8.6: Run it, decide, ship
 
 - [ ] Run both designs; write `docs/training.md` with the tables, the chosen default shape and
-      the pins line.
+      the pins line. Before reading the table, confirm every mayfly row's `stop_reason` is
+      `max_evaluations` and its `evaluations` within one generation of the budget; a row that
+      stopped on its iteration cap spent less than its budget and is not comparable with the arm
+      beside it. The refit recipes must name the winning arm's shape with `--max-evals`,
+      `--cmaes-run-evals` and `--cmaes-lambda-growth`, which is what lets a hand-run fit reproduce
+      a campaign arm.
 - [ ] Re-fit both shipped presets by recorded recipe (`just refit-default`,
       `just refit-recorded`) and ship the file the fit wrote. If a retune is wanted, it becomes a
       documented post-step, not a silent edit.
@@ -1158,11 +1193,17 @@ out on the sibling evidence, and `docs/training.md` records a three-engine smoke
 recording with the warning that every Mayfly number taken before today was measured under
 v0.6.0.
 
-**The next action is 8.5, the campaign harness**: `cmd/glockenspiel-campaign` with registered
-designs in code, per-job run directories, an `analyze` that rebuilds the table from the CSV, and
-the `engine-shape` design over twelve paired blocks. Nothing in 8.4 chose a default engine
-shape by measurement, and the smoke run in `docs/training.md` is explicitly not that
-measurement.
+8.5 is done the same day: `cmd/glockenspiel-campaign` plans, runs, collects and analyses a
+designed comparison, every job leaves an `internal/fitrun` run directory, the manifest freezes the
+design and the binary that planned it, and `engine-shape` and `seed-hunt` are registered.
+Only the four-job `smoke` design has been run, as a wiring check.
+
+**The next action is 8.6, running the designs and deciding**: run `engine-shape` (about an hour
+at 24,000 evaluations a job) and then `seed-hunt` around whichever CMA-ES arm won, write the
+tables into `docs/training.md`, re-fit the shipped preset by recipe under the winning shape, and
+apply the promotion rule: a default changes only when it wins its registered contrast and
+regresses no term on either reference. Nothing before 8.6 chose a default engine shape by
+measurement, and the smoke runs in `docs/training.md` are explicitly not that measurement.
 
 **Phase 5, payload size.** The one unaddressed sub-item. Adding the browser optimizer made the
 raw WASM larger, so this is now splitting or lazy-loading the Go payload rather than shaving

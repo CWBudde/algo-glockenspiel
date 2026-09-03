@@ -186,3 +186,53 @@ func TestSimpleOptimizerStopsOnCanceledContext(t *testing.T) {
 func square(x float64) float64 {
 	return x * x
 }
+
+// TestSimpleOptimizerStopsAtTheEvaluationCap checks that the shared cap
+// reaches gonum's own budget. The campaign never runs Nelder-Mead, so the stop
+// reason stays gonum's; what has to hold is that the count means the same
+// thing here as it does for the population backends.
+func TestSimpleOptimizerStopsAtTheEvaluationCap(t *testing.T) {
+	const (
+		dims   = 8
+		budget = 500
+	)
+
+	ranges := make([]Range, dims)
+	initial := make([]float64, dims)
+
+	for i := range ranges {
+		ranges[i] = Range{Min: -5, Max: 5}
+		initial[i] = -3
+	}
+
+	// Rosenbrock rather than a sphere: Nelder-Mead converges on a sphere in
+	// far fewer than five hundred evaluations, and a cap that never binds
+	// tests nothing.
+	rosenbrock := func(x []float64) float64 {
+		total := 0.0
+		for i := 0; i+1 < len(x); i++ {
+			total += 100*square(x[i+1]-x[i]*x[i]) + square(1-x[i])
+		}
+
+		return total
+	}
+
+	result, err := (&SimpleOptimizer{}).Optimize(
+		context.Background(), rosenbrock, initial, Bounds{Ranges: ranges},
+		OptimizeOptions{MaxEvaluations: budget},
+	)
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	// A simplex step costs at most one reflection, expansion or contraction
+	// per vertex, so 2n+1 bounds the overrun.
+	overrun := 2*dims + 1
+	if result.Evaluations < budget || result.Evaluations >= budget+overrun {
+		t.Fatalf("evaluations = %d, want in [%d, %d)", result.Evaluations, budget, budget+overrun)
+	}
+
+	if result.StopReason != gonumoptimize.FunctionEvaluationLimit.String() {
+		t.Fatalf("stop reason = %q, want gonum's own evaluation-limit status", result.StopReason)
+	}
+}

@@ -176,6 +176,47 @@ legacy-reference regression test.
 copies before, which is how the defect survived in all of them at once. The float fixture is
 documented in `testdata/reference/README.md`.
 
+## Evaluation budgets
+
+`OptimizeOptions.MaxEvaluations` caps the number of objective evaluations a run may spend, and
+zero means no cap. On the command line it is `--max-evals`, which `glockenspiel fit` accepts
+alongside `--max-iter` and `--time-budget`; two more flags shape the CMA-ES restart ladder under
+it, `--cmaes-run-evals` (a per-run cap, zero giving each run the whole remaining budget) and
+`--cmaes-lambda-growth` (the factor the population is multiplied by on each restart, two being
+IPOP). Between them a campaign arm can be reproduced by hand. The evaluation cap exists because
+an iteration means something different to each backend (a mayfly generation costs tens of renders, a Nelder-Mead major iteration about one), while an
+evaluation is one audio render whichever backend asked for it. A campaign comparing two engines
+therefore matches this rather than `--max-iter`.
+
+Every backend honours it, and every backend stops as soon as it can once its own count reaches
+the cap. A generation is the smallest unit a population method can abandon, so a run may overrun
+by at most one generation's worth of evaluations; `Result.Evaluations` reports the overrun rather
+than clipping to the cap, because a campaign that scores against the budget has to know what was
+actually spent. A run the cap ended reports `StopReason "max_evaluations"` and is never
+`Converged`.
+
+The three backends reach that guarantee differently. CMA-ES passes the remaining budget to the
+library as `Config.MaxEvaluations`, which truncates its final generation to exactly what is left,
+so the cap is normally exact. Mayfly has no evaluation budget at all, so the wrapper counts
+evaluations and, at the first iteration boundary past the cap, cancels a context only the
+current round can see; the library returns at that boundary and the wrapper starts the next
+round rather than treating the cancellation as an abort. The cut is taken at the boundary and
+not inside the parallel objective so that a capped run stays bit-identical at a fixed worker
+width. A cancellation the caller or the time budget caused still reports
+`context_canceled` or `time_budget`. The simple backend passes the cap to gonum's
+`Settings.FuncEvaluations` and keeps gonum's own status string as the stop reason: nothing
+compares Nelder-Mead runs against the population backends, so the count is what has to agree and
+not the vocabulary.
+
+The exchange rate a campaign needs to convert between the budgets is measured rather than
+assumed. `optimizer.MayflyEvaluationsPerIteration()` returns the figure the
+`mayflyEvaluationsPerIteration` constant records, whose comment names the date, the library
+version and the configuration it was measured at: DESMA at a population of ten over twenty
+iterations on the sphere. `optimizer.HansenPopulationSize(dims)` is the CMA-ES generation size at
+a given dimensionality. `TestMayflyEvaluationsPerIterationIsRecorded` fails when a library
+upgrade moves the mayfly figure by more than a fifth, which is the signal to remeasure the
+constant rather than to widen the test.
+
 ## The CMA-ES backend
 
 `optimizer.CMAESOptimizer` wraps [go-cma-es](https://github.com/CWBudde/go-cma-es) behind the
@@ -211,7 +252,23 @@ start with less than 5 % of the budget left is not started at all. `RestartLimit
 number of runs; zero means "until the budget is spent". Some budget is required: `Optimize`
 refuses a run given neither an iteration cap, nor a time budget, nor a restart limit, because
 the loop would then have no stopping rule of its own and a deadline on the context is not one
-of the three.
+of the three; an evaluation cap counts as one of them.
+
+`RunEvaluations` caps a single run rather than the whole loop, and zero gives every run the
+remaining total. With `RestartLimit` zero it expresses "cold restarts of a fixed length until the
+budget is spent", the shape CircleFit records as its open structural fix: a run that stagnates
+early is abandoned on a schedule instead of spending the campaign's whole budget proving it. The
+last run gets whatever is left, and a per-run cap below one generation is raised to one because
+the library refuses anything smaller.
+
+`LambdaGrowth` multiplies the population on every restart. Zero and one both mean a fixed
+population; two is IPOP, where restart _k_ searches with `2^k` times the initial lambda and `Mu`
+follows lambda/2 as it always does. `ResolvedCMAES.Lambda` stays the initial population and
+`ResolvedCMAES.LambdaGrowth` reports the ladder, with a zero reported as one; `Progress.Lambda`
+names the population of the run a report came from, and is zero for every other backend. A
+restart is not started when what is left of the budget is smaller than its population, because
+the library refuses a `MaxEvaluations` below `Lambda`; the loop then stops with
+`max_evaluations`. `Validate` rejects a negative growth and a growth between zero and one.
 
 The seed is reported through `OnResolve` the way Mayfly's is, and zero means "choose one and say
 which". Run _k_ uses `seed + k` for the library's stream and `seed - k - 1` for the cold mean's
@@ -426,9 +483,28 @@ at a fixed seed is bit-identical however many workers
 **Every Mayfly number recorded here before 2026-09-02 was measured under
 v0.6.0 and is not comparable to a run today.** That includes the benchmark
 figures in `docs/user-guide.md`, the `algo-piano` results this file cites, and
-the "roughly 47.7 evaluations per iteration" figure quoted in the code. A
+the "roughly 47.7 evaluations per iteration" figure the code used to quote,
+now remeasured as `mayflyEvaluationsPerIteration`. A
 seeded trajectory from v0.6.0 does not reproduce, and the costs it reached are
 not a baseline for v0.7.1.
+
+## Provenance in written presets
+
+A preset a fit writes carries an optional `provenance` block, `preset.Provenance`. It is metadata
+and not a schema field: `Validate` ignores it, nothing in the synthesiser reads it, and a v1
+document that carries one is still a v1 document, because nothing about it changes how the
+parameters render.
+
+It records `generated_by` (`glockenspiel fit` or `glockenspiel-campaign`), the build's `version`
+and a `timestamp`, the `reference` as a path and a SHA-256, the `note`, `profile` and `seed`, an
+`engine` block naming the backend and the fields that differ between backends (covariance,
+variant, lambda, population, restarts), the `score` and the full `terms` breakdown of the shipped
+vector, the `evaluations` spent, and the `libraries` versions the run was built against.
+
+The point is that a fitted preset found months later can answer where it came from without the
+run directory beside it, and that the reference hash rather than the reference's path is what
+says two presets were fitted against the same recording. Nothing reads the block yet. Phase 8.6's
+promotion rule is the first thing that will.
 
 ## Checkpoints and iteration counts
 

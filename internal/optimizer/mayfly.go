@@ -91,6 +91,12 @@ type ResolvedMayfly struct {
 	// ResolvedCMAES.Workers so a caller can record and restore the width
 	// whichever backend it ran.
 	Workers int
+	// Population is the male and female swarm size the run was configured
+	// with, after a Population below two has taken the default and after a
+	// tuning document or a preset has had its say. It is reported for the same
+	// reason ResolvedCMAES.Lambda is: a preset chooses one privately, and a
+	// record that repeated the flag would name a swarm that never existed.
+	Population int
 }
 
 // Optimize runs Mayfly in a normalized [0,1] search space and maps candidates back into bounds.
@@ -150,9 +156,13 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 	// The config is validated against the shortest of them, because that is the
 	// round a convergence window actually has to fit inside.
 	schedule := scheduleFor(o.Tuning)
-	budgets := schedule.plan(maxInt(1, opts.MaxIterations))
+	budgets := iterationBudgets(schedule, opts)
+	// The evaluation cap is split by the same rule, and carried as a running
+	// total so that a round which stops early hands its remainder to the next
+	// one instead of losing it.
+	evalCaps := cumulativeEvaluationCaps(opts.MaxEvaluations, len(budgets))
 
-	cfg, err := o.buildConfig(resolved, len(initial), schedule.shortestRound(maxInt(1, opts.MaxIterations)))
+	cfg, err := o.buildConfig(resolved, len(initial), shortestBudget(budgets))
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +177,7 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 	// so the width is read back off the configuration rather than derived a
 	// second time here.
 	resolved.Workers = cfg.MaxWorkers
+	resolved.Population = cfg.NPop
 
 	if o.OnResolve != nil {
 		o.OnResolve(resolved)
@@ -174,12 +185,28 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 
 	cfg.ObjectiveFunc = tracker.evaluate
 
-	var last *mayfly.Result
+	var (
+		last *mayfly.Result
+		// capped records whether the evaluation cap is what ended the round
+		// that ended the run. A round that finishes on its own terms clears
+		// it, so the reported stop reason always describes the last round.
+		capped bool
+	)
 
 	for round, budget := range budgets {
 		// One deadline covers the whole schedule, so a round that would start
 		// after it has passed simply does not.
 		if runCtx.Err() != nil {
+			break
+		}
+
+		// Nor does a round with nothing left to spend. A round is cut at the
+		// first iteration boundary after it reaches its cap, so an earlier
+		// round can overrun by one generation, and a share that overrun
+		// swallows whole would start a round with nothing to do.
+		if evalCaps[round] > 0 && tracker.evaluationCount() >= evalCaps[round] {
+			capped = true
+
 			break
 		}
 
@@ -232,13 +259,37 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 			))
 		}
 
-		res, runErr := mayfly.OptimizeContext(runCtx, cfg, options...)
+		// Mayfly has no evaluation budget of its own, so the cap is enforced
+		// by the progress observer, at an iteration boundary, by cancelling a
+		// context only this round can see. The library then returns its
+		// context error, and the round is treated as finished rather than as
+		// an abort, which is what lets the next round start.
+		roundCtx, cancelRound := context.WithCancel(runCtx)
+		tracker.beginRound(evalCaps[round], cancelRound)
+
+		res, runErr := mayfly.OptimizeContext(roundCtx, cfg, options...)
+
+		cancelRound()
+
 		if runErr != nil {
-			return tracker.abortedResult(ctx, runCtx, runErr)
+			// A cancellation the caller or the deadline caused outranks the
+			// cap: the run really is over, and reporting it as a spent budget
+			// would hide the abort.
+			if runCtx.Err() != nil || !tracker.roundWasCapped() {
+				return tracker.abortedResult(ctx, runCtx, runErr)
+			}
+
+			tracker.finishCappedRound()
+
+			capped = true
+			last = nil
+
+			continue
 		}
 
 		tracker.finishRound(res)
 
+		capped = false
 		last = res
 
 		// The target cost is the whole run's goal, not the round's: once it is
@@ -252,13 +303,90 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 		}
 	}
 
-	return tracker.result(last), nil
+	result := tracker.result(last)
+
+	// The cap is the run's own stopping rule, not mayfly's, so the reason it
+	// ended has to be written here: the library only ever reports the
+	// cancellation the wrapper caused. A run cut mid-search has proved
+	// nothing, whatever its last completed round looked like.
+	if capped {
+		result.StopReason = "max_evaluations"
+		result.Converged = false
+	}
+
+	return result, nil
+}
+
+// iterationBudgets is the per-round iteration cap the schedule asks for.
+//
+// A run given only an evaluation cap still needs one, because mayfly rejects a
+// non-positive MaxIterations, and splitting a nominal single iteration across
+// the rounds would end each of them after one generation. The evaluation cap
+// itself is used instead: an iteration costs at least one evaluation, so no
+// round can reach that many iterations before the evaluation cap binds, which
+// is the point of asking for an evaluation budget in the first place.
+func iterationBudgets(schedule mayflySchedule, opts OptimizeOptions) []int {
+	if opts.MaxIterations <= 0 && opts.MaxEvaluations > 0 {
+		budgets := make([]int, schedule.rounds())
+		for i := range budgets {
+			budgets[i] = opts.MaxEvaluations
+		}
+
+		return budgets
+	}
+
+	return schedule.plan(maxInt(1, opts.MaxIterations))
+}
+
+// cumulativeEvaluationCaps turns a total evaluation budget into the running
+// total a round may not exceed. Round r may spend everything rounds 0 to r
+// were allotted together, so a round that stops early leaves its remainder to
+// its successors rather than to nobody. A zero total disables the cap, which
+// is reported as a slice of zeros so the caller needs no second branch.
+func cumulativeEvaluationCaps(total, rounds int) []int {
+	caps := make([]int, rounds)
+
+	if total <= 0 {
+		return caps
+	}
+
+	running := 0
+	for round, share := range splitEvenly(total, rounds) {
+		running += share
+		caps[round] = running
+	}
+
+	return caps
 }
 
 // defaultMayflyVariant is what a run uses when neither a variant nor a preset
 // was named. It is DESMA for historical reasons, and changing it would move
 // every default fit.
 const defaultMayflyVariant = "desma"
+
+// mayflyEvaluationsPerIteration is what one mayfly iteration costs in
+// objective evaluations. Measured on 2026-09-02 against mayfly v0.7.1: DESMA
+// at a population of ten, twenty iterations on the sphere with one worker,
+// spends 861 evaluations, so 43.05 each. The figure is the whole-run average
+// rather than the marginal cost of an iteration, which is 42.0: the initial
+// population and the wrapper's baseline evaluation are part of what a budget
+// has to pay for, and a campaign sizing a run in evaluations is asking about
+// the run, not about its steady state.
+//
+// It replaces the 47.7 the sibling algo-piano project measured, which predates
+// the NC and NM defaults this wrapper now leaves to the library.
+// TestMayflyEvaluationsPerIterationIsRecorded fails when a library upgrade
+// moves it.
+const mayflyEvaluationsPerIteration = 43.05
+
+// MayflyEvaluationsPerIteration is the measured cost of one mayfly iteration
+// in objective evaluations, for callers that have to convert between the two
+// budgets before a run starts. A campaign matching backends on evaluations
+// needs it to size an iteration cap, which is the only budget mayfly itself
+// understands.
+func MayflyEvaluationsPerIteration() float64 {
+	return mayflyEvaluationsPerIteration
+}
 
 func (o *MayflyOptimizer) population() int {
 	if o.Population >= 2 {
@@ -482,10 +610,10 @@ func newMayflyConfig(
 	// NC = 2*pop sits exactly on the limit validateOffspring enforces -- it
 	// means every male mates every iteration -- and so doubled the offspring
 	// evaluations of an iteration against the library's own considered choice,
-	// which is the value the whole 0.5.x behaviour was tuned against. The
-	// sibling algo-piano project measured the cost of an iteration at roughly
-	// 47.7 evaluations at a population of ten, and found that at a fixed
-	// evaluation budget cheaper iterations win.
+	// which is the value the whole 0.5.x behaviour was tuned against. An
+	// iteration costs mayflyEvaluationsPerIteration renders at a population of
+	// ten, and the sibling algo-piano project found that at a fixed evaluation
+	// budget cheaper iterations win.
 	//
 	// NM differed from mayfly's own 5% rule only in rounding up to one, and
 	// only below a population of ten. A run that wants the old numbers back
@@ -648,6 +776,15 @@ type mayflyTracker struct {
 	// would report the last round's figures as if they were the whole run's.
 	completedIterations int
 	libraryEvals        int
+
+	// evalCap is the running total the current round may not exceed, and
+	// cancelRound stops that round once it does. The cancel is dropped after
+	// it fires so a later round cannot be cut by a stale one, which makes the
+	// cap path idempotent. capped records that the cap, rather than the
+	// caller, is what cancelled the round.
+	evalCap     int
+	cancelRound context.CancelFunc
+	capped      bool
 }
 
 func newMayflyTracker(objective ObjectiveFunc, bounds Bounds, start time.Time, opts OptimizeOptions) *mayflyTracker {
@@ -736,6 +873,8 @@ func (t *mayflyTracker) observe(progress mayfly.Progress) {
 
 	t.iterations = t.completedIterations + progress.Iteration
 
+	t.enforceEvaluationCap()
+
 	if t.opts.Report == nil || t.opts.ReportEvery <= 0 || t.iterations%t.opts.ReportEvery != 0 {
 		t.mu.Unlock()
 
@@ -758,6 +897,78 @@ func (t *mayflyTracker) observe(progress mayfly.Progress) {
 	t.opts.Report(update)
 }
 
+// enforceEvaluationCap ends the round once it has spent its share, and must be
+// called with the mutex held.
+//
+// It is deliberately not called from the objective adapter, which is where the
+// count is kept. The adapter runs on whichever worker goroutine took the
+// candidate, and mayfly checks its context before every item of a parallel
+// batch, so cancelling from there cuts the round after however many candidates
+// the scheduler happened to start: a run at eight workers spent 1207 of a
+// 1200-evaluation budget where a run at one worker spent 1215, from the same
+// seed, and with a schedule the divergence then seeds the next round. The
+// progress observer instead runs synchronously on the goroutine that called
+// OptimizeContext, at an iteration boundary, so the cut lands after a whole
+// generation and is the same at every worker count.
+//
+// The overrun that buys is one iteration, which is what the shared contract
+// allows. The exception is a cap smaller than a round's initial population,
+// where the first iteration cannot be observed before it has been paid for; no
+// budget worth running is that small.
+func (t *mayflyTracker) enforceEvaluationCap() {
+	if t.evalCap <= 0 || t.evals < t.evalCap || t.cancelRound == nil {
+		return
+	}
+
+	t.capped = true
+
+	t.cancelRound()
+
+	t.cancelRound = nil
+}
+
+// beginRound arms the evaluation cap for the round about to start. The cap is
+// the running total, so a round that inherits an unspent remainder is simply
+// allowed to run further before it fires.
+func (t *mayflyTracker) beginRound(evalCap int, cancel context.CancelFunc) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.evalCap = evalCap
+	t.cancelRound = cancel
+	t.capped = false
+}
+
+// roundWasCapped reports whether the evaluation cap is what cancelled the
+// round that just ended, as opposed to the caller or the deadline.
+func (t *mayflyTracker) roundWasCapped() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.capped
+}
+
+// evaluationCount is what the run has spent so far, including the baseline
+// evaluation of the caller's starting point.
+func (t *mayflyTracker) evaluationCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	return t.evals
+}
+
+// finishCappedRound folds a round the cap cut short into the run's totals.
+// Mayfly returns no result for a cancelled round, so the iteration count is
+// the one the progress observer last saw, and the evaluations are already
+// counted by the adapter rather than read back off a result.
+func (t *mayflyTracker) finishCappedRound() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.completedIterations = t.iterations
+	t.cancelRound = nil
+}
+
 // finishRound folds one completed round's totals into the run's, so the next
 // round's per-round numbering continues where this one stopped.
 func (t *mayflyTracker) finishRound(res *mayfly.Result) {
@@ -771,6 +982,7 @@ func (t *mayflyTracker) finishRound(res *mayfly.Result) {
 	t.completedIterations += res.IterationCount
 	t.libraryEvals += res.FuncEvalCount
 	t.iterations = t.completedIterations
+	t.cancelRound = nil
 }
 
 // normalizedBest is the running best expressed in the unit cube mayfly
