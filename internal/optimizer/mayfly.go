@@ -224,10 +224,11 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 		//
 		// Round zero keeps the resolved seed, so the seed that is reported and
 		// checkpointed still reproduces the run from its beginning. Later
-		// rounds count downwards, which keeps them clear of the warm-population
-		// streams below: those count upwards from resolved.Seed + 1, and two
-		// generators built from one seed produce one sequence.
-		roundSeed := resolved.Seed - int64(round)
+		// rounds mix the seed with the round rather than offsetting it, which
+		// keeps them clear both of the warm-population streams below and of
+		// every other run's rounds; roundStream says why an offset is not
+		// enough.
+		roundSeed := roundStream(resolved.Seed, round)
 		cfg.Seed = &roundSeed
 
 		options := []mayfly.RunOption{mayfly.WithProgressObserver(tracker.observe)}
@@ -251,7 +252,7 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 			// start as pairs of identical mayflies. The stream is derived from
 			// the run's seed rather than taken from cfg.Rand, which mayfly
 			// owns from here on.
-			rng := rand.New(rand.NewSource(resolved.Seed + int64(round) + 1))
+			rng := rand.New(rand.NewSource(warmStream(resolved.Seed, round)))
 			fraction, sigma := o.seedProfile()
 			options = append(options, mayfly.WithInitialPopulation(
 				seedPopulation(warmSeed, cfg.NPop, fraction, sigma, rng),

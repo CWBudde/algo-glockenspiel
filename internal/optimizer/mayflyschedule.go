@@ -107,3 +107,52 @@ func (s mayflySchedule) shortestRound(total int) int {
 func shortestBudget(budgets []int) int {
 	return budgets[len(budgets)-1]
 }
+
+// roundStream and warmStream derive a round's random streams from the run's
+// seed.
+//
+// The obvious derivations -- seed-round for the round and seed+round+1 for the
+// warm population -- keep a single run's streams apart from each other, which
+// is all they were written to do. They do not keep two runs apart. A campaign
+// block's seed is SeedBase+block, so consecutive blocks differ by one, and an
+// arithmetic offset makes block b's round r the same stream as block b+1's
+// round r+1: a sixteen-round arm's twelve blocks then share fourteen of their
+// fifteen restarts and are not the independent samples a paired design counts
+// them as. Phase 8.6 found two blocks of mayfly-r16 writing a bit-identical
+// preset that way.
+//
+// Mixing instead of offsetting removes the coupling: adjacent seeds produce
+// unrelated streams, and the two families cannot collide with each other
+// because the label's low bit separates them. Round zero keeps the resolved
+// seed unchanged, so the seed a run reports and checkpoints still reproduces
+// it from the beginning.
+func roundStream(base int64, round int) int64 {
+	if round == 0 {
+		return base
+	}
+
+	return mixSeed(base, uint64(round)<<1)
+}
+
+func warmStream(base int64, round int) int64 {
+	return mixSeed(base, uint64(round)<<1|1)
+}
+
+// mixSeed is splitmix64 over the base seed and a label. The result is forced
+// positive and non-zero because a zero seed means "choose one" everywhere else
+// in this package and a derived stream must never mean that.
+func mixSeed(base int64, label uint64) int64 {
+	x := uint64(base)*0x9E3779B97F4A7C15 + label*0xBF58476D1CE4E5B9
+	x ^= x >> 30
+	x *= 0xBF58476D1CE4E5B9
+	x ^= x >> 27
+	x *= 0x94D049BB133111EB
+	x ^= x >> 31
+
+	seed := int64(x >> 1)
+	if seed == 0 {
+		return 1
+	}
+
+	return seed
+}

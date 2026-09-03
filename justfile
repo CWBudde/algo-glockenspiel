@@ -144,7 +144,7 @@ campaign-analyze DESIGN *ARGS:
     ./out/campaign/bin/glockenspiel-campaign analyze --dir out/campaign/{{ DESIGN }} \
         --out out/campaign/{{ DESIGN }}/report.md {{ ARGS }}
 
-# The smoke campaign is a wiring check and not a measurement: four jobs of 300
+# The smoke campaign is a wiring check and not a measurement: four jobs of 1,200
 # evaluations on the short synthetic reference say that plan, run, collect and
 # analyze agree about the files between them, and say nothing about which engine is
 # better. The directory is removed first because `plan` refuses to overwrite a
