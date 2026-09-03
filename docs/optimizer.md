@@ -271,9 +271,13 @@ the library refuses a `MaxEvaluations` below `Lambda`; the loop then stops with
 `max_evaluations`. `Validate` rejects a negative growth and a growth between zero and one.
 
 The seed is reported through `OnResolve` the way Mayfly's is, and zero means "choose one and say
-which". Run _k_ uses `seed + k` for the library's stream and `seed - k - 1` for the cold mean's
-draw, so a single restart can be reproduced on its own without the two generators sharing a
-seed and replaying one sequence. `Progress.Restart` names the run in progress and
+which". Run _k_ draws its library stream and its cold mean from two streams mixed out of the
+reported seed, so a single restart can be reproduced on its own without the two generators
+sharing a seed and replaying one sequence. The mixing, rather than the `seed + k` and
+`seed - k - 1` offsets it replaced, is what keeps two runs apart as well as two streams: with an
+offset, a run seeded _s_ and a run seeded _s+1_ share every restart but one, which silently
+destroys the independence a paired campaign block depends on. `internal/optimizer/randomstream.go`
+carries the reasoning, and Mayfly's rounds use the same derivation. `Progress.Restart` names the run in progress and
 `Result.Restarts` counts the runs completed. `Result.Converged` is true only when `RestartLimit`
 ended the loop and the last run stopped on a Hansen criterion: a loop the clock stopped has no
 claim on convergence, whatever its final run ended on.

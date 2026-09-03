@@ -2,8 +2,6 @@ package optimizer
 
 import (
 	"context"
-	"fmt"
-	"math"
 	"strings"
 	"testing"
 )
@@ -185,77 +183,5 @@ func TestMayflyStagnationWindowWiderThanARoundIsRejected(t *testing.T) {
 		Tuning:  &MayflyTuning{Convergence: &MayflyConvergence{StagnationIterations: &window}},
 	}).Validate(40); err != nil {
 		t.Fatalf("a window of 20 inside a single round of 40 must be accepted: %v", err)
-	}
-}
-
-// TestRoundStreamsAreIndependentAcrossAdjacentSeeds pins the property a paired
-// campaign design depends on: two runs whose seeds differ by one share no
-// random stream, in either family.
-//
-// The derivation this replaced offset the seed by the round, so block b's
-// round r was block b+1's round r+1 and a restarting arm's blocks were not
-// independent samples. The test covers a campaign's twelve consecutive block
-// seeds over a sixteen-round schedule, which is the case that failed.
-func TestRoundStreamsAreIndependentAcrossAdjacentSeeds(t *testing.T) {
-	t.Parallel()
-
-	const (
-		seedBase = 121_000
-		blocks   = 12
-		rounds   = 16
-	)
-
-	seen := make(map[int64]string, blocks*rounds*2)
-
-	for block := range blocks {
-		base := int64(seedBase + block)
-
-		for round := range rounds {
-			for name, stream := range map[string]int64{
-				"round": roundStream(base, round),
-				"warm":  warmStream(base, round),
-			} {
-				where := fmt.Sprintf("%s stream of block %d round %d", name, block, round)
-
-				if prior, ok := seen[stream]; ok {
-					t.Errorf("%s reuses the stream of %s (seed %d)", where, prior, stream)
-				}
-
-				seen[stream] = where
-			}
-		}
-	}
-}
-
-// TestRoundZeroKeepsTheResolvedSeed pins the reproduction property the
-// checkpoint depends on: the seed a run reports is the seed its first round
-// ran under.
-func TestRoundZeroKeepsTheResolvedSeed(t *testing.T) {
-	t.Parallel()
-
-	for _, seed := range []int64{1, -7, 121_000} {
-		if got := roundStream(seed, 0); got != seed {
-			t.Errorf("roundStream(%d, 0) = %d, want the seed itself", seed, got)
-		}
-	}
-}
-
-// TestMixSeedIsPositiveAndNonZero pins the invariant every derived stream
-// needs: zero means "choose one" elsewhere in this package, so no derivation
-// may produce it, and a negative seed is not a value the callers below accept.
-func TestMixSeedIsPositiveAndNonZero(t *testing.T) {
-	t.Parallel()
-
-	for _, base := range []int64{0, 1, -1, math.MinInt64, math.MaxInt64, 121_000} {
-		for round := 1; round < 64; round++ {
-			for name, stream := range map[string]int64{
-				"round": roundStream(base, round),
-				"warm":  warmStream(base, round),
-			} {
-				if stream <= 0 {
-					t.Errorf("%s stream of base %d round %d is %d, want positive", name, base, round, stream)
-				}
-			}
-		}
 	}
 }

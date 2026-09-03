@@ -64,20 +64,52 @@ bench-arm64 *ARGS:
 # The modes come from the reference's partials rather than the starting preset,
 # so the result is a v2 preset with as many modes as the analysis lists.
 
-# Re-fit the shipped default preset against its reference recording
+# The refit recipes name the sep-cmaes-r arm of Phase 8.6's engine-shape campaign:
+# separable CMA-ES restarting until the evaluation budget is spent, at a per-run cap
+# of 4,800, with no population ladder. That is the shape the CLI already defaults to,
+# and the campaign changed no default -- block covariance lost twelve blocks of twelve
+# and no arm beat mayfly-r16, so the promotion rule kept what was there
+# (docs/training.md, "Engine shape").
 #
-# This is the default pipeline as of Phase 8.4: CMA-ES restarting until the time
-# budget is spent, followed by the local polish stage. --optimizer is left out
-# on purpose, so the recipe follows the CLI default rather than pinning a
-# backend of its own.
+# --cmaes-lambda-growth 0 is written out rather than left off: the campaign measured
+# the doubling ladder returning the first run's best in twelve blocks of twelve, so a
+# fixed population here is a recorded decision and not an unexamined default.
+#
+# The budget is evaluations, not time, so a rerun at a fixed seed reproduces the fit
+# bit for bit at one worker width. Twenty-five restarts of 4,800: the campaign's
+# restarting arms took their best from a later restart in eleven blocks of twelve and
+# plateaued at 53% of a 24,000 budget, so more budget is worth more restarts.
+#
+# One run is not the best a seed sweep reaches. Pass --seed N through the recipe and
+# keep the lowest score if a preset is going to be shipped; docs/training.md records
+# what the spread across seeds is.
+
+# Re-fit the shipped default preset against its reference recording
 refit-default *ARGS:
     go run ./cmd/glockenspiel fit \
         --reference testdata/reference/legacy_synth_a4.wav \
         --output out/refit/default.json \
-        --max-iter 100000 --time-budget 8m \
-        --polish cmaes \
+        --max-iter 100000 --max-evals 120000 \
+        --cmaes-run-evals 4800 --cmaes-lambda-growth 0 \
+        --polish cmaes --seed 1 \
         --sample-rate 44100 --note 69 --velocity 100 \
         --work-dir out/refit {{ ARGS }}
+
+# The recorded-bar refit runs at note 72, the recording's own pitch, so nothing needs
+# a hand retune afterwards. The shipped recorded-bar.json was fitted at note 69 and
+# then multiplied by 1.667 by hand, which is the step Phase 8.6 exists to stop
+# repeating.
+
+# Re-fit the recorded-bar preset against the C5 room recording
+refit-recorded *ARGS:
+    go run ./cmd/glockenspiel fit \
+        --reference testdata/reference/glockenspiel_c5.wav \
+        --output out/refit/recorded-bar.json \
+        --max-iter 100000 --max-evals 120000 \
+        --cmaes-run-evals 4800 --cmaes-lambda-growth 0 \
+        --polish cmaes --seed 1 \
+        --sample-rate 44100 --note 72 --velocity 100 \
+        --work-dir out/refit-recorded {{ ARGS }}
 
 # Re-fit the shipped default preset with Mayfly, the pre-8.4 recipe
 #

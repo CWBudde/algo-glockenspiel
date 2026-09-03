@@ -95,7 +95,7 @@ type ResolvedCMAES struct {
 	// resolve report shows the ladder rather than a blank.
 	LambdaGrowth float64
 	// Seed is the value run zero's generator was constructed from, never zero.
-	// Run k uses Seed + k.
+	// Run k uses a stream mixed out of Seed; run 0 uses Seed itself.
 	Seed int64
 	// Sigma is the initial step size in the unit cube.
 	Sigma float64
@@ -235,14 +235,14 @@ func (o *CMAESOptimizer) runRestarts(
 		// cold: a uniform mean makes it independent of the basin the previous
 		// runs settled in, which is the whole point of a restart.
 		//
-		// The mean's seed counts downwards from below the resolved seed, which
-		// keeps it clear of the library's own streams: those count upwards from
-		// resolved.Seed, and two generators built from one seed produce one
-		// sequence rather than two independent ones. It is still derived from
-		// the reported seed, so a restart is reproducible on its own.
+		// The mean's stream is mixed out of the resolved seed rather than
+		// offset from it, which keeps it clear both of the library's own
+		// streams and of every other run's; seed.go says why an offset is not
+		// enough. It is still a pure function of the reported seed, so a
+		// restart is reproducible on its own.
 		mean := normalizedInitial
 		if completed > 0 {
-			mean = uniformMean(len(normalizedInitial), resolved.Seed-int64(completed)-1)
+			mean = uniformMean(len(normalizedInitial), derivedSeed(resolved.Seed, streamColdMean, completed))
 		}
 
 		res, err := o.runOnce(ctx, tracker, resolved, mean, opts, completed)
@@ -437,8 +437,10 @@ func (o *CMAESOptimizer) config(resolved ResolvedCMAES, dims, iterations, restar
 	cfg.EnableParallel = true
 
 	// Each run gets its own seed so that a restart is reproducible on its own,
-	// and so that two cold runs do not replay one trajectory.
-	seed := resolved.Seed + int64(restart)
+	// and so that two cold runs do not replay one trajectory -- neither within
+	// this run nor across two runs whose seeds are adjacent, which is what
+	// seed.go's mixing is for. Run zero keeps the resolved seed.
+	seed := derivedSeed(resolved.Seed, streamPrimary, restart)
 	cfg.Seed = &seed
 
 	return cfg
