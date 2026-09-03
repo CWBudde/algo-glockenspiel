@@ -64,61 +64,72 @@ bench-arm64 *ARGS:
 # The modes come from the reference's partials rather than the starting preset,
 # so the result is a v2 preset with as many modes as the analysis lists.
 
-# The refit recipes name the sep-cmaes-r arm of Phase 8.6's engine-shape campaign:
-# separable CMA-ES restarting until the evaluation budget is spent, at a per-run cap
-# of 4,800, with no population ladder. That is the shape the CLI already defaults to,
-# and the campaign changed no default -- block covariance lost twelve blocks of twelve
-# and no arm beat mayfly-r16, so the promotion rule kept what was there
-# (docs/training.md, "Engine shape").
+# The refit recipes name the arm Phase 8.6's engine-shape campaign promoted:
+# Mayfly in one warm round from the reference's own partials plus fifteen cold
+# restarts. It beat separable CMA-ES by 0.040 of score over twelve paired blocks
+# on the C5 recording (p = 0.002 after Holm) and its spread across seeds is a
+# fraction of CMA-ES's on both references. docs/training.md holds the tables.
 #
-# --cmaes-lambda-growth 0 is written out rather than left off: the campaign measured
-# the doubling ladder returning the first run's best in twelve blocks of twelve, so a
-# fixed population here is a recorded decision and not an unexamined default.
+# Since it is also the CLI default now, --optimizer is left out on purpose: the
+# recipe follows the default rather than pinning a backend of its own, so a
+# later measured change to the default reaches these recipes too. The round
+# schedule and population are written out anyway, because a recipe that ships a
+# preset has to say what produced it.
 #
-# The budget is evaluations, not time, so a rerun at a fixed seed reproduces the fit
-# bit for bit at one worker width. Twenty-five restarts of 4,800: the campaign's
-# restarting arms took their best from a later restart in eleven blocks of twelve and
-# plateaued at 53% of a 24,000 budget, so more budget is worth more restarts.
+# --time-budget 0 removes the clock, so --max-evals is what ends the run and a
+# rerun at a fixed seed reproduces the fit bit for bit at one worker width. That
+# is the whole point: the shipped recorded-bar.json had no recorded command at
+# all. --max-iter sizes the sixteen rounds against the budget, at the measured
+# 43.05 evaluations an iteration costs, with a tenth of headroom so the
+# evaluation cap is what stops the run rather than the iteration cap.
 #
-# One run is not the best a seed sweep reaches. Pass --seed N through the recipe and
-# keep the lowest score if a preset is going to be shipped; docs/training.md records
-# what the spread across seeds is.
+# 120,000 evaluations is five times the campaign's budget, spent on more cold
+# restarts: the campaign's best came from a cold round in eleven blocks of
+# twelve, so more budget is worth more restarts.
+#
+# One run is not the best a seed sweep reaches -- on the C5 recording the spread
+# across seeds is wider than the gap between engines. Pass --seed N and keep the
+# lowest score if a preset is going to be shipped.
 
 # Re-fit the shipped default preset against its reference recording
-refit-default *ARGS:
-    go run ./cmd/glockenspiel fit \
+refit-default *ARGS: build
+    ./bin/glockenspiel fit \
         --reference testdata/reference/legacy_synth_a4.wav \
         --output out/refit/default.json \
-        --max-iter 100000 --max-evals 120000 \
-        --cmaes-run-evals 4800 --cmaes-lambda-growth 0 \
+        --mayfly-pop 10 --mayfly-epochs 1 --mayfly-restarts 15 \
+        --time-budget 0 --max-evals 120000 --max-iter 3067 \
         --polish cmaes --seed 1 \
         --sample-rate 44100 --note 69 --velocity 100 \
         --work-dir out/refit {{ ARGS }}
 
-# The recorded-bar refit runs at note 72, the recording's own pitch, so nothing needs
-# a hand retune afterwards. The shipped recorded-bar.json was fitted at note 69 and
-# then multiplied by 1.667 by hand, which is the step Phase 8.6 exists to stop
-# repeating.
+# The recorded-bar refit runs at note 72, the recording's own pitch, so nothing
+# needs a hand retune afterwards. The shipped recorded-bar.json was fitted at
+# note 69 and then multiplied by 1.667 by hand, which is the step Phase 8.6
+# exists to stop repeating.
 
 # Re-fit the recorded-bar preset against the C5 room recording
-refit-recorded *ARGS:
-    go run ./cmd/glockenspiel fit \
+refit-recorded *ARGS: build
+    ./bin/glockenspiel fit \
         --reference testdata/reference/glockenspiel_c5.wav \
         --output out/refit/recorded-bar.json \
-        --max-iter 100000 --max-evals 120000 \
-        --cmaes-run-evals 4800 --cmaes-lambda-growth 0 \
+        --mayfly-pop 10 --mayfly-epochs 1 --mayfly-restarts 15 \
+        --time-budget 0 --max-evals 120000 --max-iter 3067 \
         --polish cmaes --seed 1 \
         --sample-rate 44100 --note 72 --velocity 100 \
         --work-dir out/refit-recorded {{ ARGS }}
 
-# Re-fit the shipped default preset with Mayfly, the pre-8.4 recipe
-#
-# Kept as a Mayfly recipe so the figures recorded under it stay reproducible.
+# The pre-8.4 Mayfly recipe: one round of a thirty-strong swarm on a wall-clock
+# budget. It is kept as the shape, not as a reproduction -- the figures recorded
+# under it do not come back, because Mayfly moved to v0.7.1 and Phase 8.6
+# changed how a round's random streams are derived. Use refit-default for
+# anything that will be shipped.
+
+# Re-fit the default preset with the pre-8.4 single-round Mayfly shape
 refit-default-mayfly *ARGS:
     go run ./cmd/glockenspiel fit \
         --reference testdata/reference/legacy_synth_a4.wav \
         --output out/refit/default-mayfly.json \
-        --optimizer mayfly --mayfly-pop 30 --seed 1 \
+        --optimizer mayfly --mayfly-pop 30 --mayfly-restarts 0 --seed 1 \
         --max-iter 100000 --time-budget 8m \
         --sample-rate 44100 --note 69 --velocity 100 \
         --work-dir out/refit-mayfly {{ ARGS }}

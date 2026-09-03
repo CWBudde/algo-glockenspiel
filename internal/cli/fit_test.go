@@ -501,10 +501,12 @@ func TestFitCmdFlags(t *testing.T) {
 	}
 
 	for name, want := range map[string]string{
-		"mayfly-tuning":     "",
-		"mayfly-preset":     "",
-		"mayfly-epochs":     "1",
-		"mayfly-restarts":   "0",
+		"mayfly-tuning": "",
+		"mayfly-preset": "",
+		"mayfly-epochs": "1",
+		// The engine-shape arm Phase 8.6 promoted: one warm round and fifteen
+		// cold restarts. TestFitCmdDefaultsToTheMeasuredShape carries the why.
+		"mayfly-restarts":   "15",
 		"mayfly-stagnation": "0",
 		// Three-way flags: their sentinel defaults are legal values, so
 		// "not given" is read off Changed rather than off the value.

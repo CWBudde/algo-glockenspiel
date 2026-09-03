@@ -112,23 +112,35 @@ type fitOptions struct {
 
 func newFitCmd() *cobra.Command {
 	options := fitOptions{
-		note:             69,
-		velocity:         100,
-		sampleRate:       44100,
-		optimizerName:    "cmaes",
-		maxIter:          100,
-		timeBudget:       30 * time.Second,
-		reportEvery:      10,
-		checkpointEvery:  1,
-		workDir:          filepath.FromSlash("out/fit"),
-		resume:           false,
-		metric:           string(optimizer.MetricBalanced),
-		align:            true,
-		normalizeGain:    false,
-		mayflyVariant:    "desma",
-		mayflyPop:        10,
-		mayflyEpochs:     1,
-		mayflyRestarts:   0,
+		note:       69,
+		velocity:   100,
+		sampleRate: 44100,
+		// Mayfly in the engine-shape arm's round schedule is the default
+		// because Phase 8.6's campaign measured it: it beat separable CMA-ES
+		// by 0.040 of score over twelve paired blocks on the C5 recording
+		// (p = 0.002 after Holm) and, on both references, its spread across
+		// seeds is a fraction of CMA-ES's, which is what a blind default is
+		// judged on. docs/training.md holds the tables.
+		optimizerName: "mayfly",
+		// Sixteen rounds need room to anneal: the round schedule splits this
+		// evenly, so a hundred iterations would give each round six. The
+		// default time budget usually stops a run before this binds.
+		maxIter:         640,
+		timeBudget:      30 * time.Second,
+		reportEvery:     10,
+		checkpointEvery: 1,
+		workDir:         filepath.FromSlash("out/fit"),
+		resume:          false,
+		metric:          string(optimizer.MetricBalanced),
+		align:           true,
+		normalizeGain:   false,
+		mayflyVariant:   "desma",
+		mayflyPop:       10,
+		mayflyEpochs:    1,
+		// One warm round from the analysis seed plus fifteen cold restarts:
+		// the engine-shape arm that won. The cold rounds are what find the
+		// answer -- the warm round held the best in one block of twelve.
+		mayflyRestarts:   15,
 		mayflyNC:         -1,
 		cmaesCovariance:  "separable",
 		cmaesSigma:       0.3,
@@ -141,17 +153,21 @@ func newFitCmd() *cobra.Command {
 		Use:   "fit",
 		Short: "Fit model parameters to a reference recording",
 		Long:  "Optimize model parameters against a target audio file and save the best-fitting preset.",
-		Example: `  # Fit A4 from the built-in preset with the default optimizer, CMA-ES
-  # restarting until the time budget is spent
+		Example: `  # Fit A4 from the built-in preset with the default optimizer: Mayfly in
+  # one warm round plus fifteen cold restarts, the shape Phase 8.6 measured
   glockenspiel fit --reference a4.wav --output out/a4.json
+
+  # Reproduce a campaign arm: no clock, so the evaluation cap is what stops it
+  glockenspiel fit --reference c5.wav --output out/c5.json --note 72 \
+    --time-budget 0 --max-evals 24000
 
   # Follow the search with a local polish stage under the polish profile
   glockenspiel fit --reference a4.wav --output out/a4.json \
     --time-budget 10m --polish cmaes
 
-  # Fit with Mayfly, a wall-clock budget and a narrowed search box
+  # Fit with separable CMA-ES instead, restarting until the budget is spent
   glockenspiel fit --reference a4.wav --output out/a4.json \
-    --optimizer mayfly --mayfly-pop 20 --time-budget 10m --bounds bounds/a4.json
+    --optimizer cmaes --cmaes-run-evals 4800 --time-budget 10m
 
   # Continue an interrupted run from its work directory
   glockenspiel fit --reference a4.wav --output out/a4.json --work-dir out/fit-a4 --resume`,
@@ -176,7 +192,9 @@ func newFitCmd() *cobra.Command {
 			"two backends can be compared on, because an evaluation is one render whichever "+
 			"backend spends it. A run may overrun it by at most one generation")
 	flags.Var(durationFlag{value: &options.timeBudget}, "time-budget",
-		"Optimization time budget as a Go duration such as 30s or 10m (a bare number is read as seconds)")
+		"Optimization time budget as a Go duration such as 30s or 10m (a bare number is read as seconds). "+
+			"Zero removes the clock, which is what makes --max-evals reproducible across machines; "+
+			"--max-iter or --max-evals must then bound the run")
 	flags.IntVar(&options.reportEvery, "report-every", options.reportEvery, "Write progress every N major iterations")
 	flags.IntVar(&options.checkpointEvery, "checkpoint-interval", options.checkpointEvery,
 		"Write a checkpoint once this many optimizer iterations have passed since the last one, "+
@@ -302,8 +320,13 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return fmt.Errorf("cmaes-run-evals must not be negative, got %d", options.cmaesRunEvals)
 	}
 
-	if options.timeBudget <= 0 {
-		return fmt.Errorf("time-budget must be positive, got %s", options.timeBudget)
+	// Zero means "no clock", which is how a campaign job runs and therefore the
+	// only way a hand-run fit reproduces one: a run the clock can stop spends a
+	// different number of evaluations on every machine, so --max-evals cannot
+	// bind while a time budget is also running. The search stays bounded
+	// whatever this is, because --max-iter is required to be positive above.
+	if options.timeBudget < 0 {
+		return fmt.Errorf("time-budget must not be negative, got %s", options.timeBudget)
 	}
 
 	if options.reportEvery < 0 {

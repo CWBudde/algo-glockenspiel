@@ -372,3 +372,58 @@ func intFieldFrom(t *testing.T, text, key string) int {
 
 	return value
 }
+
+// TestFitWithoutATimeBudgetStopsOnTheEvaluationCap is the property the refit
+// recipes depend on: with the clock removed, --max-evals is what ends the run,
+// so the same command on a slower machine spends the same budget and a
+// hand-run fit can reproduce a campaign arm.
+//
+// Before this, --time-budget had to be positive, so every CLI fit stopped on
+// the clock however its evaluation cap was set.
+func TestFitWithoutATimeBudgetStopsOnTheEvaluationCap(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+
+	cmd := &cobra.Command{}
+
+	var out bytes.Buffer
+
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+
+	options := cmaesFitOptions(referencePath, filepath.Join(dir, "fitted.json"), filepath.Join(dir, "work"))
+	options.timeBudget = 0
+	options.maxEvals = 200
+	options.maxIter = 100000
+	// No restart limit, so the evaluation cap is the only thing that can end
+	// the run: that is the shape a campaign arm has.
+	options.cmaesRestarts = 0
+	options.seed = 1
+
+	if err := runFit(cmd, options); err != nil {
+		t.Fatalf("runFit failed: %v\n%s", err, out.String())
+	}
+
+	if !strings.Contains(out.String(), "stop=max_evaluations") {
+		t.Fatalf("a fit with no time budget did not stop on its evaluation cap:\n%s", out.String())
+	}
+}
+
+// TestFitRefusesANegativeTimeBudget keeps zero from widening into "anything
+// goes": it means no clock, and a negative duration is still a mistake.
+func TestFitRefusesANegativeTimeBudget(t *testing.T) {
+	dir := t.TempDir()
+	referencePath, _, _ := writeFitReference(t, dir)
+
+	options := baseFitOptions(referencePath, filepath.Join(dir, "fitted.json"), filepath.Join(dir, "work"))
+	options.timeBudget = -time.Second
+
+	err := runFit(&cobra.Command{}, options)
+	if err == nil {
+		t.Fatal("a negative time budget was accepted")
+	}
+
+	if !strings.Contains(err.Error(), "must not be negative") {
+		t.Fatalf("the error does not name the problem: %v", err)
+	}
+}

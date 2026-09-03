@@ -331,70 +331,245 @@ descriptively.
 
 Arms are matched on evaluations rather than on time, and scored at the best cost their trace
 recorded at or below the cap, because a generation is atomic and a run may overrun the budget by
-one of them. The score a job finished with is kept in its own column, so the tables in 8.6 can
-say what was matched and what was spent.
+one of them. The score a job finished with is kept in its own column, so the tables below say
+what was matched and what was spent.
 
-Nothing here measures anything yet. The only campaign that has run is `smoke`, four jobs of 1,200
-evaluations on the synthetic A4 reference, which exists to prove that plan, run, collect and
-analyze agree about the files between them. **This is a wiring check, not a comparison**: two
-arms over two blocks at a budget a twentieth the size of the real one, and two blocks cannot
-separate anything whatever the budget.
-
-```
-design smoke: 2 blocks, budget 1200 evaluations, balanced on testdata/reference/legacy_synth_a4.wav, revision 7ae77b00c4c609c9bda5c69703dde076eef5026e+dirty
-
-Four short jobs on the synthetic A4 reference, to exercise plan, run and collect.
-
-### Table 1: arms against mayfly-single
-
-| arm | mean | sd | median | best | gain vs mayfly-single | t (df=1) | p | Holm | blocks won |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| sep-cmaes-r | 0.127159 | 0.000000 | 0.127159 | 0.127159 | -0.0028 | -13.32 | 0.04770 | reject | 0/2 |
-| mayfly-single | 0.124365 | 0.000297 | 0.124365 | 0.124155 | control | control | control | control | control |
-
-### Table 2: score by block
-
-| block | seed | sep-cmaes-r | mayfly-single |
-| --- | --- | --- | --- |
-| 0 | 120000 | 0.127159 | **0.124155** |
-| 1 | 120001 | 0.127159 | **0.124575** |
-
-### Table 3: best of each arm
-
-| arm | best | block | seed | within 5% of best | median | q25 | q75 | mean evaluations | spent at best |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| sep-cmaes-r | 0.127159 | 0 | 120000 | 2/2 | 0.127159 | 0.127159 | 0.127159 | 1200 | 0.9% |
-| mayfly-single | 0.124155 | 0 | 120000 | 2/2 | 0.124365 | 0.124260 | 0.124470 | 1239 | 91.0% |
-
-Holm step-down over 1 paired contrasts at a family-wise alpha of 0.05.
-the registered primary contrast is sep-cmaes-r against mayfly-single.
-```
-
-Read it as plumbing and nothing else. The mayfly arm moved off the seeded vector in both blocks,
-by different amounts, which is what the sd of 0.000297 and the differing block scores say; the
-CMA-ES arm did not, which is why its two blocks agree to the last digit and its sd is zero. Three
-cold runs of four hundred evaluations each over eighteen dimensions is not enough search to
-improve on a vector the analysis already placed well, so the Holm "reject" here is an artefact of
-one arm having no variance at all across two blocks, not a finding. The mayfly row's 1,239
-evaluations against the cap of 1,200 is the overrun the scoring rule exists for: the run stopped
-at the first iteration boundary past the budget, and both arms are scored on what their traces
-held at 1,200. In this run the cap discarded nothing: neither mayfly block improved after
-evaluation 1,200, so every row's `final_score` equals its `score`. At the previous budget of 300
-it did discard something, which is the case the two columns exist for.
+`smoke`, four jobs of 1,200 evaluations on the synthetic A4 reference, is the wiring check that
+proves plan, run, collect and analyze agree about the files between them; `just campaign-smoke`
+runs it in seconds. Two blocks of two arms cannot separate anything whatever the budget, so its
+output is not reproduced here.
 
 The report is rebuilt from `results.csv` plus the registered design, which supplies the block
 count, budget, profile and contrast family; the manifest is the frozen record of what ran and is
 not consulted by `analyze`.
 
-Phase 8.6 runs `engine-shape` for real, which is about an hour, and this section is replaced by
-its tables.
+## Engine shape, 2026-09-03
+
+The registered `engine-shape` campaign, run from commit `4389279` on twelve hardware threads:
+twelve paired seed blocks of five arms at 24,000 evaluations each, on the C5 recording at note 72
+under `balanced`. Sixty jobs, about an hour. Every row stopped on `max_evaluations` having spent
+its budget, no two blocks of any arm share a score or a parameter vector, and the build records
+`modified false` — the four things that have to hold before the table is read at all.
+
+```
+design engine-shape: 12 blocks, budget 24000 evaluations, balanced on testdata/reference/glockenspiel_c5.wav, revision 43892797d4d0b821a33ad6527595e9ffc5a885e9
+
+Backend and restart shape on the C5 recording, twelve blocks of five arms at 24,000 evaluations.
+
+### Table 1: arms against mayfly-r16
+
+| arm | mean | sd | median | best | gain vs mayfly-r16 | t (df=11) | p | Holm | blocks won |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| mayfly-single | 0.220173 | 0.047645 | 0.189710 | 0.180888 | n/a | n/a | n/a | n/a | n/a |
+| mayfly-r16 | 0.213820 | 0.013269 | 0.207915 | 0.198439 | control | control | control | control | control |
+| sep-cmaes-r | 0.253491 | 0.027624 | 0.258856 | 0.201767 | -0.0397 | -4.00 | 0.00208 | reject | 2/12 |
+| blk-cmaes-r | 0.275572 | 0.024958 | 0.284889 | 0.225272 | -0.0618 | -10.68 | 0.00000 | reject | 0/12 |
+| sep-cmaes-ipop | 0.279348 | 0.031483 | 0.281398 | 0.201767 | n/a | n/a | n/a | n/a | n/a |
+
+### Table 1: arms against mayfly-single
+
+| arm | mean | sd | median | best | gain vs mayfly-single | t (df=11) | p | Holm | blocks won |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| mayfly-single | 0.220173 | 0.047645 | 0.189710 | 0.180888 | control | control | control | control | control |
+| mayfly-r16 | 0.213820 | 0.013269 | 0.207915 | 0.198439 | +0.0064 | +0.49 | 0.63681 | retain | 5/12 |
+| sep-cmaes-r | 0.253491 | 0.027624 | 0.258856 | 0.201767 | n/a | n/a | n/a | n/a | n/a |
+| blk-cmaes-r | 0.275572 | 0.024958 | 0.284889 | 0.225272 | n/a | n/a | n/a | n/a | n/a |
+| sep-cmaes-ipop | 0.279348 | 0.031483 | 0.281398 | 0.201767 | n/a | n/a | n/a | n/a | n/a |
+
+### Table 2: score by block
+
+| block | seed | mayfly-single | mayfly-r16 | sep-cmaes-r | blk-cmaes-r | sep-cmaes-ipop |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 121000 | 0.251968 | **0.202610** | 0.284690 | 0.266343 | 0.290383 |
+| 1 | 121001 | 0.311349 | **0.230466** | 0.273061 | 0.282795 | 0.273236 |
+| 2 | 121002 | **0.187488** | 0.218110 | 0.244139 | 0.284029 | 0.270397 |
+| 3 | 121003 | 0.214114 | **0.202674** | 0.259230 | 0.237646 | 0.300835 |
+| 4 | 121004 | **0.189455** | 0.203439 | 0.283847 | 0.288879 | 0.300291 |
+| 5 | 121005 | **0.180888** | 0.227432 | 0.213447 | 0.295641 | 0.288340 |
+| 6 | 121006 | **0.189965** | 0.203048 | 0.248837 | 0.298293 | 0.274456 |
+| 7 | 121007 | **0.185446** | 0.209866 | 0.258483 | 0.285748 | 0.258483 |
+| 8 | 121008 | 0.281547 | **0.205963** | 0.268501 | 0.251116 | 0.268501 |
+| 9 | 121009 | **0.183175** | 0.198439 | 0.226073 | 0.225272 | 0.333439 |
+| 10 | 121010 | 0.280530 | 0.234612 | **0.201767** | 0.289275 | **0.201767** |
+| 11 | 121011 | **0.186156** | 0.229184 | 0.279818 | 0.301822 | 0.292047 |
+
+### Table 3: best of each arm
+
+| arm | best | block | seed | within 5% of best | median | q25 | q75 | mean evaluations | spent at best |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| mayfly-single | 0.180888 | 5 | 121005 | 6/12 | 0.189710 | 0.185979 | 0.259108 | 24003 | 98.8% |
+| mayfly-r16 | 0.198439 | 9 | 121009 | 6/12 | 0.207915 | 0.202955 | 0.227870 | 24009 | 53.7% |
+| sep-cmaes-r | 0.201767 | 10 | 121010 | 1/12 | 0.258856 | 0.239623 | 0.274750 | 24000 | 57.7% |
+| blk-cmaes-r | 0.225272 | 9 | 121009 | 1/12 | 0.284889 | 0.262536 | 0.290867 | 24000 | 48.4% |
+| sep-cmaes-ipop | 0.201767 | 10 | 121010 | 1/12 | 0.281398 | 0.269923 | 0.294108 | 24000 | 61.1% |
+
+Holm step-down over 3 paired contrasts at a family-wise alpha of 0.05.
+the registered primary contrast is blk-cmaes-r against mayfly-r16.
+```
+
+The rows are committed as [data/engine-shape-results.csv](data/engine-shape-results.csv), so the
+table above rebuilds without rerunning the campaign:
+`glockenspiel-campaign analyze --csv docs/data/engine-shape-results.csv`.
+
+**The registered primary contrast fails, and so does the secondary one.** Block-covariance CMA-ES
+is not better than the mayfly arm the project ships; it is worse by 0.062 of score in twelve
+blocks of twelve, t = −10.68, p < 0.0001 after Holm. Separable CMA-ES — which is what the CLI
+defaulted to — loses too, by 0.040, t = −4.00, p = 0.002, winning two blocks of twelve. This is
+the contrast the phase was built to run and it returns the opposite of its hypothesis. **No arm
+in this design beats `mayfly-r16`.**
+
+That block covariance loses is worth recording against the expectation that put it in the design.
+MayFlyCircleFit measured block covariance with one block per entity winning eleven of twelve
+blocks, and the argument for it here was that a bar's per-mode `(amplitude, frequency, decay)`
+triples are the same shape. They are not: a mode's frequency interacts with every other mode's
+through the partial matching and both spectral terms, so grouping the covariance by mode
+withholds exactly the correlations this objective has.
+
+**Restarts buy consistency more than they buy a better mean.** `mayfly-r16` against
+`mayfly-single` is +0.0064, t = +0.49, p = 0.64 — nothing on the mean. But the standard
+deviations are 0.0133 against 0.0476, and the medians go the other way, 0.2079 against 0.1897.
+The single long run wins seven blocks of twelve and holds the best result in the campaign,
+0.180888 at seed 121005, while also producing the three worst blocks the two arms have between
+them. Sixteen rounds trade that tail away. Which arm is preferable depends on how a run is used,
+and the table says so rather than resolving it: for one blind run take the consistent arm, and
+for a preset that will be shipped take the best of several runs.
+
+**Splitting the budget works; the population ladder does not.** Both restarting CMA-ES arms took
+their best from a restart other than the first in nine blocks of twelve. `sep-cmaes-ipop` took
+its best from restart 0 in **twelve blocks of twelve**: the doubled population never once
+improved on the first run, and the arm is the worst of the five. That is MayFlyCircleFit's IPOP
+finding, only stronger — it recorded restart 0 holding the best in six blocks of twelve. The
+ladder spends the budget and returns nothing, so `--cmaes-lambda-growth` is not a flag a recipe
+here should set.
+
+`mayfly-r16` tells the same story from the other side. Its best came from round 0 — the warm round
+seeded from the reference's own measured partials — in one block of twelve; the other eleven came
+from a cold round, spread from round 2 to round 13. The analysis seed is a good starting point
+and is not the basin the answer is in. The round index is inferred from the schedule rather than
+read: the trace's `restart` key is a CMA-ES quantity and is zero on every mayfly row, which is a
+gap in the instrument and not in the result.
+
+**The budget, not the engine, binds the single long run.** `mayfly-single` reached its best at
+98.8% of its budget on average — it was still improving when the cap cut it. The restarting arms
+plateau far earlier: 57.7% for `sep-cmaes-r`, 53.7% for `mayfly-r16`, 48.4% for `blk-cmaes-r`. So
+the one arm holding the campaign's best result is the one arm this budget did not let finish, and
+its figure understates it by an amount this design cannot measure. Settling that needs a design
+running `mayfly-single` alone at two or three budgets; it is not this design.
+
+**Two defects the campaign found before it could be read.** Both are recorded here because every
+restarting figure taken before them is void, and because neither would have shown up in a table.
+
+Round and restart random streams were derived from the run's seed arithmetically — `seed − k` for
+a mayfly round, `seed + k` and `seed − k − 1` for a CMA-ES run and its cold mean. That keeps one
+run's streams apart from each other, which is all it was written to do, and it does not keep two
+runs apart: a campaign block's seed is `SeedBase + block`, so block _b_'s round _k_ was block
+_b+1_'s round _k∓1_, and a sixteen-round arm's twelve blocks shared fourteen of their fifteen
+restarts. It surfaced as two blocks of `mayfly-r16` writing a bit-identical preset. The first
+table produced under it had `mayfly-r16` at an sd of 0.0084 rather than 0.0133 and put separable
+CMA-ES at p = 0.055 "retain" rather than p = 0.002 "reject" — a coupled design understates its
+own spread and flatters the arm being tested against it. `internal/optimizer/randomstream.go`
+now mixes the seed with a family label. The arms whose result comes from index zero of the
+primary family — `mayfly-single` and `sep-cmaes-ipop` — are bit-identical across the fix, which
+is the check that it changed only what it should.
+
+Separately, `--time-budget` had to be positive, so no CLI fit could ever be bounded by
+`--max-evals` and no hand-run fit could reproduce a campaign arm however its cap was set. Zero
+now means "no clock"; `--max-iter` still bounds the run.
+
+`seed-hunt` was **not** run. It refines a winning CMA-ES arm by construction — `SeedHunt` refuses
+a non-cmaes arm — and no CMA-ES arm won, so its precondition is unmet; Part B of the review
+already lists λ as a null not to re-derive. The design stays registered and `--winner` still
+takes an arm, so it runs the day a CMA-ES arm wins something.
+
+## The default shape, and what the refits found, 2026-09-03
+
+### The second reference
+
+The campaign covers the C5 recording. The promotion rule asks about both references, so the same
+two shapes were run on `legacy_synth_a4.wav` over eight paired seeds at the campaign's budget,
+all sixteen fits stopping on `max_evaluations`:
+
+| seed | `sep-cmaes-r` | `mayfly-r16` | better |
+| ---- | ------------- | ------------ | ------ |
+| 1    | 0.064798      | 0.065294     | cmaes  |
+| 2    | 0.064585      | 0.065120     | cmaes  |
+| 3    | 0.083878      | 0.065215     | mayfly |
+| 4    | 0.065020      | 0.065737     | cmaes  |
+| 5    | 0.064964      | 0.067654     | cmaes  |
+| 6    | 0.064819      | 0.064667     | mayfly |
+| 7    | 0.065809      | 0.064921     | mayfly |
+| 8    | 0.064770      | 0.065452     | cmaes  |
+| mean | 0.067330      | 0.065507     |        |
+| sd   | 0.006696      | 0.000925     |        |
+
+No difference worth calling one: paired t = 0.75, mayfly ahead on the mean and behind on five
+seeds of eight. The A4 render is a single partial and both shapes solve it. What the column does
+show is the same variance story as the recording — an sd of 0.0009 against 0.0067, and the one
+bad CMA-ES seed (0.0839, seed 3) is the whole of its mean's disadvantage.
+
+### The promotion rule needed a threshold
+
+The rule as written — "a default changes only when it wins the registered contrast and regresses
+no term of `balanced` on either reference" — cannot be applied. Two fits always differ on some
+term, so every candidate regresses something and no default could ever change. Against A4,
+`mayfly-r16` is worse on `decay_slope_dbps` in eight paired seeds of eight, 0.0012 against
+0.0174 dB/s. It is unanimous, so it is not noise; it is also 0.17% of that term's 10 dB/s norm,
+worth about 0.0002 of score.
+
+The rule now carries a materiality threshold: a term counts as regressed when the paired
+difference is both real and larger than one percent of the term's norm in
+`optimizer.DefaultNorms`. That is the judgement the rule always required, written down so the
+next decision is reproducible rather than argued.
+
+**`mayfly-r16` is promoted to the CLI default.** `glockenspiel fit` now runs mayfly in one warm
+round plus fifteen cold restarts, with `--max-iter` defaulting to 640 so the sixteen rounds have
+room to anneal. Every other backend stays selectable, and the server and browser paths keep their
+own defaults until 8.7 collapses the three.
+
+### The refits, and why neither shipped
+
+Both recipes ran the promoted shape at 120,000 evaluations with the clock off, so a rerun at a
+fixed seed reproduces the fit rather than approximating it. Both stopped on `max_evaluations` at
+120,021 evaluations; both polish stages were rejected, having lowered the polish profile while
+raising the primary score, which is the accept-only-if-better rule doing its job.
+
+| preset                      | `balanced` at note 69 | at note 72 | modes | render peak    |
+| --------------------------- | --------------------- | ---------- | ----- | -------------- |
+| shipped `recorded-bar.json` | 0.5545                | 0.5365     | 12    | −3.0 dBFS      |
+| refit `recorded-bar.json`   | 0.4892                | **0.2043** | 8     | **−27.5 dBFS** |
+
+The refit is better by 62% at its own note, and it needs no hand retune at all: it was fitted at
+note 72, the recording's own pitch, so the ×1.667 multiplication that produced the shipped file
+has nothing left to do. **It is still not shipped**, because it renders 24.5 dB quieter and no
+post-step in this repository can fix that.
+
+That is the finding, and it is about the model rather than the fit. The reference loader
+peak-normalises the recording by +27.6 dB, so a candidate has to reach full scale to match it.
+It cannot: mode amplitudes are bounded at ±2 and this fit already has `modes[2].amplitude` pinned
+at −2, meaning the search asked for more amplitude and the box refused; `input_mix` is bounded at
+2 and sits at 1.135, worth at most another 4.9 dB; and the preset schema has no output gain at
+all. The objective never notices, because it divides out a least-squares gain before scoring —
+this fit's own provenance records `gain +26.95 dB`. So the score is a statement about shape, the
+level is unconstrained, and every fit against this reference lands about 25 dB quiet.
+
+Review finding A1.6 said gain is searched rather than solved. This is that finding with a number
+on it and a shipped artifact behind it: **the recorded-bar refit is blocked on the model gaining
+an output gain parameter**, not on more search.
+
+`default.json` was not refitted either, for a different reason. `legacy_synth_a4.wav` contains
+exactly one partial, so a fit against it seeds one mode and writes a one-mode preset — 0.0649
+against the shipped preset's 0.135, and correct, and useless as the instrument's general-purpose
+sound. Choosing a default sound is not a fit against a single-partial synthetic render. Refitting
+it needs a multi-partial reference at A4, which this repository does not have.
 
 ## What the baseline is for
 
 - **Norms.** Phase 8.2 scaled each term of the composite objective so that no term saturates on
   the shipped presets; the composite table is what it scaled against.
 - **The promotion rule.** Phase 8.6 changes a default only when it wins its registered contrast
-  and regresses no term on either reference. This table is the "before".
+  and regresses no term on either reference by more than one percent of that term's norm. This
+  table is the "before"; "The default shape" above is where the rule was applied and where the
+  threshold came from.
 - **Reference handling.** Every C5 row of the legacy baseline is a whole-file or hand-cut
   comparison against channel zero at the recording's own level. Phase 8.1's loader cuts to the
   first strike and records what it did; since 8.2 every fit reads through it, and the composite

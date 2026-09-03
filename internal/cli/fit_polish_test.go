@@ -14,22 +14,38 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// TestFitCmdDefaultsToCMAES pins the Phase 8.4 default: the standalone
-// Nelder-Mead run stops being what a bare `fit` does, while staying
-// selectable.
-func TestFitCmdDefaultsToCMAES(t *testing.T) {
+// TestFitCmdDefaultsToTheMeasuredShape pins the Phase 8.6 default: a bare
+// `fit` runs the arm the campaign measured, mayfly in one warm round plus
+// fifteen cold restarts, and every other backend stays selectable.
+//
+// It replaced the Phase 8.4 CMA-ES default, which was chosen before anything
+// had been measured on this objective. engine-shape put separable CMA-ES
+// 0.040 of score behind this arm over twelve paired blocks (p = 0.002 after
+// Holm); docs/training.md holds the tables.
+func TestFitCmdDefaultsToTheMeasuredShape(t *testing.T) {
 	cmd := newFitCmd()
 
-	if got := cmd.Flags().Lookup("optimizer").DefValue; got != "cmaes" {
-		t.Fatalf("expected cmaes as the default optimizer, got %q", got)
+	for flag, want := range map[string]string{
+		"optimizer":       "mayfly",
+		"mayfly-epochs":   "1",
+		"mayfly-restarts": "15",
+		"cmaes-restarts":  "0",
+	} {
+		if got := cmd.Flags().Lookup(flag).DefValue; got != want {
+			t.Errorf("--%s defaults to %q, want %q", flag, got, want)
+		}
 	}
 
-	if got := cmd.Flags().Lookup("cmaes-restarts").DefValue; got != "0" {
-		t.Fatalf("expected the default to restart until the budget is spent, got %q", got)
+	// Sixteen rounds split the iteration budget evenly, so the default has to
+	// leave each round enough to anneal over.
+	if got := cmd.Flags().Lookup("max-iter").DefValue; got != "640" {
+		t.Errorf("--max-iter defaults to %q, want 640 so sixteen rounds get forty each", got)
 	}
 
-	if got := cmd.Flags().Lookup("optimizer").Usage; !strings.Contains(got, "simple") {
-		t.Fatalf("expected simple to stay selectable in the usage text, got %q", got)
+	for _, backend := range []string{"simple", "cmaes"} {
+		if got := cmd.Flags().Lookup("optimizer").Usage; !strings.Contains(got, backend) {
+			t.Errorf("%s is no longer selectable in the usage text: %q", backend, got)
+		}
 	}
 }
 

@@ -3,7 +3,8 @@
 The fitting stack in `internal/optimizer` renders the current model against a reference WAV and
 scores each candidate with the composite objective below, or with one of the legacy single-term
 metrics. Three backends search it: `simple`, the gonum Nelder-Mead simplex, kept as the local
-one; `mayfly`, the swarm; and `cmaes`, which has been the default since Phase 8.4. A `--polish`
+one; `mayfly`, the swarm, the default since Phase 8.6 measured it against the other two; and
+`cmaes`, which was the default from 8.4 until then. A `--polish`
 stage may follow whichever ran. The CLI workflow and flags are documented in
 [user-guide.md](user-guide.md); this note records the less visible contracts that
 implementations and checkpoints depend on.

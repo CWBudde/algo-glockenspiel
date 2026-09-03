@@ -16,17 +16,17 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 
 ## Phase index
 
-| Phase | Title                        | Status                                      |
-| ----- | ---------------------------- | ------------------------------------------- |
-| 0     | Unblock                      | done                                        |
-| 1     | Configurable oscillator bank | done                                        |
-| 2     | Real SIMD on three targets   | done                                        |
-| 3     | Optimizer                    | done                                        |
-| 4     | Serve and the optimizer UI   | done                                        |
-| 5     | Web app                      | open — 5.1–5.6 done; payload size remains   |
-| 6     | Split out VST3               | done                                        |
-| 7     | Documentation                | open — 7.1 and 7.2 done                     |
-| 8     | Training                     | open — 8.0 to 8.5 done 2026-09-02, 8.6 next |
+| Phase | Title                        | Status                                    |
+| ----- | ---------------------------- | ----------------------------------------- |
+| 0     | Unblock                      | done                                      |
+| 1     | Configurable oscillator bank | done                                      |
+| 2     | Real SIMD on three targets   | done                                      |
+| 3     | Optimizer                    | done                                      |
+| 4     | Serve and the optimizer UI   | done                                      |
+| 5     | Web app                      | open — 5.1–5.6 done; payload size remains |
+| 6     | Split out VST3               | done                                      |
+| 7     | Documentation                | open — 7.1 and 7.2 done                   |
+| 8     | Training                     | open — 8.0 to 8.6 done, 8.7 next          |
 
 Closed phases are summarised here and documented in full under [docs/](docs/); the detail that
 was in this file has moved there rather than been dropped.
@@ -1087,18 +1087,53 @@ Goal: the instrument CircleFit's `scripts/cmaes-measurement` is, for this object
 
 ### Phase 8.6: Run it, decide, ship
 
-- [ ] Run both designs; write `docs/training.md` with the tables, the chosen default shape and
-      the pins line. Before reading the table, confirm every mayfly row's `stop_reason` is
-      `max_evaluations` and its `evaluations` within one generation of the budget; a row that
-      stopped on its iteration cap spent less than its budget and is not comparable with the arm
-      beside it. The refit recipes must name the winning arm's shape with `--max-evals`,
-      `--cmaes-run-evals` and `--cmaes-lambda-growth`, which is what lets a hand-run fit reproduce
-      a campaign arm.
-- [ ] Re-fit both shipped presets by recorded recipe (`just refit-default`,
-      `just refit-recorded`) and ship the file the fit wrote. If a retune is wanted, it becomes a
-      documented post-step, not a silent edit.
-- [ ] Promotion rule, from algo-piano: a default changes only when it wins the registered
-      contrast and regresses no term of `balanced` on either reference.
+- [x] Run both designs; write `docs/training.md` with the tables, the chosen default shape and
+      the pins line. Done 2026-09-03. `engine-shape` ran from commit `4389279`, sixty jobs in
+      about an hour, and every row stopped on `max_evaluations` having spent its budget. The
+      answer is the opposite of the design's hypothesis: block-covariance CMA-ES lost the
+      registered primary contrast in twelve blocks of twelve (−0.062, t = −10.68, p < 0.0001
+      after Holm) and separable CMA-ES lost too (−0.040, t = −4.00, p = 0.002, 2/12). Nothing
+      beat `mayfly-r16`. **`seed-hunt` was not run**, by ruling: it refines a _winning CMA-ES
+      arm_ by construction — `SeedHunt` refuses a non-cmaes arm — and there is no CMA-ES winner,
+      so its precondition is unmet. Part B of this phase already lists λ as a null not to
+      re-derive. The design stays registered and `--winner` still takes an arm, so it runs the
+      day a CMA-ES arm wins something.
+- [x] Two defects the campaign found before it could be read, both fixed and both invalidating
+      every restarting figure taken before them. Round and restart random streams were derived
+      from the run's seed arithmetically (`seed − k`, `seed + k`, `seed − k − 1`), which keeps one
+      run's streams apart but not two runs': a campaign block's seed is `SeedBase + block`, so
+      block _b_'s round _k_ was block _b+1_'s round _k∓1_ and a sixteen-round arm's twelve blocks
+      shared fourteen of their fifteen restarts. Two blocks of `mayfly-r16` wrote a bit-identical
+      preset, which is how it surfaced. `internal/optimizer/randomstream.go` now mixes the seed
+      with a family label; the arms that take their result from index zero are bit-identical
+      across the fix, which is the check that it is surgical. Separately, `--time-budget` had to
+      be positive, so no CLI fit could ever be bounded by `--max-evals` and no hand-run fit could
+      reproduce a campaign arm; zero now means "no clock".
+- [x] Re-fit both shipped presets by recorded recipe (`just refit-default`, `just refit-recorded`)
+      and ship the file the fit wrote. Done 2026-09-03; **neither file shipped**, for two
+      different reasons, both recorded in [docs/training.md](docs/training.md). Both recipes run
+      the promoted shape at 120,000 evaluations with the clock off, so a rerun at a fixed seed
+      reproduces the fit rather than approximating it, and they build `bin/glockenspiel` rather
+      than using `go run`, which leaves the provenance revision `unknown`. `refit-recorded` fits
+      at note 72, the recording's own pitch, so the ×1.667 hand retune has nothing left to do,
+      and it beats the shipped preset by 62% (0.204 against 0.537). It renders 24.5 dB quieter,
+      and no post-step here can fix that: amplitudes are bounded at ±2 with one already pinned
+      at the bound, `input_mix` is worth at most 4.9 dB more, and the schema has no output gain,
+      while the loader peak-normalises the reference by +27.6 dB and the objective divides the
+      difference out (`gain +26.95 dB` in the fit's own provenance). `default.json` was not
+      refitted at all: `legacy_synth_a4.wav` holds one partial, so a fit against it writes a
+      one-mode preset — correct, and useless as the instrument's general-purpose sound.
+- [x] Promotion rule, from algo-piano: a default changes only when it wins the registered
+      contrast and regresses no term of `balanced` on either reference. **Amended 2026-09-03 with
+      a materiality threshold**, because as written the rule cannot be applied: two fits always
+      differ on some term, so any candidate regresses something and no default could ever change.
+      A term now counts as regressed when the paired difference is both statistically real and
+      larger than one percent of that term's norm in `optimizer.DefaultNorms`. Under it,
+      `mayfly-r16` is promoted to the CLI default: it wins the registered contrast on the C5
+      recording, and its one unanimous regression on the A4 render — `decay_slope_dbps` worse in
+      eight paired seeds of eight — is 0.017 dB/s against a norm of 10, about 0.0002 of score.
+      The threshold is the rule's own judgement made explicit rather than left to whoever reads
+      the table.
 
 ### Phase 8.7: Serve and the Optimize tab
 
@@ -1120,6 +1155,16 @@ Goal: the UI a campaign needs — history, provenance, comparison.
       path; it does not run campaigns.
 
 ## Deferred
+
+- **An output gain the model can express** (review finding 6, promoted to a blocker on
+  2026-09-03). `BarParams` has no output gain, mode amplitudes are bounded at ±2 and `input_mix`
+  at 2, so a preset cannot be made louder than the modes reach. The reference loader
+  peak-normalises, the objective divides out a least-squares gain before scoring, and the two
+  together mean every fit against `glockenspiel_c5.wav` lands about 25 dB below the shipped
+  presets with nothing in its score saying so. This now blocks a shipped artifact: Phase 8.6's
+  `recorded-bar` refit beats the shipped preset by 62% on `balanced` and cannot replace it. The
+  fix is algo-piano's — solve the gain in closed form and store it — and it changes what a preset
+  means, so it does not belong inside 8.6.
 
 - **A two-sample step through the squared rotation matrix** (Phase 2.4). The recursion costs
   eight cycles per sample per block pair and this halves it, at the cost of a second
@@ -1160,7 +1205,7 @@ Goal: the UI a campaign needs — history, provenance, comparison.
 ## Resume Point
 
 Phases 0-4 and 6 are closed and summarised above; their detail is in [docs/](docs/). **Phases
-5, 7 and 8 are open.** Phase 8 is the one to work on.
+5, 7 and 8 are open.** Phase 8 is the one to work on, at 8.7.
 
 **Phase 8, training.** Reviewed on 2026-09-02; 8.0 is done the same day. `glockenspiel distance`
 prints every objective term for a written preset and `docs/training.md` holds the baseline for
@@ -1198,12 +1243,25 @@ designed comparison, every job leaves an `internal/fitrun` run directory, the ma
 design and the binary that planned it, and `engine-shape` and `seed-hunt` are registered.
 Only the four-job `smoke` design has been run, as a wiring check.
 
-**The next action is 8.6, running the designs and deciding**: run `engine-shape` (about an hour
-at 24,000 evaluations a job) and then `seed-hunt` around whichever CMA-ES arm won, write the
-tables into `docs/training.md`, re-fit the shipped preset by recipe under the winning shape, and
-apply the promotion rule: a default changes only when it wins its registered contrast and
-regresses no term on either reference. Nothing before 8.6 chose a default engine shape by
-measurement, and the smoke runs in `docs/training.md` are explicitly not that measurement.
+8.6 is done 2026-09-03, and it changed the default. `engine-shape` ran from commit `4389279`:
+sixty jobs, every row on `max_evaluations`, and the registered primary contrast **failed** —
+block-covariance CMA-ES lost twelve blocks of twelve (p < 0.0001 after Holm) and separable
+CMA-ES, the 8.4 default, lost too (p = 0.002). Nothing beat `mayfly-r16`, which is now what a
+bare `glockenspiel fit` runs. The promotion rule gained a materiality threshold on the way,
+because as written it could never fire. Getting there cost two campaign runs: round and restart
+random streams were derived from the seed by arithmetic, so consecutive campaign blocks shared
+almost all their restarts, and a coupled design understates its own spread — the first table put
+separable CMA-ES at "retain" where the fixed one puts it at "reject". `seed-hunt` was not run;
+it refines a winning CMA-ES arm and there is none. Both refits ran and **neither shipped**: the
+`recorded-bar` refit beats the shipped preset by 62% and renders 24.5 dB quieter with no way in
+the schema to fix it, which promoted "gain is searched, not solved" from a review finding to a
+blocker in `## Deferred`; `default.json`'s reference holds one partial, so fitting it writes a
+one-mode preset. [docs/training.md](docs/training.md) holds all of it.
+
+**The next action is 8.7, serve and the Optimize tab.** It also has a debt 8.6 named: the CLI
+default is now `mayfly` while the server and browser fit still choose their own, which is exactly
+the three-way duplication 8.7 collapses. Before that, an output gain is the one thing standing
+between a measured refit and a shipped preset.
 
 **Phase 5, payload size.** The one unaddressed sub-item. Adding the browser optimizer made the
 raw WASM larger, so this is now splitting or lazy-loading the Go payload rather than shaving

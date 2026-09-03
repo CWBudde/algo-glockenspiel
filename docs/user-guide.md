@@ -69,8 +69,9 @@ glockenspiel synth \
 
 The `fit` command optimizes preset parameters against a mono reference WAV.
 
-The default optimizer is `cmaes`, restarting until the budget is spent. A plain
-run needs no backend flag at all:
+The default optimizer is `mayfly` in one warm round plus fifteen cold restarts, which is the arm
+Phase 8.6's registered campaign measured as the best of five on the C5 recording
+([training.md](training.md)). A plain run needs no backend flag at all:
 
 ```bash
 glockenspiel fit \
@@ -146,7 +147,7 @@ glockenspiel fit \
 - `--note`: note number used when rendering candidates
 - `--velocity`: strike velocity for candidate renders
 - `--sample-rate`: must match the reference WAV sample rate
-- `--optimizer`: `simple`, `mayfly` or `cmaes` (the default since Phase 8.4; `simple` stays selectable)
+- `--optimizer`: `simple`, `mayfly` (the default since Phase 8.6, measured) or `cmaes`; all three stay selectable
 - `--metric`: a composite profile — `balanced` (the default), `placement` or `polish` — or a single legacy term, `rms`, `log` or `spectral`. See [Choosing Optimizer And Metric](#choosing-optimizer-and-metric)
 - `--downmix`: which channel of a multi-channel reference the fit sees, `first` (the default) or `mean`
 - `--window`: cut the reference to this length after its onset instead of where the strike ends; by default the loader cuts at a second event or where the tail stops falling
@@ -160,7 +161,7 @@ glockenspiel fit \
 - `--normalize-gain`: under a legacy metric, divide out the scalar gain that best matches the reference level, off by default. Use it when the reference level is unknown; it makes the model's amplitude parameters unidentifiable, so leave it off when the level is meaningful. A composite profile solves its gain in closed form regardless
 - `--report-every`: progress print interval, counted in the chosen optimizer's own iterations. The default is 10, and 1 under `mayfly`, because a mayfly iteration is a whole generation, roughly fifty renders, against about one for a simple major iteration
 - `--checkpoint-interval`: write a checkpoint once this many of the backend's own iterations have passed since the last one, counted in the same unit as `--max-iter` and independent of `--report-every`; `0` disables checkpointing entirely, including the final checkpoint. A backend reports on its own schedule, so the spacing is "at least this many" rather than exactly
-- `--seed`: the one random seed for every backend, Mayfly, CMA-ES and the polish stage alike. `0` (the default) picks a seed, prints it, and records it in the checkpoint, so the run stays reproducible and a resume continues the same stream. `--mayfly-seed` and `--cmaes-seed` remain as deprecated aliases that write the same option; combining one with `--seed` is an error. Run _k_ of a restarting CMA-ES fit uses `seed + k`
+- `--seed`: the one random seed for every backend, Mayfly, CMA-ES and the polish stage alike. `0` (the default) picks a seed, prints it, and records it in the checkpoint, so the run stays reproducible and a resume continues the same stream. `--mayfly-seed` and `--cmaes-seed` remain as deprecated aliases that write the same option; combining one with `--seed` is an error. Run _k_ of a restarting fit, and each Mayfly round, draws a stream mixed out of the seed rather than offset from it, so two fits whose seeds differ by one share no restart
 - `--workers`: how many goroutines evaluate candidates in parallel; `0` (the default) follows the machine's CPU count. The resolved width is printed, recorded in the checkpoint, and reused by `--resume` unless `--workers` is written again, so a fit continued on another machine reproduces the run it is continuing rather than the machine it lands on
 - `--work-dir`: stores checkpoints and `fitted_output.wav`, resolved relative to the current directory (default `out/fit`)
 - `--resume`: restart from the latest `checkpoint_*.json` in `work-dir`
