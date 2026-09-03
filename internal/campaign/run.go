@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
 )
@@ -57,6 +58,7 @@ func Run(ctx context.Context, dir string, log io.Writer, opts RunOptions) error 
 	}
 
 	ran := 0
+	tracker := newRunProgress(manifest.Jobs, opts)
 
 	for _, job := range manifest.Jobs {
 		if err := ctx.Err(); err != nil {
@@ -75,7 +77,8 @@ func Run(ctx context.Context, dir string, log io.Writer, opts RunOptions) error 
 		}
 
 		if state == jobFinished {
-			_, _ = fmt.Fprintf(log, "block %02d %-16s skipped, result.json exists\n", job.Block, job.Arm)
+			_, _ = fmt.Fprintf(log, "%s block %02d %-16s skipped, result.json exists\n",
+				tracker.done(0), job.Block, job.Arm)
 
 			continue
 		}
@@ -93,11 +96,11 @@ func Run(ctx context.Context, dir string, log io.Writer, opts RunOptions) error 
 				return fmt.Errorf("job %s: clear the cancelled run directory %q: %w", job.ID, jobPath, err)
 			}
 
-			_, _ = fmt.Fprintf(log, "block %02d %-16s repeating, the previous run was cancelled\n",
-				job.Block, job.Arm)
+			_, _ = fmt.Fprintf(log, "%s block %02d %-16s repeating, the previous run was cancelled\n",
+				tracker.position(), job.Block, job.Arm)
 		}
 
-		if err := runJob(ctx, manifest, job, jobPath, log); err != nil {
+		if err := runJob(ctx, manifest, job, jobPath, log, tracker); err != nil {
 			return err
 		}
 
@@ -205,7 +208,7 @@ func checkProvenance(manifest *Manifest) error {
 // fitrun writes the job's own log.txt, so nothing of the search's chatter is
 // passed up here: a sixty job campaign printing every progress report would
 // bury the one line per job that says how the campaign is going.
-func runJob(ctx context.Context, manifest *Manifest, job Job, dir string, log io.Writer) error {
+func runJob(ctx context.Context, manifest *Manifest, job Job, dir string, log io.Writer, tracker *runProgress) error {
 	design := manifest.Design
 
 	arm, err := design.ArmByName(job.Arm)
@@ -236,8 +239,68 @@ func runJob(ctx context.Context, manifest *Manifest, job Job, dir string, log io
 
 	summary := outcome.Summary
 
-	_, _ = fmt.Fprintf(log, "block %02d %-16s score=%.6f evals=%d restarts=%d elapsed=%.1fs\n",
-		job.Block, job.Arm, summary.Score, summary.Evaluations, summary.Restarts, summary.ElapsedSeconds)
+	_, _ = fmt.Fprintf(log, "%s block %02d %-16s score=%.6f evals=%d restarts=%d elapsed=%.1fs\n",
+		tracker.done(summary.ElapsedSeconds), job.Block, job.Arm,
+		summary.Score, summary.Evaluations, summary.Restarts, summary.ElapsedSeconds)
 
 	return nil
+}
+
+// runProgress is the position and the estimate the per-job lines carry.
+//
+// A campaign is sixty to ninety-six jobs of about a minute behind one line of
+// output each, and "block 04 sep-cmaes-r ..." says nothing about how much of
+// it is left. The prefix says which job of how many this is and, once a job
+// has actually been timed in this process, how long the rest should take. The
+// estimate comes from the mean of the jobs run here rather than from any
+// recorded figure, so a slower machine reports its own speed.
+type runProgress struct {
+	total   int
+	seen    int
+	timed   int
+	seconds float64
+}
+
+// newRunProgress counts the jobs this invocation will walk, which is every job
+// of the campaign unless OnlyBlock narrows it. Jobs already finished still
+// count: they are part of the campaign the operator is waiting for, and a
+// resumed run that showed only its own share would restart the numbering.
+func newRunProgress(jobs []Job, opts RunOptions) *runProgress {
+	total := 0
+
+	for _, job := range jobs {
+		if opts.OnlyBlock < 0 || job.Block == opts.OnlyBlock {
+			total++
+		}
+	}
+
+	return &runProgress{total: total}
+}
+
+// position is the prefix of a job that is about to run or be repeated.
+func (p *runProgress) position() string {
+	return fmt.Sprintf("[%d/%d]", p.seen+1, p.total)
+}
+
+// done advances the count and returns the prefix of a job that has finished.
+// A job that took no measured time -- one skipped because it was already
+// finished -- advances the position without moving the estimate.
+func (p *runProgress) done(seconds float64) string {
+	p.seen++
+
+	if seconds > 0 {
+		p.timed++
+		p.seconds += seconds
+	}
+
+	prefix := fmt.Sprintf("[%d/%d", p.seen, p.total)
+
+	if p.timed > 0 && p.seen < p.total {
+		mean := p.seconds / float64(p.timed)
+		left := time.Duration(mean * float64(p.total-p.seen) * float64(time.Second))
+
+		return fmt.Sprintf("%s, ~%s left]", prefix, left.Round(time.Second))
+	}
+
+	return prefix + "]"
 }

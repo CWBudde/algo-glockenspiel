@@ -410,3 +410,36 @@ func newVersionCmd() *cobra.Command {
 		},
 	}
 }
+
+// newStatusCmd reports how far a campaign has got.
+//
+// It reads only the files run has already written, so it is meant to be called
+// from a second shell while a campaign is in flight: sixty jobs of a minute
+// each behind one line of output apiece is otherwise an hour with nothing to
+// look at but a log tail that never says how much is left.
+func newStatusCmd() *cobra.Command {
+	var dir string
+
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Report a campaign's progress, safely while it runs",
+		Long: "Counts the jobs a run would skip, names the job in flight, and estimates what is left " +
+			"from the mean of the jobs already timed on this machine. It writes nothing.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			status, err := campaign.ReadStatus(dir)
+			if err != nil {
+				return err
+			}
+
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), campaign.RenderStatus(status))
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&dir, "dir", "", "campaign directory (required)")
+	_ = cmd.MarkFlagRequired("dir")
+
+	return cmd
+}

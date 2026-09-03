@@ -167,6 +167,10 @@ campaign-plan DESIGN *ARGS: campaign-build
 campaign-run DESIGN *ARGS:
     ./out/campaign/bin/glockenspiel-campaign run --dir out/campaign/{{ DESIGN }} {{ ARGS }}
 
+# Report a running campaign's progress; safe to call while `campaign-run` is going
+campaign-status DESIGN:
+    ./out/campaign/bin/glockenspiel-campaign status --dir out/campaign/{{ DESIGN }}
+
 # Write out/campaign/DESIGN/results.csv from the run directories
 campaign-collect DESIGN *ARGS:
     ./out/campaign/bin/glockenspiel-campaign collect --dir out/campaign/{{ DESIGN }} {{ ARGS }}

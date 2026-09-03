@@ -38,7 +38,7 @@ each backend reproduces its result to the bit across worker widths at a fixed se
 the width costs nothing and keeps the elapsed column a measure of the arm rather than of the
 machine's load.
 
-## The four commands
+## The five commands
 
 The recipes resolve their paths against the repository root, so run them from there.
 
@@ -46,6 +46,7 @@ The recipes resolve their paths against the repository root, so run them from th
 | ------- | ------------------------------ | --------------------------------------------------------------------------------- |
 | plan    | `just campaign-plan DESIGN`    | writes `out/campaign/DESIGN/manifest.json`, once                                  |
 | run     | `just campaign-run DESIGN`     | runs the jobs, skipping the finished ones                                         |
+| status  | `just campaign-status DESIGN`  | reports progress and what is left; safe to call while a run is going              |
 | collect | `just campaign-collect DESIGN` | writes `results.csv` from the run directories                                     |
 | analyze | `just campaign-analyze DESIGN` | rebuilds the report from `results.csv` and writes `out/campaign/DESIGN/report.md` |
 
@@ -63,6 +64,26 @@ is resumed. `collect` takes `--partial` to leave out the jobs that have not run.
 `--dir` or a `--csv` file that was archived on its own, and `--out` to write the Markdown as well
 as print it. `version` prints the build identity and the binary's SHA-256, which is what to check
 before resuming a campaign planned yesterday.
+
+### Watching a campaign
+
+`run` prints one line per job, prefixed with its position and, once a job on this machine has
+been timed, what is left: `[28/60, ~34m left] block 05 mayfly-r16 score=... elapsed=59.9s`. The
+estimate is the mean of the jobs run in this process, so a slower machine reports its own speed
+rather than a figure recorded somewhere else.
+
+`status` answers the same question from outside the process, which is what a campaign redirected
+to a log file needs:
+
+```
+just campaign-status engine-shape
+```
+
+It reads only files `run` has already written and writes nothing, so it is safe to call at any
+time. It counts the jobs a `run` would skip -- a job a cancellation cut is pending, not finished,
+by the same rule `run` resumes on -- names the job in flight, estimates the remainder, and prints
+each arm's best score so far. That last column is a progress indicator and not a result: an arm
+part way through its blocks has no error bar, and `analyze` is the only thing that reads a table.
 
 ## The run directory
 
