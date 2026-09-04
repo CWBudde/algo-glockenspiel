@@ -774,6 +774,19 @@ export interface BarParams {
   base_frequency: number;
   modes: ModeParams[];
   chebyshev: ChebyshevParams;
+
+  /**
+   * `output_gain_db`: the level the bar renders at, in dB. Zero is unity and
+   * the field is omitted when it is zero, so every document written before it
+   * existed decodes without it.
+   *
+   * A fit does not search this: the objective solves the level in closed form
+   * and subtracts it from every term, so level is a flat ridge with no gradient
+   * to follow. It is measured once from the finished render instead, which is
+   * why it is a v2-only field -- a loader that ignored it would play the preset
+   * at the wrong level rather than refuse it.
+   */
+  output_gain_db?: number;
 }
 
 /**

@@ -85,6 +85,24 @@ describe("scalarRows", () => {
     });
     expect(rows.find((row) => row.key === "input_mix")?.pin).toBeNull();
   });
+
+  it("shows output_gain_db as unity when the preset omits it", () => {
+    const rows = scalarRows(barParams(), indexPinned(undefined));
+    const gain = rows.find((row) => row.key === "output_gain_db");
+
+    expect(gain?.value).toBe(0);
+    expect(gain?.unit).toBe("dB");
+    expect(gain?.pin).toBeNull();
+  });
+
+  it("shows the output gain a fitted preset carries", () => {
+    const rows = scalarRows(
+      { ...barParams(), output_gain_db: -3.25 },
+      indexPinned(undefined),
+    );
+
+    expect(rows.find((row) => row.key === "output_gain_db")?.value).toBe(-3.25);
+  });
 });
 
 describe("harmonicGainRows", () => {

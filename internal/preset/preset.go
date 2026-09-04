@@ -185,6 +185,7 @@ func rejectV2Fields(data []byte) error {
 			Chebyshev struct {
 				Stage *json.RawMessage `json:"stage"`
 			} `json:"chebyshev"`
+			OutputGainDB *json.RawMessage `json:"output_gain_db"`
 		} `json:"parameters"`
 	}
 
@@ -200,6 +201,10 @@ func rejectV2Fields(data []byte) error {
 
 	if raw.Parameters.Chebyshev.Stage != nil {
 		return fmt.Errorf("chebyshev.stage needs version %s", VersionV2)
+	}
+
+	if raw.Parameters.OutputGainDB != nil {
+		return fmt.Errorf("output_gain_db needs version %s", VersionV2)
 	}
 
 	return nil
@@ -307,6 +312,10 @@ func validateV1(params *model.BarParams) error {
 
 	if params.Chebyshev.Stage != "" {
 		return fmt.Errorf("chebyshev.stage needs version %s", VersionV2)
+	}
+
+	if params.OutputGainDB != 0 {
+		return fmt.Errorf("output_gain_db needs version %s", VersionV2)
 	}
 
 	return nil

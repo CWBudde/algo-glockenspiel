@@ -228,12 +228,24 @@ var DefaultParamBounds = ParamBounds{
 // search space yet. Dropping the stage would silently re-render an
 // output-stage preset through the excitation-stage chain. The base frequency
 // is carried through for the reason given at scalarParameterCount.
+//
+// The output gain is carried for the same reason as the stage, and it is worth
+// spelling out because dropping it is quiet rather than loud. It is not a
+// search dimension -- the objective solves the level in closed form and
+// subtracts it from every term, so there is no gradient along it to follow --
+// but a decoded candidate still has to describe the same sound the template
+// does. When it did not, a preset carrying a gain rendered without one, and
+// since the objective divides the level out again the scores looked perfectly
+// normal: the only thing that moved was every level a caller read back, so
+// glockenspiel distance reported a fitted preset's render peak 28 dB below
+// where the preset actually plays.
 type ParamCodec struct {
 	modeCount        int
 	harmonicCount    int
 	chebyshevEnabled bool
 	chebyshevStage   model.ChebyshevStage
 	baseFrequency    float64
+	outputGainDB     float64
 	modeHarmonics    [][]float64
 	bounds           ParamBounds
 }
@@ -287,6 +299,7 @@ func newParamCodec(params *model.BarParams, bounds ParamBounds, strict bool) (*P
 		chebyshevEnabled: params.Chebyshev.Enabled,
 		chebyshevStage:   params.Chebyshev.Stage,
 		baseFrequency:    params.BaseFrequency,
+		outputGainDB:     params.OutputGainDB,
 		modeHarmonics:    modeHarmonics,
 		bounds:           bounds,
 	}, nil
@@ -480,6 +493,7 @@ func (c *ParamCodec) DecodeParams(encoded []float64) (*model.BarParams, error) {
 		InputMix:        bounded[0],
 		FilterFrequency: c.bounds.FilterFreq.Clamp(math.Pow(10, bounded[1])),
 		BaseFrequency:   c.baseFrequency,
+		OutputGainDB:    c.outputGainDB,
 		Modes:           make([]model.ModeParams, c.modeCount),
 		Chebyshev: model.ChebyshevParams{
 			Enabled:       c.chebyshevEnabled,

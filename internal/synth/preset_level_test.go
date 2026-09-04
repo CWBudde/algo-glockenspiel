@@ -24,9 +24,11 @@ import (
 // peak at a lower RMS than one fitted to a bar without. Matching the peaks is
 // what keeps a render from clipping at a sample rate the author did not pick;
 // what a preset then sounds like next to another one is a property of the bar.
+// The values live in level.go, because a fit now writes presets to this same
+// target and the two must not be able to drift apart.
 const (
-	wantBuiltinPresetPeakDBFS    = -3.0
-	builtinPresetPeakToleranceDB = 0.25
+	wantBuiltinPresetPeakDBFS    = PresetPeakTargetDBFS
+	builtinPresetPeakToleranceDB = PresetPeakToleranceDB
 )
 
 // TestBuiltinPresetsRenderNearMinusThreeDBFS renders every embedded preset at

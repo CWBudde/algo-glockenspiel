@@ -1350,7 +1350,11 @@ func TestRunFitSeedsTheModesFromTheReference(t *testing.T) {
 		t.Fatalf("the resumed run did not seed the checkpoint's one mode:\n%s", out.String())
 	}
 
-	// Keeping the template's modes is a choice, and it keeps the version.
+	// Keeping the template's modes is a choice, and the mode count is what it
+	// keeps. The version moves regardless, because every fit now writes the
+	// level it renders at and an output gain is a v2 field: a v1 loader that
+	// ignored it would play the preset at the wrong level rather than refuse
+	// it. See synth.ApplyOutputGain.
 	kept := baseFitOptions(referencePath, filepath.Join(dir, "kept.json"), filepath.Join(dir, "work-kept"))
 	kept.modes = optimizer.KeepTemplateModes
 
@@ -1365,8 +1369,16 @@ func TestRunFitSeedsTheModesFromTheReference(t *testing.T) {
 		t.Fatalf("load kept preset: %v", err)
 	}
 
-	if len(keptPreset.Parameters.Modes) != 4 || keptPreset.Version != preset.VersionV1 {
-		t.Fatalf("kept preset has %d modes in version %q, want the template's 4 in %q", len(keptPreset.Parameters.Modes), keptPreset.Version, preset.VersionV1)
+	if len(keptPreset.Parameters.Modes) != 4 {
+		t.Fatalf("kept preset has %d modes, want the template's 4", len(keptPreset.Parameters.Modes))
+	}
+
+	if keptPreset.Version != preset.VersionV2 {
+		t.Fatalf("kept preset is version %q, want %q: it carries an output gain", keptPreset.Version, preset.VersionV2)
+	}
+
+	if keptPreset.Parameters.OutputGainDB == 0 {
+		t.Fatal("kept preset carries no output gain, so nothing set the level it renders at")
 	}
 
 	if !strings.Contains(out.String(), "modes: keeping the preset's 4") {

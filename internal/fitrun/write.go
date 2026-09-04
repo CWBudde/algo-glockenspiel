@@ -3,6 +3,7 @@ package fitrun
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -215,6 +216,30 @@ func writeJSONFile(path string, value any) error {
 
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write %q: %w", path, err)
+	}
+
+	return nil
+}
+
+// setOutputGain writes the level the fitted preset renders at, and reports a
+// clamp on the writer.
+//
+// This is the step that stops a fit from shipping at whatever level it happened
+// to land on: the objective scores every candidate with the level solved in
+// closed form and subtracted, so level is a flat ridge the search wanders
+// along. See synth.ApplyOutputGain for what it measures and
+// synth.PresetPeakTargetDBFS for why the target is not the reference's own
+// level.
+func setOutputGain(fitted *preset.Preset, out io.Writer) error {
+	gainDB, clamped, err := synth.ApplyOutputGain(fitted)
+	if err != nil {
+		return err
+	}
+
+	if clamped {
+		_, _ = fmt.Fprintf(out,
+			"output gain: %+.2f dB, clamped at the bound; the fit renders far enough from the target "+
+				"that the preset stays off it\n", gainDB)
 	}
 
 	return nil

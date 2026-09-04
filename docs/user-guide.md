@@ -476,6 +476,7 @@ The top-level `parameters` object holds:
 - `input_mix`: amount of dry filtered excitation mixed into the resonant output
 - `filter_frequency`: lowpass cutoff for the excitation path, in Hz
 - `base_frequency`: reference tuning for the preset note. It never reaches the audio, and a fit writes the starting preset's value through rather than searching it
+- `output_gain_db`: v2 only, the level the bar renders at, in dB, bounded to ±60. Zero is unity and the field is omitted when it is zero, so a preset written without it renders exactly as it always did. A fit does not search this either: the objective solves the level in closed form and subtracts it from every term, leaving nothing to follow along it, so a fit measures the level from its finished render and writes it — targeting 3 dB below full scale at the preset's own note and velocity 127. It is a v2 field because a loader that ignored it would play the preset at the wrong level rather than refuse it
 - `modes`: the resonant partials, exactly four in v1 and one to 512 in v2
 - `chebyshev.enabled`: enables harmonic shaping
 - `chebyshev.stage`: v2 only, `excitation` (the v1 behaviour, and the default) or `output`

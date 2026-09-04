@@ -154,6 +154,9 @@ func TestV1RejectsV2OnlyFields(t *testing.T) {
 		"extra mode": func(p *preset.Preset) {
 			p.Parameters.Modes = append(p.Parameters.Modes, p.Parameters.Modes[0])
 		},
+		"output gain": func(p *preset.Preset) {
+			p.Parameters.OutputGainDB = 6
+		},
 	}
 
 	for name, mutate := range cases {
@@ -278,6 +281,9 @@ func TestV1RejectsV2FieldsPresentButEmpty(t *testing.T) {
 			modes, _ := params["modes"].([]any)
 			mode, _ := modes[0].(map[string]any)
 			mode["harmonics"] = []any{}
+		},
+		"zero output gain": func() {
+			params["output_gain_db"] = 0
 		},
 	}
 

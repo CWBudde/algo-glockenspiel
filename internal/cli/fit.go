@@ -678,6 +678,23 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	fittedPreset := *initialPreset
 
 	fittedPreset.Parameters = *bestParams
+
+	// Before the first save and before the render below, so every artifact this
+	// run writes describes the same preset at the same level. The objective
+	// solves the level in closed form and subtracts it from every term, which
+	// leaves level a flat ridge the search drifts along; this is where that
+	// drift is measured out. See synth.PresetPeakTargetDBFS.
+	outputGainDB, outputGainClamped, err := synth.ApplyOutputGain(&fittedPreset)
+	if err != nil {
+		return err
+	}
+
+	if outputGainClamped {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+			"output gain: %+.2f dB, clamped at the bound; the fit renders far enough from the target "+
+				"that the preset stays off it\n", outputGainDB)
+	}
+
 	if err := preset.Save(&fittedPreset, options.outputPath); err != nil {
 		return err
 	}
