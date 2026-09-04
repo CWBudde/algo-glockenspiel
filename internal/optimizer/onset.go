@@ -98,13 +98,19 @@ func onsetBands(sampleRate int) []onsetBand {
 }
 
 // onsetLevels is the level in dB of each band over the first onsetFrameSize
-// samples of a strike, or nil when the strike is too short to fill the frame
-// or no FFT plan exists for it.
+// samples of a strike, scaled by gain -- a linear amplitude factor, 1 for a
+// signal already at the level it should be compared at -- or nil when the
+// strike is too short to fill the frame or no FFT plan exists for it.
+//
+// The gain is applied inside the transform rather than added to the levels
+// afterwards, because the magnitude floor underneath them is absolute. See
+// spectralScratch.transform for what flooring a candidate in its own scale
+// costs.
 //
 // The frame is not zero-padded to reach the window. A strike shorter than the
 // frame has no measurable attack spectrum, and padding one would report the
 // silence after it as part of the strike.
-func onsetLevels(strike []float32, bands []onsetBand) []float64 {
+func onsetLevels(strike []float32, bands []onsetBand, gain float64) []float64 {
 	if len(strike) < onsetFrameSize || len(bands) == 0 {
 		return nil
 	}
@@ -116,7 +122,7 @@ func onsetLevels(strike []float32, bands []onsetBand) []float64 {
 
 	defer release()
 
-	scratch.transform(strike[:onsetFrameSize])
+	scratch.transform(strike[:onsetFrameSize], gain)
 
 	levels := make([]float64, len(bands))
 
@@ -165,7 +171,7 @@ func (r *compositeReference) onsetError(candidate []float32, gainDB float64) flo
 		return math.NaN()
 	}
 
-	levels := onsetLevels(candidate, r.onsetBands)
+	levels := onsetLevels(candidate, r.onsetBands, amplitudeFactor(gainDB))
 	if len(levels) != len(r.onsetLevels) {
 		return math.NaN()
 	}
@@ -173,7 +179,7 @@ func (r *compositeReference) onsetError(candidate []float32, gainDB float64) flo
 	var sum float64
 
 	for i := range levels {
-		delta := math.Max(levels[i]+gainDB, r.onsetFloor) - math.Max(r.onsetLevels[i], r.onsetFloor)
+		delta := math.Max(levels[i], r.onsetFloor) - math.Max(r.onsetLevels[i], r.onsetFloor)
 		sum += delta * delta
 	}
 

@@ -114,16 +114,17 @@ func spectralErrorWithGain(synth, ref []float32, sampleRate int, gainDB float64)
 
 	weights := spectralWeights(sampleRate, spectralFrameSize)
 	refDB := make([]float64, spectralFrameSize/2+1)
+	gain := amplitudeFactor(gainDB)
 
 	var weightedSum, weightTotal float64
 
 	for start := 0; start+spectralFrameSize <= sampleCount; start += spectralHop(spectralFrameSize) {
-		scratch.transform(ref[start : start+spectralFrameSize])
+		scratch.transform(ref[start:start+spectralFrameSize], 1)
 		copy(refDB, scratch.db)
-		scratch.transform(synth[start : start+spectralFrameSize])
+		scratch.transform(synth[start:start+spectralFrameSize], gain)
 
 		for k := 1; k < spectralFrameSize/2; k++ {
-			delta := scratch.db[k] + gainDB - refDB[k]
+			delta := scratch.db[k] - refDB[k]
 			weight := weights[k]
 			weightedSum += weight * delta * delta
 			weightTotal += weight
@@ -210,17 +211,49 @@ func newSpectralScratch(frameSize int) (*spectralScratch, error) {
 }
 
 // transform windows one frame, transforms it and leaves its magnitude in dB
-// per bin in db.
-func (s *spectralScratch) transform(frame []float32) {
+// per bin in db, scaled by gain -- a linear amplitude factor, 1 for a signal
+// that is already at the level it should be compared at.
+//
+// The gain belongs here rather than in the caller's dB arithmetic, and that is
+// the whole point of the parameter. linToDB floors the magnitude at
+// spectralMagnitudeFloor, an absolute -100 dBFS, so where the floor sits
+// relative to a signal depends on how loud that signal happens to be. A
+// candidate measured at its own level and then shifted afterwards is floored in
+// its own scale rather than in the reference's: render one 37 dB too quiet and
+// its low bins are flattened to a constant, and adding the gain afterwards
+// lifts that constant into a plateau near the reference's floor, which scores
+// far better than the true spectrum would. Measured on the seed-4 Morphagene
+// fit, spectral_fine_db read 0.506 that way against 5.160 honestly -- a factor
+// of ten, from the floor alone, and always in the flattering direction, so the
+// search had an incentive to go quiet.
+//
+// Scaling before the floor removes the incentive by making the floor mean one
+// thing: -100 dBFS in the scale the two signals are compared in. It costs
+// nothing, because the factor folds into magScale, which every bin is already
+// multiplied by.
+func (s *spectralScratch) transform(frame []float32, gain float64) {
 	for i, coefficient := range s.window {
 		s.frame[i] = float64(frame[i]) * coefficient
 	}
 
 	s.plan.Forward(s.spectrum, s.frame)
 
+	scale := s.magScale * gain
+
 	for k := range s.db {
-		s.db[k] = linToDB(cmplx.Abs(s.spectrum[k]) * s.magScale)
+		s.db[k] = linToDB(cmplx.Abs(s.spectrum[k]) * scale)
 	}
+}
+
+// amplitudeFactor converts a gain in dB to the linear amplitude factor the
+// measurement code multiplies by, mapping a gain that is absent or unmeasurable
+// to unity rather than to a NaN that would poison every bin.
+func amplitudeFactor(gainDB float64) float64 {
+	if gainDB == 0 || math.IsNaN(gainDB) || math.IsInf(gainDB, 0) {
+		return 1
+	}
+
+	return math.Pow(10, gainDB/20)
 }
 
 func linToDB(x float64) float64 {
@@ -272,7 +305,7 @@ func newSpectrogram(reference []float32, sampleRate, frameSize int) *spectrogram
 	)
 
 	for start := 0; start+frameSize <= len(reference); start += hop {
-		scratch.transform(reference[start : start+frameSize])
+		scratch.transform(reference[start:start+frameSize], 1)
 		frame := append([]float64(nil), scratch.db...)
 		frames = append(frames, frame)
 
@@ -329,6 +362,8 @@ func (s *spectrogram) errorDB(candidate, reference []float32, retake bool, gainD
 		return math.NaN()
 	}
 
+	gain := amplitudeFactor(gainDB)
+
 	scratch, release := acquireSpectralScratch(s.frameSize)
 	if scratch == nil {
 		return math.NaN()
@@ -353,7 +388,7 @@ func (s *spectrogram) errorDB(candidate, reference []float32, retake bool, gainD
 
 	for index, start := 0, 0; start+s.frameSize <= sampleCount; index, start = index+1, start+s.hop {
 		if retake {
-			refScratch.transform(reference[start : start+s.frameSize])
+			refScratch.transform(reference[start:start+s.frameSize], 1)
 			reference64 = refScratch.db
 		} else {
 			if index >= len(s.frames) {
@@ -363,11 +398,11 @@ func (s *spectrogram) errorDB(candidate, reference []float32, retake bool, gainD
 			reference64 = s.frames[index]
 		}
 
-		scratch.transform(candidate[start : start+s.frameSize])
+		scratch.transform(candidate[start:start+s.frameSize], gain)
 
 		for k := 1; k < s.frameSize/2; k++ {
 			refDB := reference64[k]
-			candDB := scratch.db[k] + gainDB
+			candDB := scratch.db[k]
 
 			if refDB < s.floorDB && candDB < s.floorDB {
 				continue
