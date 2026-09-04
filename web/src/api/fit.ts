@@ -296,6 +296,16 @@ export function fitJobPresetUrl(jobId: string): string {
 }
 
 /**
+ * Reads one job's fitted preset, in the same document `getFitPreset` reads
+ * for the current job. Needed so that "Use in Play tab" can hand over the
+ * preset text for whichever run is displayed, not only the active one; a 409
+ * means that job has produced no preset yet.
+ */
+export function getFitJobPreset(jobId: string): Promise<Preset> {
+  return requestJSON<Preset>(`fit/jobs/${encodeURIComponent(jobId)}/preset`);
+}
+
+/**
  * The URL of an audition render of one job's fitted preset.
  *
  * `seconds` follows `fitAudioUrl`'s `duration`: omitted, it falls back to the

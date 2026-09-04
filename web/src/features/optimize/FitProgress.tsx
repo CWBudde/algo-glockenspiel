@@ -2,6 +2,7 @@ import { useEffect } from "react";
 
 import type { FitSnapshot } from "../../api/types";
 import { Audition } from "./Audition";
+import { Comparison } from "./Comparison";
 import { CostChart } from "./CostChart";
 import { FitStatus } from "./FitStatus";
 import { useFitEvents, type FitEvents } from "./useFitEvents";
@@ -14,15 +15,6 @@ export interface FitProgressProps {
    * continuing the first one's line.
    */
   jobId: string | null;
-  /**
-   * The job the server (or the browser worker) currently considers active --
-   * distinct from `jobId`, which is whatever is being *displayed* and may be
-   * a historical run picked from the run list. Audition needs to tell the two
-   * apart: its audio and preset endpoints always answer about the active job,
-   * never about an arbitrary id, so it must not offer them for a `jobId` that
-   * is not this one.
-   */
-  activeJobId: string | null;
   /**
    * The `maxIterations` the fit was started with, for the "n of m" reading.
    * The snapshot does not carry it -- the server does not echo the request
@@ -60,7 +52,6 @@ export interface FitProgressProps {
  */
 export function FitProgress({
   jobId,
-  activeJobId,
   maxIterations,
   onSnapshot,
   events,
@@ -115,9 +106,19 @@ export function FitProgress({
         )}
       </div>
 
+      {/*
+        The comparison has no counterpart in the browser worker: `artifacts`
+        is the WASM path's contract, and there is no per-job compare
+        endpoint to serve it -- only the encoded audio the worker already
+        holds in memory. It is left out there rather than pointed at a
+        request that would 404.
+      */}
+      {artifacts === undefined && (
+        <Comparison jobId={jobId} hasPreset={snapshot?.hasPreset ?? false} />
+      )}
+
       <Audition
         snapshot={snapshot}
-        activeJobId={activeJobId}
         artifacts={artifacts}
         onUseInPlay={onUseInPlay}
       />

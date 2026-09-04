@@ -2029,13 +2029,102 @@ h1 {
   max-width: 520px;
 }
 
+.audition-ab {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: var(--space-md) 0 0;
+  padding: 0;
+  border: 0;
+  gap: var(--space-sm);
+}
+
+.audition-ab legend {
+  padding: 0;
+  color: var(--charcoal-muted);
+  font-size: 0.76rem;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.audition-ab-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.audition-ab-option input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.audition-ab-option label {
+  color: var(--charcoal-muted);
+  cursor: pointer;
+}
+
+.audition-ab-option input:checked + label {
+  color: var(--charcoal);
+}
+
+.fit-comparison {
+  margin-top: var(--space-2xl);
+  padding-top: var(--space-2xl);
+  border-top: 1px solid var(--surface-border);
+}
+
+.fit-comparison h3 {
+  margin: 0 0 var(--space-sm);
+  color: var(--charcoal);
+  font-family: var(--font-display);
+  font-size: var(--type-title-sm);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.fit-comparison h4 {
+  margin: 0 0 var(--space-2xs);
+  color: var(--charcoal-muted);
+  font-size: 0.76rem;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.fit-comparison-columns {
+  display: grid;
+  margin-top: var(--space-md);
+  gap: var(--space-lg);
+  grid-template-columns: 1fr 1fr;
+}
+
+.fit-comparison-side {
+  display: grid;
+  gap: var(--space-2xs);
+}
+
+.fit-comparison-canvas {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-group);
+  background: var(--panel-fill-strong);
+}
+
+@media (max-width: 640px) {
+  .fit-comparison-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
 /*
  * The focus block above names its controls one by one; these are the new ones.
  */
 .audition-controls button:focus-visible,
 .audition-field input:focus-visible,
 .audition-download:focus-visible,
-.audition-player:focus-visible {
+.audition-player:focus-visible,
+.audition-ab-option input:focus-visible + label {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }

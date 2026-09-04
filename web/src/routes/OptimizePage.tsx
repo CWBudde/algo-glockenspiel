@@ -294,7 +294,6 @@ export function OptimizePage({ api, wasm, onUseInPlay }: OptimizePageProps) {
             />
 
             <FitProgress
-              activeJobId={snapshot?.jobId ?? null}
               artifacts={browserMode ? (wasm.client ?? undefined) : undefined}
               events={browserMode ? wasm.events : historicalEvents}
               jobId={progressJobId}

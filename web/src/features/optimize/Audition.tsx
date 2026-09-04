@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
-import { getFitPreset } from "../../api/fit";
+import {
+  fitJobAudioUrl,
+  fitJobPresetUrl,
+  fitJobReferenceUrl,
+  getFitJobPreset,
+} from "../../api/fit";
 import type { FitSnapshot } from "../../api/types";
 
 /** The server's render cap, `maxRenderSeconds` in internal/server/fit.go. */
@@ -8,14 +13,6 @@ const maxRenderSeconds = 60;
 
 export interface AuditionProps {
   snapshot: FitSnapshot | null;
-  /**
-   * The job the server (or the browser worker) currently considers active.
-   * The audio and preset reads below are hardcoded to the current-job
-   * endpoints -- `api/fit/audio`, `getFitPreset()` -- which always answer
-   * about this job, never about `snapshot.jobId` if that names something
-   * else. See `auditionAppliesToActiveJob`.
-   */
-  activeJobId: string | null;
   artifacts?: FitArtifacts | undefined;
   /**
    * Makes the fitted preset choosable in the Play tab and returns the name it
@@ -51,25 +48,6 @@ function defaultDuration(referenceSeconds: number): number {
 }
 
 /**
- * Whether the audition and download controls may act on the displayed
- * snapshot.
- *
- * `api/fit/audio` and `getFitPreset()` (`api/fit/preset`) both always answer
- * about whichever job the server currently considers active; there is no
- * per-job URL wired in here yet. A snapshot picked from the run list can name
- * a different, historical job, and offering the controls for it would play
- * or download the active run's audio under the picked run's label -- wrong
- * and silent about being wrong. `jobId === null` is refused too: it means
- * nothing is displayed, which is never the active job either.
- */
-export function auditionAppliesToActiveJob(
-  jobId: string | null,
-  activeJobId: string | null,
-): boolean {
-  return jobId !== null && jobId === activeJobId;
-}
-
-/**
  * Play the fitted preset, and download it.
  *
  * The gate is `hasPreset`, not `state === "succeeded"`. The Go comment on that
@@ -80,7 +58,6 @@ export function auditionAppliesToActiveJob(
  */
 export function Audition({
   snapshot,
-  activeJobId,
   artifacts,
   onUseInPlay,
 }: AuditionProps) {
@@ -88,7 +65,6 @@ export function Audition({
 
   const jobId = snapshot?.jobId ?? null;
   const referenceSeconds = snapshot?.referenceSeconds ?? 0;
-  const activeJobApplies = auditionAppliesToActiveJob(jobId, activeJobId);
 
   // Both pieces of state are stamped with the job they belong to and read only
   // when the stamp still matches. A new job therefore falls back to the new
@@ -120,6 +96,22 @@ export function Audition({
     label: string;
   } | null>(null);
 
+  // Which of the two sources the player is on, stamped with the job for the
+  // same reason as the rest: a new fit starts back on its own render rather
+  // than inheriting the previous fit's choice of "reference". Absent (or
+  // stale) reads as "fit", which is what a fresh render should play.
+  const [abSource, setAbSource] = useState<{
+    jobId: string | null;
+    kind: "fit" | "reference";
+  } | null>(null);
+  // Captured just before a source switch, and consumed once the newly
+  // sourced element reports its metadata, so the A/B toggle moves the
+  // listening point across rather than restarting it. A src swap on one
+  // <audio> element was chosen over two synchronized elements: only one
+  // decoder is ever running, and there is no second clock to keep in step
+  // with the first while the user is mid-comparison.
+  const resumeRef = useRef<{ time: number; playing: boolean } | null>(null);
+
   const durationText =
     chosen !== null && chosen.jobId === jobId
       ? chosen.text
@@ -131,6 +123,20 @@ export function Audition({
 
   const audioUrl =
     rendered !== null && rendered.jobId === jobId ? rendered.url : null;
+
+  // The reference has no counterpart in the browser worker: `artifacts` is
+  // the WASM path's contract and it has no per-job endpoints at all, only the
+  // encoded bytes it already holds in memory. The A/B toggle is therefore
+  // absent there rather than pointed at a URL that does not exist.
+  const referenceUrl =
+    artifacts === undefined && jobId !== null
+      ? fitJobReferenceUrl(jobId)
+      : null;
+
+  const sourceKind =
+    abSource !== null && abSource.jobId === jobId ? abSource.kind : "fit";
+  const activeAudioUrl =
+    sourceKind === "reference" ? referenceUrl : audioUrl;
 
   const playerRef = useRef<HTMLAudioElement | null>(null);
 
@@ -169,23 +175,6 @@ export function Audition({
     );
   }
 
-  if (!activeJobApplies) {
-    // The audio and preset reads below only ever answer about the active
-    // job, so they are withheld rather than pointed at the wrong run's
-    // sound: a picked historical run shows its own numbers and cost curve
-    // above, but audition and download stay tied to whatever is running now.
-    return (
-      <section className="optimize-audition" aria-labelledby="audition-heading">
-        <h3 id="audition-heading">Audition</h3>
-        <p className="optimize-note">
-          Audition and download follow the active run, not the one selected
-          above. Select the active run in the list, or start a new fit, to
-          hear or download it.
-        </p>
-      </section>
-    );
-  }
-
   const play = async () => {
     setArtifactError(null);
 
@@ -218,20 +207,21 @@ export function Audition({
       return;
     }
 
-    const query = new URLSearchParams({
-      note: String(snapshot.note),
-      velocity: String(snapshot.velocity),
-      duration: String(duration),
-      // The render depends on the job, and the job is not in the URL. The
-      // response is `no-store`, but a browser that reuses an <audio> element's
-      // src without refetching would still play the previous fit, so the URL
-      // is busted per request.
-      t: String(Date.now()),
-    });
+    // A render started while the A/B toggle sits on "reference" is still the
+    // fit's own sound, not the recording's, so the toggle is brought back to
+    // "fit" rather than leaving the click silently do nothing to what is
+    // heard.
+    setAbSource({ jobId: snapshot.jobId, kind: "fit" });
+
+    const base = fitJobAudioUrl(snapshot.jobId, duration);
+    // The response is `no-store`, but a browser that reuses an <audio>
+    // element's src without refetching would still play the previous fit, so
+    // the URL is busted per request too.
+    const bust = `t=${String(Date.now())}`;
 
     setRendered({
       jobId,
-      url: `api/fit/audio?${query.toString()}`,
+      url: `${base}${base.includes("?") ? "&" : "?"}${bust}`,
       owned: false,
     });
   };
@@ -241,19 +231,21 @@ export function Audition({
    * produced it.
    *
    * Both paths already exist: the browser worker hands over the encoded bytes
-   * the download uses, and the service answers api/fit/preset with the document
-   * as JSON. Neither is a new endpoint, and the preset is deliberately not kept
-   * in page state -- it is fetched when it is wanted, so a long fit does not
-   * carry a document nobody asked for through every snapshot.
+   * the download uses, and the service answers the job's own preset endpoint
+   * with the document as JSON. Neither is a new endpoint, and the preset is
+   * deliberately not kept in page state -- it is fetched when it is wanted,
+   * so a long fit does not carry a document nobody asked for through every
+   * snapshot.
    *
    * The service's answer is re-encoded rather than fetched as text, because
-   * getFitPreset is the typed reader this front end already has for it. What
-   * the engine needs is a preset document, and a decoded-then-encoded one is
-   * the same document: every field survives, and Go validates it either way.
+   * getFitJobPreset is the typed reader this front end already has for it.
+   * What the engine needs is a preset document, and a decoded-then-encoded
+   * one is the same document: every field survives, and Go validates it
+   * either way.
    */
   const fittedDocument = async (): Promise<string> => {
     if (artifacts === undefined) {
-      return JSON.stringify(await getFitPreset());
+      return JSON.stringify(await getFitJobPreset(snapshot.jobId));
     }
 
     return (await artifacts.preset()).text();
@@ -309,6 +301,36 @@ export function Audition({
     }
   };
 
+  /**
+   * Switches the player between the fitted render and the reference,
+   * carrying the listening point across.
+   *
+   * `currentTime` is captured before the state update rather than after,
+   * because the state update swaps the element's `src` and a browser resets
+   * `currentTime` to 0 as soon as it does; there is nothing left to read by
+   * the time this component re-renders. `onLoadedMetadata` on the element
+   * below applies what was captured here once the new source has loaded far
+   * enough to accept a seek.
+   *
+   * A capture already waiting to be applied is never overwritten. Switching
+   * again before the previous source finished loading would otherwise read a
+   * `currentTime` the browser has already reset to zero, and the listening
+   * point would be lost by the very act of switching quickly.
+   */
+  const selectSource = (kind: "fit" | "reference") => {
+    if (kind === sourceKind) {
+      return;
+    }
+
+    const player = playerRef.current;
+
+    if (player !== null && resumeRef.current === null) {
+      resumeRef.current = { time: player.currentTime, playing: !player.paused };
+    }
+
+    setAbSource({ jobId, kind });
+  };
+
   const durationInvalid = !(
     Number.isFinite(duration) &&
     duration > 0 &&
@@ -351,7 +373,10 @@ export function Audition({
 
         {artifacts === undefined ? (
           /* The server supplies Content-Disposition with the job's file name. */
-          <a className="audition-download" href="api/fit/preset">
+          <a
+            className="audition-download"
+            href={fitJobPresetUrl(snapshot.jobId)}
+          >
             Download preset JSON
           </a>
         ) : (
@@ -394,15 +419,65 @@ export function Audition({
         </p>
       )}
 
-      {audioUrl !== null && (
-        // No caption track: a rendered instrument note carries no speech.
+      {referenceUrl !== null && audioUrl !== null && (
+        <fieldset className="audition-ab">
+          <legend>Playing</legend>
+
+          <div className="audition-ab-option">
+            <input
+              type="radio"
+              id="audition-ab-fit"
+              name="audition-ab"
+              checked={sourceKind === "fit"}
+              onChange={() => {
+                selectSource("fit");
+              }}
+            />
+            <label htmlFor="audition-ab-fit">Fitted render</label>
+          </div>
+
+          <div className="audition-ab-option">
+            <input
+              type="radio"
+              id="audition-ab-reference"
+              name="audition-ab"
+              checked={sourceKind === "reference"}
+              onChange={() => {
+                selectSource("reference");
+              }}
+            />
+            <label htmlFor="audition-ab-reference">Reference</label>
+          </div>
+        </fieldset>
+      )}
+
+      {activeAudioUrl !== null && (
+        // No caption track: a rendered instrument note, or the recording it
+        // was fitted against, carries no speech.
         <audio
           ref={playerRef}
           className="audition-player"
           controls
-          src={audioUrl}
+          src={activeAudioUrl}
+          onLoadedMetadata={() => {
+            const pending = resumeRef.current;
+            const player = playerRef.current;
+
+            if (pending === null || player === null) {
+              return;
+            }
+
+            resumeRef.current = null;
+            player.currentTime = pending.time;
+
+            if (pending.playing) {
+              void player.play().catch(() => undefined);
+            }
+          }}
         >
-          Your browser cannot play the rendered preset.
+          {sourceKind === "reference"
+            ? "Your browser cannot play the reference recording."
+            : "Your browser cannot play the rendered preset."}
         </audio>
       )}
     </section>
