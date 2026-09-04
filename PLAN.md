@@ -26,7 +26,7 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | 5     | Web app                      | open — 5.1–5.6 done; payload size remains |
 | 6     | Split out VST3               | done                                      |
 | 7     | Documentation                | open — 7.1 and 7.2 done                   |
-| 8     | Training                     | open — 8.0 to 8.6 done, 8.7 next          |
+| 8     | Training                     | open — 8.0 to 8.7 done                    |
 
 Closed phases are summarised here and documented in full under [docs/](docs/); the detail that
 was in this file has moved there rather than been dropped.
@@ -1194,10 +1194,25 @@ Goal: the UI a campaign needs — history, provenance, comparison.
       became dead weight when item 1 moved it onto `fitrun`, and `internal/browserfit` cannot
       import `internal/fitrun` without pulling the filesystem into WASM, so the second copy
       stays and is recorded here rather than abstracted away.
-- [ ] Playwright runs one real short fit through `serve` and asserts that the cost curve falls
-      and the comparison view shows both signals.
-- [ ] The browser fit keeps its contract and is documented as the single-threaded demonstration
-      path; it does not run campaigns.
+- [x] Playwright runs one real short fit through `serve` and asserts that the cost curve falls
+      and the comparison view shows both signals. Done 2026-09-04. `playwright.config.ts` runs a
+      second `webServer`, guarded so that someone without the Go toolchain still runs the existing
+      tests rather than watching them fail, and the new spec asserts the last best cost is below
+      the first and finds both signals by their accessible labels rather than by pixels. Running a
+      real fit is what found four defects in the run list that no mocked test had exercised,
+      `aria-pressed` on a `role="listitem"` among them. **The two Optimize screenshots are still
+      stale.** They were already stale before this item, because the run list landed without
+      regenerating them, and this machine lacks the faces the baselines assume, so regenerating
+      here would commit font-substituted metrics as the new truth. They need a machine with the
+      repo's fonts. To tell a real regression from the environment, run the suite against the
+      previous commit in a throwaway worktree and compare the failure lists.
+- [x] The browser fit keeps its contract and is documented as the single-threaded demonstration
+      path; it does not run campaigns. Done 2026-09-04. Its contract held through every task: it
+      has no filesystem, no job list, no trace endpoint and no reference, so the run list, the
+      compare picker and the A/B control are absent there rather than broken, and the term bars
+      fall back to raw values when a snapshot carries no profile. What it did gain is the
+      validation it was missing: collapsing the limit tables in item 4 revealed it had been
+      accepting five requests the server refuses.
 
 ## Deferred
 
@@ -1303,19 +1318,30 @@ the schema to fix it, which promoted "gain is searched, not solved" from a revie
 blocker in `## Deferred`; `default.json`'s reference holds one partial, so fitting it writes a
 one-mode preset. [docs/training.md](docs/training.md) holds all of it.
 
-**8.7 is under way, and three of its six items are done 2026-09-04.** The Go half is built: the
-server delegates to `internal/fitrun`, every job leaves a run directory under `--work-dir`, the
-409 is replaced by a queue, jobs survive a restart, and the snapshot and the new `/compare`
-payload carry the provenance and the pictures a comparison view needs. Two defects worth carrying
-forward, both of the same shape, both caught in review rather than by a gate: the comparison
-first clamped only the render to sixty seconds and left the reference at full length, and it
-first painted each spectrogram against its own noise floor where the objective clamps both to the
-reference's. Either would have drawn a picture that disagreed with the score while looking
-entirely plausible. The limit tables and name lists are now one generated source, which is what
-found the browser fit accepting five requests the server refuses. What remains is the UI itself
-and the Playwright fit through `serve`. The debt 8.6 named still stands until then: the CLI
-default is `mayfly` while the browser fit still chooses its own.
-Separately, an output gain is the one thing standing between a measured refit and a shipped
+**8.7 is done 2026-09-04.** The server no longer runs its own fit loop: it delegates to
+`internal/fitrun`, so the run directory a served job leaves is the same one a campaign job writes.
+Every job gets one under `--work-dir`, the 409 is a queue, jobs survive a restart, and the
+Optimize tab now has the run history, the provenance and the comparison a campaign needs, proven
+by a real short fit through `serve` under Playwright rather than by a mock.
+
+Five defects are worth carrying forward, because all five looked like success and none would have
+failed a gate. Three were the same shape, a picture that disagrees with the score: the comparison
+clamped only the render to sixty seconds and left the reference at full length, it painted each
+spectrogram against its own noise floor where the objective clamps both to the reference's, and
+selecting a historical run played the active run's audio. The fourth is what de-duplication is
+for: collapsing the three limit tables showed the browser fit had been accepting five requests the
+server refuses, having never bounded `cmaes-lambda`, `cmaes-restarts`, `mayfly-nc` or
+`mayfly-nc-ratio` and never bounding `mayfly-target-cost` at all. The fifth only appeared when a
+real fit ran: the run list carried `aria-pressed` on a `role="listitem"`, which is invalid ARIA,
+plus a missing touch target and no focus ring, none of which a mocked test had ever exercised.
+
+**Two things are left open on purpose.** The two Optimize screenshots are stale, and were already
+stale before the Playwright item, because the run list landed without regenerating them; this
+machine lacks the faces the baselines assume, so they need regenerating where those fonts are
+installed. And the debt 8.6 named still stands: the CLI defaults to `mayfly` while the browser fit
+still chooses its own backend. Item 4 unified the tables and the names, not the choice, because
+`internal/browserfit` cannot import `internal/fitrun` without pulling the filesystem into WASM.
+Separately, an output gain remains the one thing standing between a measured refit and a shipped
 preset.
 
 **Phase 5, payload size.** The one unaddressed sub-item. Adding the browser optimizer made the

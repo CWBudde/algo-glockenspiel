@@ -379,9 +379,14 @@ Both produce the `FitSnapshot` shape consumed by the chart, status and audition.
    it to `POST api/fit/start`; the browser backend transfers its file parts to
    the worker and serializes the scalars. Each scalar is held client-side to the
    server's range, because discovering that `note` was 200 after moving a 16 MiB
-   WAV is needless work. A native `409` — "a fit is already running" — is
-   surfaced with those words, and its current job is adopted so Cancel is
-   reachable. The browser worker already owns and displays its single job.
+   WAV is needless work. The native backend never refuses a second start: it
+   answers every `POST api/fit/start` with `202` and the new job's own snapshot,
+   queued behind whatever is still running rather than replacing it, and that
+   job is adopted so Cancel and the run list are reachable for it specifically.
+   One worker still takes jobs in order, so only one search actually runs at a
+   time; a `409` from the native backend now means a cancel named a job that is
+   not there to stop, not a refused start. The browser worker still owns and
+   displays only its single job.
 3. **Watch.** For a native job, `useFitEvents` opens an `EventSource` on
    `api/fit/events`. A browser job posts whole snapshots from its worker. Both
    feed the same in-place cost history and terminal-state handling.

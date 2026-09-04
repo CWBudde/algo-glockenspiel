@@ -93,7 +93,10 @@ the server puts in every snapshot. The terms:
   frame — plus 6 dB, or 60 dB under the reference's loudest bin, whichever is higher; a bin
   below the floor in both signals contributes nothing, and a bin above it in either is compared
   with both clamped to it. That is what stops a modal model being scored on its failure to
-  synthesise the room.
+  synthesise the room. `ComputeSpectrogram` exports this same transform, floor included, so a
+  caller outside the package can compute the exact frames the objective scored rather than a
+  second STFT that might disagree with them; the server's `/compare` endpoint uses it to paint
+  the reference and the render with the code that scored them.
 - **Envelope.** `envelope_db` is the RMS difference between the broadband RMS envelopes over
   log-spaced windows from the strike — the first ends 5 ms after it, each is a quarter longer
   than the last — with both clamped to the reference's own floor. `decay_slope_dbps` is the
