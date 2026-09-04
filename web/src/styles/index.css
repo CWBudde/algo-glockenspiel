@@ -940,7 +940,29 @@ h1 {
   color: rgba(248, 242, 234, 0.58);
 }
 
+/*
+ * The tablet fold. A 1024x768 screen is the shortest desktop-shaped viewport
+ * the instrument has to fit whole -- the visual suite asserts that the lowest
+ * piano key ends above 768 -- and the rack has first claim on that budget:
+ * giving the sharps their own lane cost 20px of stage height, and taking it
+ * back out of the rack would put the lanes back on top of each other. So the
+ * height comes out of the spacing around the instrument instead, which is the
+ * same trade this breakpoint already makes on the rack's behalf.
+ */
 @media (max-width: 1080px) {
+  .instrument-card {
+    margin-top: var(--space-sm);
+  }
+
+  .instrument-main {
+    padding-top: var(--space-xs);
+    padding-bottom: var(--space-2xs);
+  }
+
+  .keyboard-panel {
+    padding-top: var(--space-2xs);
+  }
+
   .instrument-stage {
     min-height: 430px;
   }
