@@ -1,6 +1,7 @@
 package campaign_test
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -134,7 +135,7 @@ func TestReadResultsRefusesAnUnexpectedHeader(t *testing.T) {
 const contractHeader = "design,arm,block,seed,job,engine,covariance,lambda,population,restarts_planned," +
 	"budget,score,scored_evaluations,final_score,evaluations,iterations,restarts,stop_reason,converged," +
 	"elapsed_s,pinned,dimension,matched,partial_cents,partial_level_db,partial_decay_octaves," +
-	"partial_missing,partial_extra,spectral_fine_db,spectral_coarse_db,envelope_db,decay_slope_dbps," +
+	"partial_missing,partial_extra,spectral_fine_db,spectral_coarse_db,envelope_db,onset_db,decay_slope_dbps," +
 	"waveform,mayfly_version,cmaes_version,revision"
 
 func TestHeaderIsTheContractsColumnSet(t *testing.T) {
@@ -156,4 +157,124 @@ func TestHeaderIsTheContractsColumnSet(t *testing.T) {
 	if got := strings.SplitN(string(raw), "\n", 2)[0]; got != contractHeader {
 		t.Fatalf("the written header is %q", got)
 	}
+}
+
+// TestResultsWrittenBeforeATermExistedStillRead is what the phase 8.6 evidence
+// needs from the format. docs/data/engine-shape-results.csv was written when
+// the objective had ten terms; adding an eleventh must not make the campaign
+// that promoted the default unreadable, and the term it never measured has to
+// read back as unmeasured rather than as a zero the tables would average in.
+func TestResultsWrittenBeforeATermExistedStillRead(t *testing.T) {
+	full := campaign.Header()
+	dropped := optimizer.TermOnset
+
+	var (
+		header  []string
+		omitted = -1
+	)
+
+	for index, name := range full {
+		if name == string(dropped) {
+			omitted = index
+
+			continue
+		}
+
+		header = append(header, name)
+	}
+
+	if omitted < 0 {
+		t.Fatalf("term %q is not a column of the header, so this test no longer tests anything", dropped)
+	}
+
+	row := sampleRows()[0]
+	record := make([]string, 0, len(header))
+
+	for index, cell := range recordOf(t, row) {
+		if index == omitted {
+			continue
+		}
+
+		record = append(record, cell)
+	}
+
+	path := filepath.Join(t.TempDir(), campaign.FileResults)
+	body := strings.Join(header, ",") + "\n" + strings.Join(record, ",") + "\n"
+
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	rows, err := campaign.ReadResults(path)
+	if err != nil {
+		t.Fatalf("a results file without a later term was refused: %v", err)
+	}
+
+	if len(rows) != 1 {
+		t.Fatalf("read %d rows, want 1", len(rows))
+	}
+
+	if got := rows[0].Terms[dropped]; !math.IsNaN(got) {
+		t.Fatalf("the absent term read back as %v, want NaN", got)
+	}
+
+	for _, term := range optimizer.Terms() {
+		if term == dropped {
+			continue
+		}
+
+		if got, want := rows[0].Terms[term], row.Terms[term]; got != want {
+			t.Fatalf("term %q read back as %v, want %v", term, got, want)
+		}
+	}
+
+	if rows[0].Revision != row.Revision || rows[0].Score != row.Score {
+		t.Fatalf("the columns either side of the term block did not survive: %+v", rows[0])
+	}
+}
+
+// TestARenamedTermIsStillRefused pins the other half: dropping a term column is
+// allowed, writing a name the objective does not know is not.
+func TestARenamedTermIsStillRefused(t *testing.T) {
+	header := append([]string(nil), campaign.Header()...)
+
+	for index, name := range header {
+		if name == string(optimizer.TermEnvelope) {
+			header[index] = "envelope_decibels"
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), campaign.FileResults)
+	body := strings.Join(header, ",") + "\n" + strings.Join(recordOf(t, sampleRows()[0]), ",") + "\n"
+
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	if _, err := campaign.ReadResults(path); err == nil {
+		t.Fatal("a results file with a renamed term column was accepted")
+	}
+}
+
+// recordOf renders one row to its cells by writing it and reading the line
+// back, so the test never re-implements the writer it is checking against.
+func recordOf(t *testing.T, row campaign.Row) []string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), campaign.FileResults)
+	if err := campaign.WriteResults(path, []campaign.Row{row}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("wrote %d lines, want a header and one row", len(lines))
+	}
+
+	return strings.Split(lines[1], ",")
 }

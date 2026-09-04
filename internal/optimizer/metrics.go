@@ -48,6 +48,17 @@ const (
 	// over log-spaced windows from the strike.
 	TermEnvelope Term = "envelope_db"
 
+	// TermOnset is the RMS error, in dB, between the third-octave band
+	// levels of the strike's first eleven milliseconds.
+	//
+	// It exists because nothing else in this list hears the attack. The
+	// envelope term is broadband, so a candidate can miss the mallet's 4-8 kHz
+	// band by fifty decibels and still track the envelope to within one, and
+	// the spectral terms average over the whole strike, where an eleven
+	// millisecond click is a rounding error against a half-second tail. Both
+	// were measured doing exactly that on the morphagene C6 sample.
+	TermOnset Term = "onset_db"
+
 	// TermDecaySlope is the difference between the broadband decay slopes,
 	// in dB per second.
 	TermDecaySlope Term = "decay_slope_dbps"
@@ -63,7 +74,7 @@ func Terms() []Term {
 	return []Term{
 		TermPartialCents, TermPartialLevel, TermPartialDecay, TermPartialMissing, TermPartialExtra,
 		TermSpectralFine, TermSpectralCoarse,
-		TermEnvelope, TermDecaySlope,
+		TermEnvelope, TermOnset, TermDecaySlope,
 		TermWaveform,
 	}
 }
@@ -73,7 +84,7 @@ func (t Term) Unit() string {
 	switch t {
 	case TermPartialCents:
 		return "cents"
-	case TermPartialLevel, TermSpectralFine, TermSpectralCoarse, TermEnvelope:
+	case TermPartialLevel, TermSpectralFine, TermSpectralCoarse, TermEnvelope, TermOnset:
 		return "dB"
 	case TermPartialDecay:
 		return "octaves"
@@ -97,6 +108,7 @@ type Metrics struct {
 	SpectralFineDB      float64
 	SpectralCoarseDB    float64
 	EnvelopeDB          float64
+	OnsetDB             float64
 	DecaySlopeDBps      float64
 	Waveform            float64
 
@@ -142,6 +154,8 @@ func (m Metrics) Value(term Term) float64 {
 		return m.SpectralCoarseDB
 	case TermEnvelope:
 		return m.EnvelopeDB
+	case TermOnset:
+		return m.OnsetDB
 	case TermDecaySlope:
 		return m.DecaySlopeDBps
 	case TermWaveform:
@@ -169,6 +183,8 @@ func (m *Metrics) set(term Term, value float64) {
 		m.SpectralCoarseDB = value
 	case TermEnvelope:
 		m.EnvelopeDB = value
+	case TermOnset:
+		m.OnsetDB = value
 	case TermDecaySlope:
 		m.DecaySlopeDBps = value
 	case TermWaveform:
@@ -423,6 +439,15 @@ func (p Profile) norm(term Term) float64 {
 // at half of it for the one fit that is known to be right; the extra norm
 // is twice the missing norm because a model may carry any number of modes
 // while a reference's partial weight is capped at one.
+//
+// The onset norm is the outlier, and deliberately so. Measured the same way,
+// every shipped preset misses its reference's strike spectrum by 19 to 33 dB,
+// the default against the render it fits included -- that one scores 4.7 dB
+// spectrally and 0.3 dB on the envelope and still 20.2 dB here. Fifteen puts
+// those rows between one and two norms, where the score still moves when the
+// term does; a norm chosen for what a good attack would cost instead would
+// saturate on every preset the repository has, and a saturated term is one
+// the search cannot follow.
 var DefaultNorms = map[Term]float64{
 	TermPartialCents:   10,
 	TermPartialLevel:   6,
@@ -432,6 +457,7 @@ var DefaultNorms = map[Term]float64{
 	TermSpectralFine:   10,
 	TermSpectralCoarse: 10,
 	TermEnvelope:       3,
+	TermOnset:          15,
 	TermDecaySlope:     10,
 	TermWaveform:       0.5,
 }
@@ -439,20 +465,21 @@ var DefaultNorms = map[Term]float64{
 // The named profiles. The weights of each sum to one, so a score is a
 // weighted mean and the shares in a breakdown are fractions of it.
 var (
-	// ProfileBalanced is the default: partials 0.4, spectrum 0.25, envelope
-	// 0.25, waveform 0.1.
+	// ProfileBalanced is the default: partials 0.36, spectrum 0.22, envelope
+	// and slope 0.22, onset 0.10, waveform 0.10.
 	ProfileBalanced = Profile{
 		Name: string(MetricBalanced),
 		Weights: map[Term]float64{
-			TermPartialCents:   0.12,
-			TermPartialLevel:   0.08,
-			TermPartialDecay:   0.08,
+			TermPartialCents:   0.11,
+			TermPartialLevel:   0.07,
+			TermPartialDecay:   0.07,
 			TermPartialMissing: 0.06,
-			TermPartialExtra:   0.06,
-			TermSpectralFine:   0.125,
-			TermSpectralCoarse: 0.125,
-			TermEnvelope:       0.15,
-			TermDecaySlope:     0.10,
+			TermPartialExtra:   0.05,
+			TermSpectralFine:   0.11,
+			TermSpectralCoarse: 0.11,
+			TermEnvelope:       0.13,
+			TermOnset:          0.10,
+			TermDecaySlope:     0.09,
 			TermWaveform:       0.10,
 		},
 	}
@@ -462,14 +489,15 @@ var (
 	ProfilePlacement = Profile{
 		Name: string(MetricPlacement),
 		Weights: map[Term]float64{
-			TermPartialCents:   0.25,
-			TermPartialLevel:   0.10,
+			TermPartialCents:   0.22,
+			TermPartialLevel:   0.09,
 			TermPartialDecay:   0.05,
-			TermPartialMissing: 0.15,
-			TermPartialExtra:   0.15,
-			TermSpectralFine:   0.15,
+			TermPartialMissing: 0.14,
+			TermPartialExtra:   0.13,
+			TermSpectralFine:   0.13,
 			TermSpectralCoarse: 0.05,
 			TermEnvelope:       0.05,
+			TermOnset:          0.09,
 			TermWaveform:       0.05,
 		},
 	}
@@ -480,15 +508,16 @@ var (
 	ProfilePolish = Profile{
 		Name: string(MetricPolish),
 		Weights: map[Term]float64{
-			TermPartialCents:   0.10,
+			TermPartialCents:   0.09,
 			TermPartialLevel:   0.05,
-			TermPartialDecay:   0.05,
-			TermPartialMissing: 0.05,
-			TermPartialExtra:   0.05,
+			TermPartialDecay:   0.04,
+			TermPartialMissing: 0.04,
+			TermPartialExtra:   0.04,
 			TermSpectralFine:   0.05,
 			TermSpectralCoarse: 0.05,
 			TermEnvelope:       0.05,
-			TermDecaySlope:     0.05,
+			TermOnset:          0.05,
+			TermDecaySlope:     0.04,
 			TermWaveform:       0.50,
 		},
 	}

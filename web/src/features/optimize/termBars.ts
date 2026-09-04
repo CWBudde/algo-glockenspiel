@@ -29,6 +29,7 @@ const TERM_LABELS: Record<keyof FitMetrics, string> = {
   spectral_fine_db: "Spectral fine",
   spectral_coarse_db: "Spectral coarse",
   envelope_db: "Envelope",
+  onset_db: "Onset",
   decay_slope_dbps: "Decay slope",
   waveform: "Waveform",
   gain_db: "Gain",
@@ -40,7 +41,7 @@ const TERM_LABELS: Record<keyof FitMetrics, string> = {
   matched: "Matched",
 };
 
-/** The ten terms a composite profile can weight, in `optimizer.Terms()` order. */
+/** The eleven terms a composite profile can weight, in `optimizer.Terms()` order. */
 export const SCORE_TERMS: (keyof FitMetrics)[] = [
   "partial_cents",
   "partial_level_db",
@@ -50,6 +51,7 @@ export const SCORE_TERMS: (keyof FitMetrics)[] = [
   "spectral_fine_db",
   "spectral_coarse_db",
   "envelope_db",
+  "onset_db",
   "decay_slope_dbps",
   "waveform",
 ];

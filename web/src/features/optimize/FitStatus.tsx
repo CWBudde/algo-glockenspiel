@@ -51,6 +51,7 @@ const METRIC_ROWS: readonly [keyof FitMetrics, string, string][] = [
   ["spectral_fine_db", "Spectrum, fine", "dB"],
   ["spectral_coarse_db", "Spectrum, coarse", "dB"],
   ["envelope_db", "Envelope", "dB"],
+  ["onset_db", "Onset", "dB"],
   ["decay_slope_dbps", "Decay slope", "dB/s"],
   ["waveform", "Waveform residual", ""],
   ["gain_db", "Gain applied", "dB"],

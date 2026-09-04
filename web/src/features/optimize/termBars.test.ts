@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { FitMetrics, FitProfile } from "../../api/types";
 import {
+  SCORE_TERMS,
   formatTermShare,
   formatTermValue,
   rawTerms,
@@ -18,6 +19,7 @@ function metrics(overrides?: Partial<FitMetrics>): FitMetrics {
     spectral_fine_db: 10,
     spectral_coarse_db: null,
     envelope_db: 1.5,
+    onset_db: 12,
     decay_slope_dbps: 2,
     waveform: 0.1,
     gain_db: 0,
@@ -97,7 +99,10 @@ describe("rawTerms", () => {
     const cents = terms.find((t) => t.term === "partial_cents");
 
     expect(cents?.value).toBe(5);
-    expect(terms).toHaveLength(10);
+
+    // Against SCORE_TERMS rather than a count, so that adding a term to the
+    // objective fails here only when rawTerms actually drops it.
+    expect(terms.map((t) => t.term)).toEqual(SCORE_TERMS);
   });
 
   it("reports an unmeasured term as null rather than zero", () => {

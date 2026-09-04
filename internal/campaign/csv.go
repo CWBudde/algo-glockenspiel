@@ -3,6 +3,7 @@ package campaign
 import (
 	"encoding/csv"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 
@@ -44,6 +45,9 @@ type Row struct {
 	CMAESVersion      string
 	Revision          string
 }
+
+// firstTermColumn is where the block of per-term columns starts.
+const firstTermColumn = 23
 
 // Header is results.csv's header, in the order the columns are written.
 func Header() []string {
@@ -140,8 +144,10 @@ func ReadResults(path string) ([]Row, error) {
 
 	defer func() { _ = file.Close() }()
 
+	// The header decides the record width, not the contract, so that a file
+	// written before a term existed still reads. checkHeader is what refuses
+	// a header the contract does not allow.
 	reader := csv.NewReader(file)
-	reader.FieldsPerRecord = len(Header())
 
 	records, err := reader.ReadAll()
 	if err != nil {
@@ -152,14 +158,15 @@ func ReadResults(path string) ([]Row, error) {
 		return nil, fmt.Errorf("results %q is empty, want the header row", path)
 	}
 
-	if err := checkHeader(path, records[0]); err != nil {
+	layout, err := checkHeader(path, records[0])
+	if err != nil {
 		return nil, err
 	}
 
 	rows := make([]Row, 0, len(records)-1)
 
 	for index, record := range records[1:] {
-		row, err := parseRow(record)
+		row, err := parseRow(record, layout)
 		if err != nil {
 			return nil, fmt.Errorf("results %q line %d: %w", path, index+2, err)
 		}
@@ -170,21 +177,62 @@ func ReadResults(path string) ([]Row, error) {
 	return rows, nil
 }
 
-// checkHeader compares the file's header against the contract's.
-func checkHeader(path string, record []string) error {
+// checkHeader compares the file's header against the contract's and returns
+// which term each of the file's term columns holds.
+//
+// The fixed columns on either side of the term block must match the contract
+// exactly, so a renamed or reordered column is still refused. The term block
+// itself only has to be the contract's terms in the contract's order with some
+// left out: a results file written before a term existed is readable, and that
+// term reads back as unmeasured rather than as zero, which is what it was. A
+// term the contract does not know, a duplicate, or two terms out of order all
+// fail, so this is not a licence to write any header at all.
+func checkHeader(path string, record []string) ([]optimizer.Term, error) {
 	want := Header()
+	head, tail := firstTermColumn, len(want)-firstTermColumn-len(optimizer.Terms())
 
-	if len(record) != len(want) {
-		return fmt.Errorf("results %q has %d columns, want %d", path, len(record), len(want))
+	if len(record) < head+tail {
+		return nil, fmt.Errorf("results %q has %d columns, want at least %d", path, len(record), head+tail)
 	}
 
-	for index, name := range want {
-		if record[index] != name {
-			return fmt.Errorf("results %q column %d is %q, want %q", path, index+1, record[index], name)
+	for index := range head {
+		if record[index] != want[index] {
+			return nil, fmt.Errorf("results %q column %d is %q, want %q", path, index+1, record[index], want[index])
 		}
 	}
 
-	return nil
+	for offset := range tail {
+		index, source := len(record)-tail+offset, len(want)-tail+offset
+		if record[index] != want[source] {
+			return nil, fmt.Errorf("results %q column %d is %q, want %q", path, index+1, record[index], want[source])
+		}
+	}
+
+	terms := optimizer.Terms()
+	layout := make([]optimizer.Term, 0, len(record)-head-tail)
+	next := 0
+
+	for index := head; index < len(record)-tail; index++ {
+		found := -1
+
+		for offset := next; offset < len(terms); offset++ {
+			if string(terms[offset]) == record[index] {
+				found = offset
+
+				break
+			}
+		}
+
+		if found < 0 {
+			return nil, fmt.Errorf("results %q column %d is %q, which is not a term of the objective in the order the contract writes them",
+				path, index+1, record[index])
+		}
+
+		layout = append(layout, terms[found])
+		next = found + 1
+	}
+
+	return layout, nil
 }
 
 // rowParser converts one record, remembering the first failure. Reporting only
@@ -265,7 +313,7 @@ func (p *rowParser) boolean(index int) bool {
 }
 
 // parseRow is the inverse of Row.record.
-func parseRow(record []string) (Row, error) {
+func parseRow(record []string, layout []optimizer.Term) (Row, error) {
 	parser := &rowParser{record: record}
 
 	row := Row{
@@ -295,16 +343,19 @@ func parseRow(record []string) (Row, error) {
 		Terms:             make(map[optimizer.Term]float64, len(optimizer.Terms())),
 	}
 
-	const firstTerm = 23
-
-	terms := optimizer.Terms()
-	for offset, term := range terms {
-		row.Terms[term] = parser.float(firstTerm + offset)
+	// A term the file does not carry stays out of the map, which is how a
+	// Metrics reports a term it could not measure.
+	for _, term := range optimizer.Terms() {
+		row.Terms[term] = math.NaN()
 	}
 
-	row.MayflyVersion = parser.text(firstTerm + len(terms))
-	row.CMAESVersion = parser.text(firstTerm + len(terms) + 1)
-	row.Revision = parser.text(firstTerm + len(terms) + 2)
+	for offset, term := range layout {
+		row.Terms[term] = parser.float(firstTermColumn + offset)
+	}
+
+	row.MayflyVersion = parser.text(firstTermColumn + len(layout))
+	row.CMAESVersion = parser.text(firstTermColumn + len(layout) + 1)
+	row.Revision = parser.text(firstTermColumn + len(layout) + 2)
 
 	if parser.err != nil {
 		return Row{}, parser.err

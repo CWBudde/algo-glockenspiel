@@ -69,6 +69,13 @@ type compositeReference struct {
 
 	slopeDBps float64
 
+	// onsetBands are the third-octave bands the onset term compares over,
+	// onsetLevels the reference's level in each, and onsetFloor the level
+	// both sides are clamped to.
+	onsetBands  []onsetBand
+	onsetLevels []float64
+	onsetFloor  float64
+
 	partials     []referencePartial
 	partialFloor float64
 	weightTotal  float64
@@ -101,6 +108,10 @@ func newCompositeReference(reference []float32, sampleRate int, measurement *ana
 
 		composite.floorDB = math.Max(envelopeFloorDBFS, lowest)
 	}
+
+	composite.onsetBands = onsetBands(sampleRate)
+	composite.onsetLevels = onsetLevels(strike, composite.onsetBands)
+	composite.onsetFloor = onsetFloorDB(composite.onsetLevels)
 
 	if measurement == nil {
 		measurement = measurePartials(strike, sampleRate)
@@ -296,6 +307,7 @@ func (r *compositeReference) measure(rendered, reference []float32, plan *Alignm
 	if onset < metrics.Overlap {
 		candStrike := aligned[onset:metrics.Overlap]
 		metrics.EnvelopeDB = r.envelopeError(candStrike, gainDB)
+		metrics.OnsetDB = r.onsetError(candStrike, gainDB)
 
 		if slope := analysis.DecaySlopeDBps(candStrike, r.sampleRate); !math.IsNaN(slope) && !math.IsNaN(r.slopeDBps) {
 			metrics.DecaySlopeDBps = math.Abs(slope - r.slopeDBps)

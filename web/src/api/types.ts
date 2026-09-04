@@ -495,6 +495,7 @@ export interface FitMetrics {
   spectral_fine_db: number | null;
   spectral_coarse_db: number | null;
   envelope_db: number | null;
+  onset_db: number | null;
   decay_slope_dbps: number | null;
   waveform: number | null;
   gain_db: number | null;
