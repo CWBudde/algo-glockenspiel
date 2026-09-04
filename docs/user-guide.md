@@ -138,6 +138,28 @@ glockenspiel fit \
   --resume
 ```
 
+### The Browser Fit Is A Demonstration, Not A Campaign Path
+
+`glockenspiel serve` hosts a web app whose Optimize tab can also start a fit. Two different
+things answer that tab's requests, and they are not interchangeable:
+
+- When `glockenspiel serve` itself is reachable, the tab's requests go over HTTP to the same
+  `fitrun` engine this command and the training campaign use, run at full native speed on every
+  core. This is the serious path: it is what a campaign, or any fit whose result you plan to
+  keep, should go through, and its run directories, history and restart recovery are documented
+  in [serve.md](serve.md).
+- When it is not — GitHub Pages, or `serve` not running — the tab falls back to a second path
+  that fits entirely inside the browser, compiled to WebAssembly. It exists so the algorithm can
+  be tried with no terminal, no Go toolchain and no server, and it says so in the UI. It runs
+  single-threaded: Go's `js/wasm` target has no goroutines to spare, so Mayfly and CMA-ES
+  evaluate one candidate at a time instead of one per core, there is no run history across a
+  reload, and it is markedly slower than either the CLI or the server path. See
+  [web-app.md](web-app.md#fitting-on-pages) for how it is wired.
+
+Neither browser path is this command: both call the same optimizer code `fit` does, but a
+campaign, a batch of presets, or anything scripted belongs on this command line or on
+`glockenspiel serve`'s HTTP API, not in a browser tab.
+
 ### What The Flags Do
 
 - `--reference`: mono WAV file to match
@@ -548,4 +570,6 @@ means the search wanted to leave the box. Then try:
 3. widening or narrowing the box with `--bounds`, guided by the pinned list
 4. increasing `--max-iter`
 5. increasing `--time-budget`
-6. `spectral` instead of `rms`, as a different target rather than a better one
+6. switching profiles — `placement` if the partials are missing or mispositioned, `polish` once
+   they are not — rather than reaching for the legacy `spectral` term: the training review found
+   it outvoted by empty bins, which is why `balanced` and its two relatives exist

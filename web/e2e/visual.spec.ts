@@ -269,6 +269,12 @@ async function expectNoBodyOverflow(page: Page): Promise<void> {
       .filter(
         (element) =>
           !element.closest(".playfield-viewport") &&
+          // The run list's table is the same "wide content scrolls inside
+          // its own overflow-x: auto container" pattern the playfield
+          // viewport already is: its rows carry a 520px min-width so narrow
+          // columns do not truncate, and .run-list-table clips and scrolls
+          // that internally rather than growing the page.
+          !element.closest(".run-list-table") &&
           element.getBoundingClientRect().right > bodyRight + 1,
       )
       .map((element) => ({
@@ -1544,7 +1550,7 @@ test("Optimize keeps a canceled fit with a preset usable in Results", async ({
   ).toBeEnabled();
   await expect(
     results.getByRole("link", { name: "Download preset JSON" }),
-  ).toHaveAttribute("href", "api/fit/preset");
+  ).toHaveAttribute("href", "api/fit/jobs/job-visual/preset");
 });
 
 test("a fitted preset becomes a sound the Play tab can choose", async ({
@@ -1571,15 +1577,26 @@ test("a fitted preset becomes a sound the Play tab can choose", async ({
 
   // Registered after installFitScenario so it wins the match: the scenario's
   // "**/api/fit" covers the status endpoint only, and this is the document the
-  // button reads back.
-  await page.route("**/api/fit/preset", async (route) => {
+  // button reads back, from the job-scoped route Audition actually fetches
+  // (getFitJobPreset), not the unnumbered one.
+  await page.route("**/api/fit/jobs/job-visual/preset", async (route) => {
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
-        version: 2,
+        version: "2.0",
         name: "Fitted Bar",
         note: 69,
-        parameters: {},
+        // A real BarParams, not an empty stub: ParameterTable (Task 8) now
+        // renders every field of it, and an incomplete document crashes the
+        // render instead of the deliberately absent Comparison/reference
+        // fetches, which the component handles as an ordinary read error.
+        parameters: {
+          input_mix: 0.5,
+          filter_frequency: 2000,
+          base_frequency: 440,
+          modes: [{ amplitude: 1, frequency: 1800, decay_ms: 500 }],
+          chebyshev: { enabled: false, harmonic_gains: [] },
+        },
       }),
     });
   });

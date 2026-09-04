@@ -115,7 +115,13 @@ export function RunList({ selectedJobId, onSelect }: RunListProps) {
                 role="listitem"
                 className="run-list-row"
                 data-state={job.state}
-                aria-pressed={job.jobId === selectedJobId}
+                // Not aria-pressed: that attribute is only allowed on
+                // role="button", and this row's role is "listitem" so it
+                // nests correctly inside the "list" above it. aria-current
+                // is the one selection signal every role accepts, which is
+                // what a real run list (Task 9 caught this against actual
+                // job history; every prior test's list was empty) needs.
+                aria-current={job.jobId === selectedJobId ? "true" : undefined}
                 onClick={() => {
                   onSelect(job.jobId);
                 }}

@@ -238,6 +238,11 @@ holds is bounded, at the **200 newest**. A job past that cap is still on disk,
 is still read by the campaign tooling, and comes back if the server is restarted
 over the same work directory — it is simply not in `/api/fit/jobs` until then.
 
+Trimming only ever drops a finished job, and only from the oldest end: it stops
+at the first entry still `running` or `queued` rather than evicting it, so a
+long-lived fit started under a history already at the cap is never forgotten
+mid-run for having overstayed its welcome.
+
 ### Where a fit is run
 
 The server does not fit anything itself. A start request is validated, written
