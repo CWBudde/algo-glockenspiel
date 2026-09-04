@@ -79,7 +79,12 @@ describe("termContributions", () => {
     const contributions = termContributions(metrics(), profile);
     const coarse = contributions.find((c) => c.term === "spectral_coarse_db");
 
-    expect(coarse).toMatchObject({ value: null, scaled: 0, share: 0, measured: false });
+    expect(coarse).toMatchObject({
+      value: null,
+      scaled: 0,
+      share: 0,
+      measured: false,
+    });
   });
 
   it("keeps the profile's own reporting order", () => {

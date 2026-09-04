@@ -56,11 +56,7 @@ function defaultDuration(referenceSeconds: number): number {
  * long mayfly run wants to hear. Gating on the state instead would hide a
  * perfectly good preset behind a "canceled" label.
  */
-export function Audition({
-  snapshot,
-  artifacts,
-  onUseInPlay,
-}: AuditionProps) {
+export function Audition({ snapshot, artifacts, onUseInPlay }: AuditionProps) {
   const hasPreset = snapshot?.hasPreset ?? false;
 
   const jobId = snapshot?.jobId ?? null;
@@ -135,8 +131,7 @@ export function Audition({
 
   const sourceKind =
     abSource !== null && abSource.jobId === jobId ? abSource.kind : "fit";
-  const activeAudioUrl =
-    sourceKind === "reference" ? referenceUrl : audioUrl;
+  const activeAudioUrl = sourceKind === "reference" ? referenceUrl : audioUrl;
 
   const playerRef = useRef<HTMLAudioElement | null>(null);
 

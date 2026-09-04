@@ -313,7 +313,9 @@ export function getFitJobPreset(jobId: string): Promise<Preset> {
  */
 export function fitJobAudioUrl(jobId: string, seconds?: number): string {
   const suffix =
-    seconds === undefined ? "" : `?duration=${encodeURIComponent(String(seconds))}`;
+    seconds === undefined
+      ? ""
+      : `?duration=${encodeURIComponent(String(seconds))}`;
 
   return `${API_BASE}fit/jobs/${encodeURIComponent(jobId)}/audio${suffix}`;
 }

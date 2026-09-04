@@ -134,10 +134,20 @@ describe("compareRunLabel", () => {
   // time and the counter -- or two rows in the picker read as the same run.
   it("tells apart two runs started the same day", () => {
     const first = compareRunLabel(
-      job({ jobId: "fit-20260904T050000-0001", optimizer: "cmaes", metric: "polish", note: 72 }),
+      job({
+        jobId: "fit-20260904T050000-0001",
+        optimizer: "cmaes",
+        metric: "polish",
+        note: 72,
+      }),
     );
     const second = compareRunLabel(
-      job({ jobId: "fit-20260904T050512-0002", optimizer: "cmaes", metric: "polish", note: 72 }),
+      job({
+        jobId: "fit-20260904T050512-0002",
+        optimizer: "cmaes",
+        metric: "polish",
+        note: 72,
+      }),
     );
 
     expect(first).not.toBe(second);

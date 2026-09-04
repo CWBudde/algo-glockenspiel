@@ -283,7 +283,10 @@ export function OptimizePage({ api, wasm, onUseInPlay }: OptimizePageProps) {
             existing Playwright snapshots of that path cover exactly this.
           */}
           {!browserMode && (
-            <RunList selectedJobId={selectedJobId} onSelect={setSelectedJobId} />
+            <RunList
+              selectedJobId={selectedJobId}
+              onSelect={setSelectedJobId}
+            />
           )}
 
           <div className="optimize-workspace">

@@ -60,9 +60,16 @@ includes = ["*.sh"]
 priority = 1
 
 # Markdown, YAML, JSON formatter
+#
+# Pinned to the exact version CI checks against. treefmt otherwise calls
+# whatever `prettier` is on PATH, and prettier's minor releases do change
+# formatting -- 3.9 wraps multi-line type unions differently from 3.8 -- so an
+# unpinned local formatter and a pinned CI check disagree about a correctly
+# formatted tree. Bump this and .github/workflows/test-format.yaml together,
+# then run `just fmt` in the same commit.
 [formatter.prettier]
-command = "prettier"
-options = ["-w"]
+command = "npx"
+options = ["--yes", "prettier@3.8.0", "-w"]
 includes = [
     "*.md",
     "*.yaml",

@@ -76,9 +76,10 @@ function parseColor(value: string, fallback: [number, number, number]) {
 function readPalette(theme: ResolvedTheme) {
   return {
     theme,
-    referenceLine: parseColor(cssColor("--copper-accent", "#8d562d"), [
-      141, 86, 45,
-    ]),
+    referenceLine: parseColor(
+      cssColor("--copper-accent", "#8d562d"),
+      [141, 86, 45],
+    ),
     renderLine: parseColor(cssColor("--brass", "#e3bb7a"), [227, 187, 122]),
     quiet: parseColor(cssColor("--surface-card", "#f3eee6"), [243, 238, 230]),
     loud: parseColor(cssColor("--copper-accent", "#8d562d"), [141, 86, 45]),
@@ -105,7 +106,8 @@ function drawWaveform(
 
   ctx.clearRect(0, 0, width, height);
 
-  const centre = height - ((0 - range.min) / (range.max - range.min || 1)) * height;
+  const centre =
+    height - ((0 - range.min) / (range.max - range.min || 1)) * height;
 
   ctx.strokeStyle = grid;
   ctx.lineWidth = 1;
@@ -233,7 +235,10 @@ export function Comparison({ jobId, hasPreset }: ComparisonProps) {
   const compare = read !== null && read.jobId === jobId ? read.compare : null;
   const range =
     compare !== null
-      ? sharedAmplitudeRange(compare.reference.waveform, compare.render.waveform)
+      ? sharedAmplitudeRange(
+          compare.reference.waveform,
+          compare.render.waveform,
+        )
       : null;
   const peakDb =
     compare?.floorDb !== undefined
@@ -353,9 +358,8 @@ export function Comparison({ jobId, hasPreset }: ComparisonProps) {
       <h3 id="comparison-heading">Comparison</h3>
 
       <p className="optimize-note">
-        The reference the objective scored, and a render of the fitted
-        preset, both drawn on one shared time axis, amplitude scale and dB
-        range.
+        The reference the objective scored, and a render of the fitted preset,
+        both drawn on one shared time axis, amplitude scale and dB range.
       </p>
 
       <div className="fit-comparison-columns">

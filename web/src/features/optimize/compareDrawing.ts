@@ -43,12 +43,7 @@ export function sharedAmplitudeRange(
 ): AmplitudeRange {
   let peak = 0;
 
-  for (const values of [
-    reference.min,
-    reference.max,
-    render.min,
-    render.max,
-  ]) {
+  for (const values of [reference.min, reference.max, render.min, render.max]) {
     for (const value of values) {
       if (Number.isFinite(value)) {
         peak = Math.max(peak, Math.abs(value));
