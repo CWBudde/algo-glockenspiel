@@ -26,7 +26,7 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | 5     | Web app                      | open — 5.1–5.6 done; payload size remains |
 | 6     | Split out VST3               | done                                      |
 | 7     | Documentation                | open — 7.1 and 7.2 done                   |
-| 8     | Training                     | open — 8.0–8.7, 8.9, 8.10 done, 8.8 open  |
+| 8     | Training                     | done — 8.0–8.10                           |
 
 Closed phases are summarised here and documented in full under [docs/](docs/); the detail that
 was in this file has moved there rather than been dropped.
@@ -1216,54 +1216,75 @@ Goal: the UI a campaign needs — history, provenance, comparison.
 
 ### Phase 8.8: CLI runs visible in the Optimize tab
 
-Goal: a fit started from the terminal, and a campaign of dozens of them, is watchable live in
-the browser without moving the search into the server process.
+**Done.** A fit started from the terminal, and a campaign of dozens of them, is watchable live in
+the browser, and the search still runs where it was started.
 
-The gap is one caller, not a missing feature. `internal/fitrun`'s own package comment says it
+The gap was one caller, not a missing feature. `internal/fitrun`'s own package comment says it
 "is the library form of what `glockenspiel fit` does", and both the campaign runner and — since
-8.7 — the server delegate to it. The fit command never did: `internal/cli/fit.go` calls
-`selectedOptimizer.Optimize` directly (`fit.go:639`) and writes a layout that predates the run
-directory, `checkpoint_NNNN.json` beside `fitted_output.wav`. So a CLI run leaves nothing
-`internal/server/restore.go` can read, and the run list cannot show it. The three parallel
-pipelines the phase started with are down to two, and this closes the last one.
+8.7 — the server delegated to it. The fit command never did, so it wrote a layout that predated
+the run directory and `internal/server/restore.go` had nothing to read. The three parallel
+pipelines the phase started with are now one.
 
-The live half is a scan, not a submit. `restore.go` already reads run directories; it does it
-once, from `Server.Run` (`server.go:201`). A directory holding a `config.json` and no
-`result.json` is a fit in flight, and `trace.jsonl` already carries iteration, evaluations,
-elapsed, current and best cost, the restart index and the full term breakdown on every improving
-line — which is the whole of what a snapshot and a cost curve need. Following that file is
-enough; nothing has to be posted to the server, and a campaign's jobs become watchable for the
-same reason a hand-run fit does. **Decided against** the shape MayFlyCircleFit uses, where the
-CLI submits to the server and the server owns the queue (`circlefit schedule`, `status --server`,
-`resume --server-url`): it would relocate execution, so the worker count, the Ctrl-C semantics
-and the reference's provenance all change, and it would still leave campaign runs invisible.
+- [x] `glockenspiel fit` runs through `fitrun.Run`. `--work-dir` is the run directory and
+      carries the contract's nine files. `fit.go` went from 1447 lines to 1125 by deleting what
+      the library already did: the provenance block, the polish stage, the checkpoint cadence,
+      the initial-point clamp, the render and the second preset save. Four flags the command had
+      and the spec did not — `--analysis`, `--resume`, and the two cadences whose zero means
+      something different on a command line than in a struct — became `Spec.Analysis`,
+      `Spec.Resume` and `CheckpointNever`, rather than a second code path.
+- [x] `--resume` still finds a checkpoint. The run directory holds one `checkpoint.json`,
+      overwritten as the search improves, so it is by construction the newest state;
+      `optimizer.FindLatestCheckpoint` prefers it and falls back to the old `checkpoint_*.json`
+      glob, so a work directory left by an older build still resumes. `fitted_output.wav` is
+      gone, because it was a second copy of `render.wav` that nothing read.
+- [x] The server follows a live run directory. The startup scan is a scan every second: a
+      directory holding a `config.json` and no `result.json` is a **running** job whose progress
+      is read by tailing `trace.jsonl` from a remembered byte offset, and it becomes terminal
+      with the summary `result.json` records. The tail stops at the last newline, so a
+      half-written line is never parsed — pinned by a test that appends a headless fragment and
+      asserts it stays unread until it is completed.
+- [x] `restoreFreshnessWindow` is retired. The five-minute guess existed only because the server
+      could not tell "still running" from "died with its process"; a followed directory answers
+      that by observation. The trade runs the other way now and is worth naming: a run that
+      really did die stays `running` until something writes its `result.json`, where before a
+      live run of another process was called `failed`. The old rule was wrong about the case
+      that happens on purpose; the new one is wrong about the case that happens by accident.
+- [x] A followed run is labelled as one the server did not start. It carries `"followed": true`
+      in its snapshot and its list row, `POST /api/fit/cancel` refuses it with a 409, and the
+      Optimize tab shows Cancel **disabled with the reason** rather than hidden — a missing
+      button is a question, a disabled one with a sentence beside it is an answer.
+- [x] A followed run is a first-class live job, not a row. `useTracedFit` polls the job and its
+      trace, so the cost curve and the term bars update from the tail exactly as a served fit's
+      do. The one-shot read and the fake static events a selected historical row used to get are
+      gone.
+- [x] The active job cannot be yanked away mid-session. `GET /api/fit` answers about the most
+      recently _recorded_ job, so an adopted CLI run becomes that — which would have repainted
+      somebody's own running fit with a stranger's cost under its name. `useFitEvents` now drops
+      a snapshot whose `jobId` is not the watched one and closes the `EventSource`, which also
+      covers an ordinary reconnect landing on the same answer. At mount there is nothing to take
+      away, so the page still adopts whatever the server calls active.
+- [x] The run list keeps reading after it settles. A terminal history used to be final and stop
+      polling; the server now adopts new directories on its own timer, so a fit started in a
+      terminal has to appear without a reload. Three seconds while a row is unsettled, ten
+      once none is.
+- [x] `docs/serve.md` records the arrangement: the two shapes a directory can have and what each
+      now means, the retired rule kept as history rather than deleted, `followed` in both the
+      snapshot and the cancel sections, and the shared-work-dir warning rewritten. Pointing a
+      server at a campaign tree is now something that works rather than something that survives;
+      two _servers_ over one directory is still the case to avoid, and for a different reason —
+      both would accept starts into the same tree.
 
-- [ ] `glockenspiel fit` runs through `internal/fitrun.Run`. `--work-dir` becomes the run
-      directory and gains the contract's files; the checkpoint keeps its name so `--resume`
-      still finds one. Flags the command has and `fitrun.Spec` does not get a home in the spec
-      rather than a second code path — 8.7 added three for the same reason. Touches
-      `internal/cli/fit.go` (1430 lines against revive's 1500 cap, so this should shrink it),
-      `internal/fitrun/spec.go`. Pinned by a test that runs the command into a temp dir and
-      asserts the same file set `internal/server/fit_rundir_test.go` asserts, and by an existing
-      `--resume` test still passing.
-- [ ] The server follows a live run directory. The startup scan becomes a periodic one; a
-      directory with a `config.json` and no `result.json` is restored as a **running** job whose
-      progress is read by tailing `trace.jsonl`, and it becomes terminal when `result.json`
-      lands. Touches `internal/server/restore.go`, `internal/server/jobs.go`. This retires
-      `restoreFreshnessWindow` (`restore.go:46`), the five-minute guess that exists only because
-      the server cannot currently tell "still running" from "died with its process" — a followed
-      directory answers that by observation. Pinned by a test that starts a server over a
-      directory being written line by line and asserts the job appears running, its best cost
-      falls, and it ends terminal with the summary `result.json` records.
-- [ ] The Optimize tab shows a followed run as a first-class live job: the cost curve and the
-      term bars update from the tailed trace, and the run is labelled as one the server did not
-      start, so nobody expects the stop control to reach it. Touches `web/src/features/optimize/`.
-      Pinned by a Playwright spec that writes a synthetic run directory under the server's work
-      dir and asserts the run list picks it up.
-- [ ] `docs/serve.md` records the new arrangement, including what changes about pointing two
-      servers or a live campaign at one `--work-dir` — today it tells the operator not to, and
-      the freshness window is the fallback for when they do anyway. Following a directory makes
-      the shared case work rather than merely survive, so the warning is rewritten, not deleted.
+Two things this pass found that were not what the checkbox set out to fix:
+
+- `serve-fit.spec.ts` recognised the fallback listener by an idle 404 on `/api/fit`, which a
+  followed run permanently defeats: the endpoint answers for an adopted directory whether or not
+  this server ever ran a fit. It probes for a real `jobs` array now. A test that identifies a
+  server by what it has _not_ got is only correct while nothing else can supply it.
+- The Playwright work directory was a fresh `mktemp` per start, and twenty-five copies of it at
+  15 MB each had accumulated in `/tmp`. It is one reused directory now. This is also the real
+  cause of the `ERR_INSUFFICIENT_RESOURCES` failure reported at the end of the previous session
+  as a Vite module-burst limit: `/tmp` is a 7.3 G tmpfs shared with other projects and it was
+  full, so Chromium could not allocate. It is still at 96%.
 
 ### Phase 8.9: An output gain, so a fit can be shipped
 
@@ -1432,8 +1453,11 @@ campaign, not an edit.
 
 ## Resume Point
 
-Phases 0-4 and 6 are closed and summarised above; their detail is in [docs/](docs/). **Phases
-5, 7 and 8 are open.** Phase 8 is the one to work on, at 8.8; 8.9 and 8.10 are done.
+Phases 0-4, 6 and now 8 are closed and summarised above; their detail is in [docs/](docs/).
+**Phases 5 and 7 are open**, and what is left in each is small and named below. The larger piece
+of work is not a phase at all: 8.10 changed what the objective scores, so `docs/training.md`'s
+tables and the `engine-shape` campaign results were taken under arithmetic that no longer runs.
+Re-taking them is a campaign, and it is the thing to do next.
 
 **Phase 8, training.** Reviewed on 2026-09-02; 8.0 is done the same day. `glockenspiel distance`
 prints every objective term for a written preset and `docs/training.md` holds the baseline for
@@ -1516,13 +1540,21 @@ still chooses its own backend. Item 4 unified the tables and the names, not the 
 The output gain that used to stand between a measured refit and a shipped preset is done — see
 8.9 below.
 
-**8.8 is open.** A fit started from the terminal still leaves nothing the server can show. The
-cause is the last of the three parallel pipelines: `glockenspiel fit` never moved onto
-`internal/fitrun` the way the campaign runner and, in 8.7, the server did, so it writes a layout
-that predates the run directory and `internal/server/restore.go` has nothing to read. Porting the
-command closes that; making the startup scan a periodic one that follows `trace.jsonl` makes a
-CLI fit — and a campaign of them — watchable live, without moving the search into the server
-process the way MayFlyCircleFit does.
+**8.8 is done 2026-09-05**, and it closes Phase 8. `glockenspiel fit` runs through
+`internal/fitrun` like everything else, so a run started in a terminal leaves the same directory
+a served fit does; the server rescans its work directory every second and follows a directory
+still being written by tailing its trace, which retires the five-minute freshness guess; and the
+Optimize tab shows such a run as a live job with its cost curve and term bars, labelled as one
+the server cannot stop. Proven end to end rather than by unit test: a fit started in a second
+terminal appears in `/api/fit/jobs` as running and followed, its cancel is refused with a 409,
+and it goes terminal when `result.json` lands.
+
+The debt 8.6 named still stands, and is now the only one: the CLI defaults to `mayfly` while the
+browser fit still chooses its own backend, because `internal/browserfit` cannot import
+`internal/fitrun` without pulling the filesystem into WASM. The stale Optimize screenshots that
+8.7 left open are gone — they were retaken on 2026-09-04, once it was established that this
+machine renders exactly as the CI runner does and the font story that had blocked them for two
+weeks was wrong.
 
 **Phase 5, payload size.** The one unaddressed sub-item. Adding the browser optimizer made the
 raw WASM larger, so this is now splitting or lazy-loading the Go payload rather than shaving

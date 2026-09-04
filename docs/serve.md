@@ -216,22 +216,55 @@ frame — carries the whole state of one job, and that includes its provenance:
 - `restart` counts CMA-ES restarts and `epoch` counts mayfly rounds. They are
   the same counter inside the optimizer read under two meanings, so exactly one
   of them is ever present and a reader never has to know which backend ran.
+- `followed` says the server read this run out of the work directory and follows
+  it by tailing its trace, rather than having started it. It is always present,
+  so a client never has to tell "not followed" apart from "an older server that
+  did not say", and it stays `true` once the run is over. What it is for is the
+  stop control: a followed run's search is in another process, so cancelling it
+  from here is refused, and a client that knows this in advance can say so
+  instead of offering a button that returns a `409`.
 
 ### History and restarts
 
 `/api/fit/jobs` lists every job newest first: its id, state, start and finish,
-the best cost it reached, the score it recorded, and the note, velocity,
-optimizer and metric it was asked for.
+the best cost it reached, the score it recorded, the note, velocity, optimizer
+and metric it was asked for, and whether it is one the server started or one it
+merely `followed`.
 
-The list survives a restart. On startup the work directory is read back, and
-every directory in it holding a `config.json` becomes a job again. `fitrun`
-writes `config.json` before the search and `result.json` after it, so a
-directory holding the first and not the second is a fit that died with the
-process running it: it comes back as `failed` with the stop reason
-`interrupted`, never as `running`. A run whose `result.json` records a cancelled
-stop reason comes back as `canceled`, and everything else as `succeeded`. It is
-the same rule `glockenspiel-campaign status` reads a campaign's directories by,
-because these are the same directories.
+The list is not built once. The work directory is read at startup and then
+again every second, and every directory in it holding a `config.json` becomes a
+job — including one that appeared after the server did. `fitrun` writes
+`config.json` before the search and `result.json` after it, so the two shapes on
+disk mean two different things:
+
+- **`config.json` and a `result.json`.** A finished run, terminal from the
+  moment it is read. A `result.json` recording a cancelled stop reason comes
+  back as `canceled`, anything else as `succeeded`, and one that exists but
+  cannot be parsed after five consecutive reads as `failed` with the stop reason
+  `interrupted`.
+- **`config.json` and no `result.json`.** A fit still being written, restored as
+  **`running`** and followed: the server tails its `trace.jsonl` from a
+  remembered byte offset, and every whole line it gains moves the job's best
+  cost, evaluation count and elapsed time exactly as a served fit's own reports
+  do. It becomes terminal when `result.json` lands, with the summary that file
+  records.
+
+That second rule is new. It used to read "a directory holding the first and not
+the second is a fit that died with the process running it", which came back as
+`failed` — because the server had no way to tell a crashed run from one another
+process is still writing, both leaving exactly that shape on disk. Following the
+directory answers that by observation rather than by guessing, so the five-minute
+freshness window that used to hide very young directories from the history is
+gone. The cost of the trade is at the other end: a run that really did die with
+its process now stays `running` until something writes its `result.json`, rather
+than being called `failed` after a timeout the server invented.
+
+**A followed job is one this server did not start, and cannot stop.** It carries
+`"followed": true` in both its snapshot and its list row, and `POST
+/api/fit/cancel` refuses it with a `409` — the process running that search is
+somebody else's, and its Ctrl-C is in another terminal. The flag stays `true`
+after the run finishes, because how a row got into the history is a fact about
+the row rather than a phase it passes through.
 
 Every run directory stays on disk for good; only the list a running process
 holds is bounded, at the **200 newest**. A job past that cap is still on disk,
@@ -243,17 +276,14 @@ at the first entry still `running` or `queued` rather than evicting it, so a
 long-lived fit started under a history already at the cap is never forgotten
 mid-run for having overstayed its welcome.
 
-**The work directory must not be shared between servers, or with a running
-campaign.** Restore's rule -- `config.json` and no `result.json` is `failed` --
-cannot tell a run that crashed apart from one another process, or another
-server, is still writing: both leave exactly that shape on disk. A
-`config.json` written in roughly the last five minutes is treated as still in
-progress and left out of the restored history rather than shown as a false
-failure, which covers a run just starting when a second server happens to read
-the directory, but it is a heuristic, not a guarantee, for anything that runs
-longer than that before its own restart reads the same tree. Point `--work-dir`
-at a directory this server owns alone; if you do aim it at a campaign tree to
-read its history, do so only once the campaign itself is done writing to it.
+**Pointing a server at a directory something else is writing now works rather
+than merely surviving.** A `glockenspiel fit` in a second terminal, or a whole
+campaign of them, appears in `/api/fit/jobs` within a second of starting and is
+watchable to the end — which is the point of following, not a side effect of it.
+Two _servers_ over one work directory is still the case to avoid: both would
+follow the other's runs, and both would accept start requests into the same
+tree, so a directory can be claimed twice. Give each server a `--work-dir` it
+owns, and aim it at a campaign tree when you want to watch that campaign.
 
 ### Where a fit is run
 
@@ -468,6 +498,11 @@ as the context was cancelled, a client that immediately started a new fit would
 race the old goroutine's last evaluation and get a `409` it could do nothing
 about but retry. Pass `?job=fit-1` to refuse the cancel if the current job is no
 longer the one you meant to stop.
+
+A followed job cannot be cancelled at all: `POST /api/fit/cancel` answers `409`
+for one, because the search is running in a process this server does not own.
+The snapshot's `followed` flag is there so a client can hide or disable the
+control rather than discover this from the error.
 
 A cancelled run keeps the best parameters it found. Losing them would make
 "cancel" mean "throw away the last ten minutes", which is the opposite of what
