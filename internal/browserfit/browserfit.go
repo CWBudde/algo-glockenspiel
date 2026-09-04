@@ -365,6 +365,24 @@ func (p *Prepared) Preset(params []float64) (*preset.Preset, error) {
 	return fitted, nil
 }
 
+// Calibrate writes the output gain that puts a fitted preset at the house
+// level, the same calibration the CLI and the campaign harness apply on the way
+// out. Without it a browser fit hands over whatever absolute level the search
+// happened to land on, which for a fit against a quiet reference is tens of
+// decibels down -- the preset would download and audition far below every other
+// preset in the instrument.
+//
+// It costs one render, so it belongs where a preset leaves for a listener --
+// download or audition -- rather than on the progress path, which decodes a
+// preset on every optimizer report.
+func Calibrate(fitted *preset.Preset) error {
+	if _, _, err := synth.ApplyOutputGain(fitted); err != nil {
+		return fmt.Errorf("calibrate the fitted preset: %w", err)
+	}
+
+	return nil
+}
+
 // MarshalPreset returns a downloadable, human-readable preset document.
 func MarshalPreset(fitted *preset.Preset) ([]byte, error) {
 	if err := preset.Validate(fitted); err != nil {

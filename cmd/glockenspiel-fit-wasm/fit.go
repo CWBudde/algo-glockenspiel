@@ -242,7 +242,16 @@ func (m *wasmFitManager) fittedPreset() (*wasmFitJob, *preset.Preset, error) {
 		return nil, nil, fmt.Errorf("fit %s has produced no preset yet", job.id)
 	}
 
-	return job, job.fitted.Clone(), nil
+	// Every preset that leaves this job -- downloaded or auditioned -- passes
+	// through here, which is why the level is written here rather than where the
+	// point is decoded: decoding happens on every progress report and this
+	// happens when someone asks.
+	fitted := job.fitted.Clone()
+	if err := browserfit.Calibrate(fitted); err != nil {
+		return nil, nil, err
+	}
+
+	return job, fitted, nil
 }
 
 func (j *wasmFitJob) running() bool {
