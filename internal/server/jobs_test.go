@@ -370,8 +370,19 @@ func TestAHalfWrittenRunDirectoryComesBackAsFailed(t *testing.T) {
 	  "started": "2024-01-02T03:04:05Z"
 	}`
 
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o600); err != nil {
+	configPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config.json: %v", err)
+	}
+
+	// Backdated well past restoreFreshnessWindow: a config.json this old with
+	// no result.json is what a run that died with its process looks like, as
+	// opposed to one still being written by whatever process owns the
+	// directory right now. TestARecentlyStartedRunIsNotYetRestoredAsFailed
+	// covers the other half.
+	stale := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(configPath, stale, stale); err != nil {
+		t.Fatalf("backdate config.json: %v", err)
 	}
 
 	// A directory that is not a run at all is not a job either.
@@ -413,5 +424,46 @@ func TestAHalfWrittenRunDirectoryComesBackAsFailed(t *testing.T) {
 
 	if response := getFit(t, handler, "/api/fit/jobs/"+jobID+"/trace"); response.Code != http.StatusNotFound {
 		t.Errorf("GET the trace of an unfinished run = %d, want 404: %s", response.Code, response.Body.String())
+	}
+}
+
+// TestARecentlyStartedRunIsNotYetRestoredAsFailed pins Finding 5 of the
+// whole-phase review: a config.json with no result.json is exactly what two
+// servers pointed at the same --work-dir, or a server started against a
+// directory a live campaign is still writing into, both leave behind for a
+// run that has not finished yet. A config.json written moments ago is read as
+// "still going" rather than "died with its process", and the directory is
+// left out of the restored history rather than shown as a false failure.
+func TestARecentlyStartedRunIsNotYetRestoredAsFailed(t *testing.T) {
+	workDir := t.TempDir()
+
+	const jobID = "fit-20240102T030405-0001"
+
+	dir := filepath.Join(workDir, jobID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("make the run directory: %v", err)
+	}
+
+	config := `{
+	  "note": 72,
+	  "velocity": 90,
+	  "sample_rate": 8000,
+	  "metric": "rms",
+	  "engine": {"name": "mayfly"},
+	  "reference": {"seconds": 0.2},
+	  "started": "2024-01-02T03:04:05Z"
+	}`
+
+	// Written just now, with no backdating: this is what an in-progress run
+	// looks like at the instant a second server reads the directory.
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o600); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+
+	handler := newFitServerIn(t, workDir).Handler()
+
+	list := jobList(t, handler)
+	if len(list.Jobs) != 0 {
+		t.Fatalf("the history is %+v, want the recently started run left out of it", list.Jobs)
 	}
 }

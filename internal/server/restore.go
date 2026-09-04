@@ -30,6 +30,22 @@ const interruptedFailure = "the fit did not finish: the server running it stoppe
 // reasons are written in.
 const stopReasonInterrupted = "interrupted"
 
+// restoreFreshnessWindow is how recently a directory's config.json may have
+// been written before a missing result.json is read as failure rather than
+// the directory being skipped outright.
+//
+// Two servers pointed at the same --work-dir, or one pointed at a directory a
+// campaign is still writing into, both leave exactly this shape behind: a
+// config.json with no result.json, because the run genuinely has not finished
+// yet. There is no way to tell that apart from a run that died with the
+// process that owned it, except how recently config.json was written -- which
+// is not proof either way, only enough to keep a run in its first few minutes
+// from being restored as "failed" the moment a second server starts up beside
+// it. docs/serve.md tells the operator not to point two servers, or a live
+// campaign, at the same directory at all; this is the fallback for when they
+// do anyway.
+const restoreFreshnessWindow = 5 * time.Minute
+
 // restoredConfig is the part of fitrun's config.json a rebuilt job needs.
 //
 // It is a reader of its own rather than fitrun's record, which is unexported
@@ -258,10 +274,20 @@ func restoreJob(dir, id string) *fitJob {
 
 	summary, err := readRestoredSummary(dir)
 	if err != nil {
-		// A missing result.json is a run that died with the process that owned
-		// it; an unreadable one is a run whose record cannot be trusted. Both
-		// are failures rather than successes, and neither is a cancellation:
-		// the difference is only what the message says.
+		// A config.json written within restoreFreshnessWindow, with no
+		// result.json yet, reads the same whether the run crashed or is simply
+		// still going under whatever process owns it now -- another server on
+		// the same directory, or a campaign this one is not part of. Skipping
+		// it here, rather than restoring it as failed, favours leaving a live
+		// run out of this process's history over misreporting it.
+		if errors.Is(err, fs.ErrNotExist) && writtenWithin(filepath.Join(dir, fitrun.FileConfig), restoreFreshnessWindow) {
+			return nil
+		}
+
+		// A missing result.json past that window is a run that died with the
+		// process that owned it; an unreadable one is a run whose record cannot
+		// be trusted. Both are failures rather than successes, and neither is a
+		// cancellation: the difference is only what the message says.
 		job.state = fitFailed
 		job.stopReason = stopReasonInterrupted
 		job.failure = interruptedFailure
@@ -364,4 +390,18 @@ func fileExists(path string) bool {
 	info, err := os.Stat(path)
 
 	return err == nil && !info.IsDir()
+}
+
+// writtenWithin reports whether path exists and was last modified less than
+// window ago. A file that cannot be stat'd is not "recent" -- restoreJob's
+// caller already knows config.json exists by the time it asks this, so a stat
+// failure here is not the freshness question, and treating it as "not recent"
+// leaves the ordinary failure path to describe it.
+func writtenWithin(path string, window time.Duration) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+
+	return time.Since(info.ModTime()) < window
 }

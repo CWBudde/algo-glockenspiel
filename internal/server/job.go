@@ -665,6 +665,19 @@ func (j *fitJob) finish(state fitState, result *preset.Preset, final *optimizer.
 		j.progress.CurrentCost = final.BestCost
 		j.progress.Elapsed = final.Elapsed
 		j.progress.BestParams = append([]float64(nil), final.BestParams...)
+
+		// final.BestCost is optimizer.Result's own, from before any polish
+		// stage runs; j.summary.Score, when there is one, is what fitrun wrote
+		// to result.json after polish -- the same number the job listing
+		// reports as this run's score. recordSummary runs before finish for
+		// exactly this run, so overriding here is what keeps the status panel
+		// and the run list from stating two different numbers for the one run
+		// that just finished. They only ever agreed by coincidence before,
+		// because nothing here sets spec.Polish yet.
+		if j.summary != nil {
+			j.progress.BestCost = j.summary.Score
+			j.progress.CurrentCost = j.summary.Score
+		}
 	}
 
 	if cause != nil {
@@ -706,6 +719,24 @@ func (j *fitJob) subscribe() (<-chan struct{}, func()) {
 		delete(j.subscribers, wake)
 		j.mu.Unlock()
 	}
+}
+
+// metricsCopy returns the objective's own metrics for this job's fitted
+// preset, or nil when none are recorded yet: a job still running, or one
+// rebuilt at startup whose summary could not be read. Copied out from behind
+// mu like everything else the snapshot reads, so a caller shifting a render
+// by the returned gain and lag never races the run that is still writing them.
+func (j *fitJob) metricsCopy() *optimizer.Metrics {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if j.metrics == nil {
+		return nil
+	}
+
+	metrics := *j.metrics
+
+	return &metrics
 }
 
 // presetCopy returns the best preset found so far, or nil. It is a deep copy:

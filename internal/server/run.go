@@ -200,8 +200,8 @@ func alignmentFor(align bool) *optimizer.AlignmentMode {
 //
 // The two engine name sets are the same strings by construction: the server's
 // "simple", "mayfly" and "cmaes" are fitrun's EngineSimple, EngineMayfly and
-// EngineCMAES, and selectOptimizer has already refused anything else at parse
-// time.
+// EngineCMAES, and validateFitBackend has already refused anything else at
+// parse time.
 func engineFor(settings fitRequest) fitrun.Engine {
 	engine := fitrun.Engine{Name: settings.Optimizer}
 

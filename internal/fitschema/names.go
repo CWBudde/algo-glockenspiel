@@ -4,20 +4,20 @@ import "github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 
 // The name lists below used to live only in web/src/api/types.ts, hand
 // transcribed from the Go packages that actually own each vocabulary:
-// selectOptimizer's switch, optimizer.ParseMetric, CMAESOptimizer's
-// covariance modes and the mayfly dialects, presets and selection
-// strategies. Neither internal/server nor internal/browserfit validated
-// most of them against a list of their own -- both packages pass the mayfly
-// variant, preset and selection straight through and let the mayfly library
-// refuse an unknown one -- so there was nothing in Go to generate the
-// browser's copy from. This file is that missing source: the browser's
-// dropdowns and its client-side check both read the generated mirror of it,
-// and a name added to a dialect here is a name the form offers without
-// anyone touching web/src.
+// internal/server's validateFitBackend switch, optimizer.ParseMetric,
+// CMAESOptimizer's covariance modes and the mayfly dialects, presets and
+// selection strategies. Neither internal/server nor internal/browserfit
+// validated most of them against a list of their own -- both packages pass
+// the mayfly variant, preset and selection straight through and let the
+// mayfly library refuse an unknown one -- so there was nothing in Go to
+// generate the browser's copy from. This file is that missing source: the
+// browser's dropdowns and its client-side check both read the generated
+// mirror of it, and a name added to a dialect here is a name the form offers
+// without anyone touching web/src.
 
-// OptimizerNames lists the backends selectOptimizer accepts, in every
-// implementation of it: internal/server/fit.go, internal/browserfit and
-// internal/fitrun/engine.go.
+// OptimizerNames lists the backends this project runs, in every
+// implementation of the name: internal/server's validateFitBackend,
+// internal/browserfit's selectOptimizer and internal/fitrun/engine.go.
 func OptimizerNames() []string {
 	return []string{"simple", "mayfly", "cmaes"}
 }

@@ -217,9 +217,9 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 	}
 
 	// The metric and the optimizer name are validated by the packages that own
-	// their vocabularies -- optimizer.ParseMetric and selectOptimizer -- rather
-	// than by a second list here that could fall out of step with them.
-	if _, err := selectOptimizer(settings, nil); err != nil {
+	// their vocabularies -- optimizer.ParseMetric and validateFitBackend --
+	// rather than by a second list here that could fall out of step with them.
+	if err := validateFitBackend(settings); err != nil {
 		return settings, err
 	}
 

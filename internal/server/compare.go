@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"math"
 	"net/http"
+	"os"
 	"path/filepath"
 
 	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
@@ -150,6 +151,10 @@ type fitSpectrogram struct {
 
 // handleFitJobCompare answers with both sides of one job's comparison.
 func (s *Server) handleFitJobCompare(writer http.ResponseWriter, request *http.Request) {
+	if !allowReadMethods(writer, request) {
+		return
+	}
+
 	job := s.jobFor(writer, request)
 	if job == nil {
 		return
@@ -170,6 +175,28 @@ func (s *Server) handleFitJobCompare(writer http.ResponseWriter, request *http.R
 
 		return
 	}
+
+	// allowReadMethods admits HEAD as well as GET, and everything below this
+	// point is the reason the endpoint needs bounding at all: a render, two
+	// full-resolution spectrogram transforms, both reduced. None of that has
+	// anything to contribute to a response whose body is discarded, so a HEAD
+	// answers from what has been resolved and validated so far and nothing
+	// more.
+	if request.Method == http.MethodHead {
+		writer.WriteHeader(http.StatusOK)
+
+		return
+	}
+
+	// The transform below is the expensive part -- two signals and two
+	// full-resolution spectrogram views before anything is reduced -- and this
+	// is a free, repeatable GET with no other limit on how many can run at
+	// once. A full channel is a 503, not a queue: a refused client can retry,
+	// while queuing it would only delay the same memory pressure.
+	if !s.acquireCompareSlot(writer) {
+		return
+	}
+	defer s.releaseCompareSlot()
 
 	fitted, ok := s.presetOf(writer, job)
 	if !ok {
@@ -199,7 +226,7 @@ func (s *Server) handleFitJobCompare(writer http.ResponseWriter, request *http.R
 		return
 	}
 
-	rendered := engine.RenderNote(job.request.Note, job.request.Velocity, seconds)
+	rendered := scoreAligned(engine.RenderNote(job.request.Note, job.request.Velocity, seconds), job.metricsCopy())
 
 	// The reference's transform is taken first because its floor is the one
 	// both pictures are painted against, exactly as the objective scores both
@@ -251,11 +278,61 @@ func (s *Server) handleFitJobReference(writer http.ResponseWriter, request *http
 		fmt.Sprintf("fit %s has no reference recording", job.id))
 }
 
+// acquireCompareSlot reserves one of the server's compareSlots, answering 503
+// and reporting false when none are free.
+//
+// A Server built directly rather than through New -- every test in this
+// package that drives handleFitJobCompare without a real listener -- has a
+// nil compareSlots and is left unbounded, matching what those tests already
+// assume; New always allocates one for anything actually served.
+func (s *Server) acquireCompareSlot(writer http.ResponseWriter) bool {
+	if s.compareSlots == nil {
+		return true
+	}
+
+	select {
+	case s.compareSlots <- struct{}{}:
+		return true
+	default:
+		writeJSONError(writer, http.StatusServiceUnavailable,
+			"too many comparisons in progress, try again shortly")
+
+		return false
+	}
+}
+
+// releaseCompareSlot frees a slot acquireCompareSlot reserved.
+func (s *Server) releaseCompareSlot() {
+	if s.compareSlots == nil {
+		return
+	}
+
+	<-s.compareSlots
+}
+
 // referenceOf reads the reference the run scored, answering the request
 // itself when there is none. The second return says whether the caller still
 // owns the response.
+//
+// The file is stat'd and capped before it is decoded. restoreJob adopts any
+// directory under the work directory that carries a config.json, with no
+// bound on what its reference.wav holds -- docs/serve.md even suggests
+// pointing --work-dir at a whole campaign tree -- so the upload limit that
+// bounds a live job's own reference does nothing for one rebuilt from disk.
+// Without this, a multi-minute, high-rate recording that a campaign happened
+// to leave beside a config.json becomes a free way to make this endpoint
+// allocate on the server's behalf.
 func (s *Server) referenceOf(writer http.ResponseWriter, job *fitJob) ([]float32, bool) {
 	path := filepath.Join(job.dir, fitrun.FileReference)
+
+	if info, err := os.Stat(path); err == nil {
+		if limit := s.maxReferenceBytes(); limit > 0 && info.Size() > limit {
+			s.logf("fit %s: reference.wav is %d bytes, over the %d byte cap", job.id, info.Size(), limit)
+			writeJSONError(writer, http.StatusInternalServerError, "the reference is too large to compare")
+
+			return nil, false
+		}
+	}
 
 	samples, rate, err := wavio.LoadMono(path)
 	if err != nil {
@@ -404,4 +481,57 @@ func roundTo(value float64, digits int) float64 {
 	scale := math.Pow10(digits)
 
 	return math.Round(value*scale) / scale
+}
+
+// scoreAligned shifts and scales a render into the space the objective
+// actually scored it in: the reference's own time base, at the gain the
+// composite objective solved for and applied to every term but the waveform
+// one, which is gain-free by construction. Without this, a fit that scored
+// well because the search is gain-invariant is drawn, or played back, at
+// whatever absolute level and onset the preset happens to render at, beside a
+// reference that is peak-normalised -- a picture and a sound that contradict
+// the score by exactly the quantity the score discarded.
+//
+// metrics is nil for a job with nothing recorded yet: still running, or
+// rebuilt at startup from a directory whose summary could not be read. The
+// render is returned unchanged then, because there is nothing to align it to
+// -- the alternative, refusing the request, would make the comparison and
+// audition endpoints flicker between working and not as a background restore
+// walks the work directory.
+//
+// A non-finite gain -- every term measure returns one for a candidate with no
+// overlap or no energy -- is treated as 0 dB, the same fallback
+// compositeReference.measure itself uses before applying GainDB to the
+// spectral and envelope terms. A lag that shifts every sample out of range
+// (larger in magnitude than the render) is not clamped away: the samples that
+// have nowhere to come from are left silent, which is the honest picture of a
+// render that never landed on the reference at all.
+func scoreAligned(rendered []float32, metrics *optimizer.Metrics) []float32 {
+	if metrics == nil || len(rendered) == 0 {
+		return rendered
+	}
+
+	gainDB := metrics.GainDB
+	if math.IsNaN(gainDB) || math.IsInf(gainDB, 0) {
+		gainDB = 0
+	}
+
+	lag := metrics.Lag
+	if lag == 0 && gainDB == 0 {
+		return rendered
+	}
+
+	gain := math.Pow(10, gainDB/20)
+	shifted := make([]float32, len(rendered))
+
+	for i := range shifted {
+		source := i + lag
+		if source < 0 || source >= len(rendered) {
+			continue
+		}
+
+		shifted[i] = float32(float64(rendered[source]) * gain)
+	}
+
+	return shifted
 }

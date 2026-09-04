@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
+	"github.com/cwbudde/algo-glockenspiel/internal/server"
 	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
 )
 
@@ -237,6 +239,80 @@ func TestTheReferenceEndpointServesTheSignalTheFitScored(t *testing.T) {
 
 	if !bytes.HasPrefix(recorder.Body.Bytes(), []byte("RIFF")) {
 		t.Fatalf("the reference does not begin with a RIFF header: %q", recorder.Body.Bytes()[:4])
+	}
+}
+
+// Finding 3 of the whole-phase review: restoreJob adopts any directory under
+// the work directory that carries a config.json, with no bound on what its
+// reference.wav holds, so the upload limit that bounds a live job's own
+// reference does nothing for one rebuilt from disk. The reference is
+// rewritten past the configured cap here, exactly as
+// TestALongReferenceIsCutToTheSpanTheRenderCovers rewrites it past the render
+// cap, to exercise that path without an actual oversized upload.
+func TestTheComparisonRefusesAReferenceOverTheByteCap(t *testing.T) {
+	const limit = 64 << 10
+
+	workDir := t.TempDir()
+
+	srv, err := server.New(server.Config{
+		Addr:              "127.0.0.1:0",
+		Version:           "test-version",
+		Static:            testTree(),
+		DistDir:           t.TempDir(),
+		WorkDir:           workDir,
+		Log:               io.Discard,
+		MaxReferenceBytes: limit,
+	})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	t.Cleanup(srv.Stop)
+
+	handler := srv.Handler()
+	id := finishedFitFor(t, handler, testReferenceLength)
+
+	// Comfortably over the limit, written straight to the run directory: a
+	// campaign's own reference.wav never passes through the upload reader
+	// that enforces the cap on a live job.
+	oversized := referenceWAV(t, 8, 44100)
+	if len(oversized) <= limit {
+		t.Fatalf("the oversized reference is only %d bytes, which is under the %d byte limit", len(oversized), limit)
+	}
+
+	path := filepath.Join(workDir, id, fitrun.FileReference)
+	if err := os.WriteFile(path, oversized, 0o644); err != nil {
+		t.Fatalf("write the oversized reference: %v", err)
+	}
+
+	recorder := getCompare(t, handler, id, "?columns=32&frames=4")
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("compare = %d, want 500: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// Finding 3: a HEAD is an admitted method, and the endpoint's whole cost is
+// the render and the two full-resolution spectrogram transforms below it --
+// none of which has anything to contribute to a response whose body is
+// discarded. This does not prove the work was skipped, only that a HEAD is
+// answered with an empty, successful body; TestTheComparisonRefusesWhenNoSlotIsFree
+// in the internal test file is what actually proves the heavy path is not
+// reached, by holding every concurrency slot and checking a HEAD still gets
+// through.
+func TestTheComparisonAnswersHEADWithNoBody(t *testing.T) {
+	handler := newFitServer(t).Handler()
+	id := finishedFitFor(t, handler, testReferenceLength)
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodHead,
+		"/api/fit/jobs/"+id+"/compare?columns=32&frames=4", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("HEAD compare = %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("HEAD compare answered %d bytes of body, want none", recorder.Body.Len())
 	}
 }
 

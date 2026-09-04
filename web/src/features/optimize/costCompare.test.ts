@@ -118,9 +118,28 @@ describe("parseTraceToPoints", () => {
 describe("compareRunLabel", () => {
   it("shortens a long job id and names the optimizer, metric and note", () => {
     const label = compareRunLabel(
-      job({ jobId: "0123456789abcdef", optimizer: "cmaes", metric: "polish", note: 72 }),
+      job({
+        jobId: "fit-20260904T050000-0001",
+        optimizer: "cmaes",
+        metric: "polish",
+        note: 72,
+      }),
     );
 
-    expect(label).toBe("01234567 · cmaes/polish · note 72");
+    expect(label).toBe("050000-0001 · cmaes/polish · note 72");
+  });
+
+  // Every job started on the same day shares the "fit-<date>T" prefix, so the
+  // label has to come from the part that actually varies between runs -- the
+  // time and the counter -- or two rows in the picker read as the same run.
+  it("tells apart two runs started the same day", () => {
+    const first = compareRunLabel(
+      job({ jobId: "fit-20260904T050000-0001", optimizer: "cmaes", metric: "polish", note: 72 }),
+    );
+    const second = compareRunLabel(
+      job({ jobId: "fit-20260904T050512-0002", optimizer: "cmaes", metric: "polish", note: 72 }),
+    );
+
+    expect(first).not.toBe(second);
   });
 });

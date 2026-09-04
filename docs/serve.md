@@ -243,6 +243,18 @@ at the first entry still `running` or `queued` rather than evicting it, so a
 long-lived fit started under a history already at the cap is never forgotten
 mid-run for having overstayed its welcome.
 
+**The work directory must not be shared between servers, or with a running
+campaign.** Restore's rule -- `config.json` and no `result.json` is `failed` --
+cannot tell a run that crashed apart from one another process, or another
+server, is still writing: both leave exactly that shape on disk. A
+`config.json` written in roughly the last five minutes is treated as still in
+progress and left out of the restored history rather than shown as a false
+failure, which covers a run just starting when a second server happens to read
+the directory, but it is a heuristic, not a guarantee, for anything that runs
+longer than that before its own restart reads the same tree. Point `--work-dir`
+at a directory this server owns alone; if you do aim it at a campaign tree to
+read its history, do so only once the campaign itself is done writing to it.
+
 ### Where a fit is run
 
 The server does not fit anything itself. A start request is validated, written

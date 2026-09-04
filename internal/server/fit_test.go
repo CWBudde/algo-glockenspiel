@@ -675,6 +675,35 @@ func TestCancelRefusesAFinishedJobID(t *testing.T) {
 	}
 }
 
+// Finding 7 of the whole-phase review: cancelling a finished job named by
+// ?job= was a 409, but the very same job reached as "the most recent one" --
+// by leaving ?job= off -- was a 200, because only the named branch checked
+// for a terminal state. Same job, same already-finished state, two different
+// answers depending on which URL asked.
+func TestCancelOfTheMostRecentJobAgreesWithCancelByItsOwnID(t *testing.T) {
+	handler := newFitServer(t).Handler()
+
+	finished := startFit(t, handler, shortFit())
+	if finished.Code != http.StatusAccepted {
+		t.Fatalf("start = %d: %s", finished.Code, finished.Body.String())
+	}
+
+	finishedID := decodeSnapshot(t, finished.Body.Bytes()).JobID
+
+	waitForJob(t, handler, finishedID, 60*time.Second)
+
+	// No ?job=: the same finished job, reached as "the most recent one".
+	response := postCancel(t, handler, "")
+	if response.Code != http.StatusConflict {
+		t.Fatalf("cancel of the most recent job, already finished, = %d, want 409 (the same answer "+
+			"cancelling it by its own id gets): %s", response.Code, response.Body.String())
+	}
+
+	if current := jobSnapshot(t, handler, finishedID); current.State != "succeeded" {
+		t.Fatalf("the refused cancel changed the finished job's state to %q", current.State)
+	}
+}
+
 func postCancel(t *testing.T, handler http.Handler, jobID string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -990,6 +1019,20 @@ func TestStartRejectsBadRequests(t *testing.T) {
 				t.Fatalf("a rejected request left a job behind: GET /api/fit = %d", status.Code)
 			}
 		})
+	}
+}
+
+// Finding 8 of the whole-phase review: a start request refused because the
+// server is shutting down used to map onto the same 500 as an actual failure
+// to create the run directory, which reads at the log line as a bug rather
+// than as the shutdown it is.
+func TestStartAfterStopIsRefusedAsUnavailableNotAsAFailure(t *testing.T) {
+	srv := newFitServer(t)
+	srv.Stop()
+
+	response := startFit(t, srv.Handler(), shortFit())
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("start after Stop = %d, want 503: %s", response.Code, response.Body.String())
 	}
 }
 

@@ -141,7 +141,25 @@ type Server struct {
 	// the responses that would otherwise never end. See Stop.
 	shutdown     chan struct{}
 	shutdownOnce sync.Once
+
+	// compareSlots bounds how many /compare requests may build their payload
+	// at once. That endpoint allocates two signals and two full-resolution
+	// spectrogram views before anything is reduced -- at 192 kHz, on the order
+	// of 270 MB per request -- and it is a free, repeatable GET, so nothing
+	// else stops a handful of concurrent requests (or reloads of the same tab)
+	// from adding those up. A full channel is a 503 rather than a slot to wait
+	// for: a client that is refused can retry, while one left blocked behind
+	// requests it cannot see would just be a slower way to exhaust the same
+	// memory.
+	compareSlots chan struct{}
 }
+
+// maxConcurrentCompares is compareSlots' capacity. It is not configurable:
+// unlike MaxReferenceBytes, which bounds a single request's own cost, this
+// bounds how many of them may run together, and a handful is enough headroom
+// for the compare view and an audition tab open side by side without leaving
+// the endpoint effectively unbounded again.
+const maxConcurrentCompares = 4
 
 // New prepares a server from cfg. It fails when the embedded tree is unusable,
 // which would be a build problem rather than a user error, and is therefore
@@ -169,9 +187,10 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	srv := &Server{
-		config:   cfg,
-		assets:   assets,
-		shutdown: make(chan struct{}),
+		config:       cfg,
+		assets:       assets,
+		shutdown:     make(chan struct{}),
+		compareSlots: make(chan struct{}, maxConcurrentCompares),
 	}
 
 	// The work directory is read back before the first request, so a restart

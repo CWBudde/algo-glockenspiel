@@ -119,7 +119,21 @@ export function parseTraceToPoints(trace: string): CostPoint[] {
 
 /** The picker's label for one eligible run: short, and enough to tell it apart. */
 export function compareRunLabel(job: FitJobListEntry): string {
-  const shortId = job.jobId.length > 8 ? job.jobId.slice(0, 8) : job.jobId;
+  return `${jobIdSuffix(job.jobId)} · ${job.optimizer}/${job.metric} · note ${String(job.note)}`;
+}
 
-  return `${shortId} · ${job.optimizer}/${job.metric} · note ${String(job.note)}`;
+/**
+ * The part of a job id that actually varies between runs from the same day.
+ *
+ * A job id is `fit-<UTC date>T<time>-<counter>` (see makeRunDir in
+ * internal/server/job.go), so the leading digits are a date shared by every
+ * run started that day -- slicing the first 8 characters, as this once did,
+ * reads as `fit-2026` for every job in a session and tells two runs apart by
+ * nothing at all. The time and the per-run counter are what actually differ,
+ * and they are the tail of the id.
+ */
+function jobIdSuffix(jobId: string): string {
+  const suffixLength = 11; // "150405-0001": six digits of time, the counter.
+
+  return jobId.length > suffixLength ? jobId.slice(-suffixLength) : jobId;
 }

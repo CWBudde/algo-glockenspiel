@@ -15,6 +15,9 @@ import (
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
+	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 )
 
 // syntheticJob returns a fitJob with no run directory and no goroutine ever
@@ -161,5 +164,41 @@ func TestStartRefusesAJobThatFinishesSetupAfterStopAll(t *testing.T) {
 
 	if len(entries) != 0 {
 		t.Fatalf("the refused job's run directory was left behind: %v", entries)
+	}
+}
+
+// TestFinishUsesTheSummarysScoreOverTheOptimizersOwnBestCost pins Finding 6 of
+// the whole-phase review: fitJobListing.Score comes from Summary.Score, which
+// is the post-polish cost fitrun wrote to result.json, while finish used to
+// take progress.BestCost straight from optimizer.Result.BestCost, the
+// pre-polish number. The two only ever agreed because nothing in this package
+// sets spec.Polish yet -- the moment it does, the run list and the status
+// panel would report two different scores for the same finished run.
+//
+// recordSummary is called before finish for every real run (see run.go), so
+// this pins that ordering too: finish has to read j.summary, not take a
+// second copy of the score as an argument, or the two could still drift.
+func TestFinishUsesTheSummarysScoreOverTheOptimizersOwnBestCost(t *testing.T) {
+	job := syntheticJob("job-1", false)
+
+	const (
+		prePolishCost  = 0.5
+		postPolishCost = 0.2 // what polish actually improved the preset to.
+	)
+
+	job.recordSummary(fitrun.Summary{Score: postPolishCost})
+
+	final := &optimizer.Result{BestCost: prePolishCost, StopReason: "max_iterations"}
+	job.finish(fitSucceeded, nil, final, nil, nil, nil)
+
+	snapshot := job.snapshot()
+
+	if snapshot.BestCost != postPolishCost {
+		t.Fatalf("snapshot.BestCost = %v, want the summary's %v (the same one the job listing reports)",
+			snapshot.BestCost, postPolishCost)
+	}
+
+	if snapshot.CurrentCost != postPolishCost {
+		t.Fatalf("snapshot.CurrentCost = %v, want the summary's %v", snapshot.CurrentCost, postPolishCost)
 	}
 }

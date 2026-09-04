@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -118,12 +119,12 @@ func (r fitRequest) loadOptions() analysis.LoadOptions {
 	}
 }
 
-// mayflyOptimizerName is the backend name selectOptimizer answers to, spelled
-// once so the cadence default below and the switch cannot drift apart.
+// mayflyOptimizerName is the backend name validateFitBackend answers to,
+// spelled once so the cadence default below and the switch cannot drift apart.
 const mayflyOptimizerName = "mayfly"
 
-// cmaesOptimizerName is the backend name selectOptimizer answers to, spelled
-// once for the same reason mayflyOptimizerName is.
+// cmaesOptimizerName is the backend name validateFitBackend answers to,
+// spelled once for the same reason mayflyOptimizerName is.
 const cmaesOptimizerName = "cmaes"
 
 // defaultFitRequest carries the same defaults as the fit command, so a preset
@@ -222,7 +223,7 @@ func (s *Server) handleFitStart(writer http.ResponseWriter, request *http.Reques
 	// started, so a malformed one is a 400 on this request rather than a job
 	// that claims the single fit slot and then fails: parseFitRequest validates
 	// the whole mayfly configuration, document included, through
-	// selectOptimizer.
+	// validateFitBackend.
 	fitSettings, err := parseFitRequest(request, tuning)
 	if err != nil {
 		writeJSONError(writer, http.StatusBadRequest, err.Error())
@@ -274,6 +275,18 @@ func (s *Server) handleFitStart(writer http.ResponseWriter, request *http.Reques
 			s.runFit(ctx, job, objective.Codec(), template, bounds)
 		})
 	if err != nil {
+		// errServerStopped is jobs.start refusing a request that arrived after
+		// stopAll had already run: the server is shutting down, which is
+		// neither the client's fault nor a bug here, and logging it as a
+		// generic failure reads as one. Everything else jobs.start can fail
+		// with -- the run directory could not be made or claimed -- is the
+		// server's own problem.
+		if errors.Is(err, errServerStopped) {
+			writeJSONError(writer, http.StatusServiceUnavailable, errServerStopped.Error())
+
+			return
+		}
+
 		s.logf("starting a fit failed: %v", err)
 		writeJSONError(writer, http.StatusInternalServerError, "the fit could not be started")
 
@@ -325,12 +338,11 @@ func (s *Server) handleFitCancel(writer http.ResponseWriter, request *http.Reque
 	// have: a client that decides to cancel while the run it is watching ends
 	// and another begins must not silently kill the newcomer. It is also how a
 	// queued job is cancelled by name rather than by being the most recent
-	// one. A job that is not there at all, or one that has already finished,
-	// is a conflict rather than a silent success: the client is asking to stop
-	// something that is not going to stop.
+	// one. A job that is not there at all is a conflict rather than a silent
+	// success: the client is asking to stop something that does not exist.
 	if wanted := request.URL.Query().Get("job"); wanted != "" {
 		named := s.jobs.lookup(wanted)
-		if named == nil || named.snapshot().State.terminal() {
+		if named == nil {
 			writeJSONError(writer, http.StatusConflict,
 				fmt.Sprintf("fit %s is not running; the most recent fit is %s", wanted, job.id))
 
@@ -338,6 +350,18 @@ func (s *Server) handleFitCancel(writer http.ResponseWriter, request *http.Reque
 		}
 
 		job = named
+	}
+
+	// A job that has already finished is a conflict rather than a silent
+	// success, whichever way it was named. Checked once, after job is settled
+	// either way, rather than only inside the branch above: cancelling the
+	// most recent job by leaving ?job= off must answer the same as cancelling
+	// it by its own id, and a terminal job named implicitly used to succeed
+	// with 200 while the same job named explicitly was refused with 409.
+	if job.snapshot().State.terminal() {
+		writeJSONError(writer, http.StatusConflict, fmt.Sprintf("fit %s is not running", job.id))
+
+		return
 	}
 
 	s.jobs.cancel(job)
@@ -440,10 +464,17 @@ func (s *Server) writeFitAudio(
 		return
 	}
 
+	// The render is shifted and scaled into the space the objective scored it
+	// in before it is encoded, exactly as the comparison view is: an A/B
+	// audition against /reference is the same control the compare view draws,
+	// and playing the raw render would let a listener hear a level and timing
+	// difference the objective's own gain- and lag-invariance discarded.
+	rendered := scoreAligned(engine.RenderNote(note, velocity, duration), job.metricsCopy())
+
 	// The whole file is built before a byte is sent, so a failure halfway
 	// through the encode is a 500 rather than a truncated download the browser
 	// reports as successful.
-	encoded, err := wavio.MarshalMono(job.sampleRate, engine.RenderNote(note, velocity, duration))
+	encoded, err := wavio.MarshalMono(job.sampleRate, rendered)
 	if err != nil {
 		s.logf("encoding the render for %s failed: %v", job.id, err)
 		writeJSONError(writer, http.StatusInternalServerError, "the render could not be encoded")
@@ -747,18 +778,33 @@ func buildObjective(
 	return objective, clamped, starting, nil
 }
 
-// selectOptimizer maps the request's backend name onto an implementation.
+// validateFitBackend checks that a request names a backend the server
+// actually runs, and that the backend's own settings are usable, before a
+// reference has even been read.
 //
-// The codec is the objective's, and it is nil at parse time, where the request
-// is validated before a reference has been read and no codec exists yet. It
-// carries one thing: the CMA-ES block partition, which is the codec's to know
-// because only it knows which encoded coordinates a mode owns. Leaving it out
-// costs nothing there, because Optimize checks the partition against the
-// dimension it is finally run at anyway.
-func selectOptimizer(settings fitRequest, codec *optimizer.ParamCodec) (optimizer.Optimizer, error) {
+// It used to be named selectOptimizer and return the optimizer.Optimizer it
+// built, back when parseFitRequest's caller took that value and ran with it.
+// The one remaining call, from parseFitRequest itself, discards it: runFit
+// builds its own backend later, from the codec the reference produces, which
+// is the block partition this function never had. So there was nothing left
+// to select, only a request to check -- and check with a hand-spelled
+// "simple", cmaesOptimizerName, mayflyOptimizerName switch that could disagree
+// with fitschema.OptimizerNames(), the table cmd/gen-fit-schema reads to build
+// the browser's dropdown. Add a backend there without a case here, and the
+// dropdown would offer it while this refused it as unsupported before a fit
+// ever started. The name is now checked against that same table, so the two
+// cannot drift apart; only the backend-specific settings below are still
+// spelled per backend, because that validation is CMAES's and mayfly's own to
+// own and the table has no room for it.
+func validateFitBackend(settings fitRequest) error {
+	if !slices.Contains(fitschema.OptimizerNames(), settings.Optimizer) {
+		return fmt.Errorf("unsupported optimizer %q", settings.Optimizer)
+	}
+
+	// The configuration is built and checked here rather than left to
+	// Optimize, so a bad request is a 400 on the start request instead of a
+	// job that is accepted, takes the single fit slot, and then fails.
 	switch settings.Optimizer {
-	case "simple":
-		return &optimizer.SimpleOptimizer{}, nil
 	case cmaesOptimizerName:
 		backend := &optimizer.CMAESOptimizer{
 			Covariance:   settings.CmaesCovariance,
@@ -768,15 +814,7 @@ func selectOptimizer(settings fitRequest, codec *optimizer.ParamCodec) (optimize
 			RestartLimit: settings.CmaesRestarts,
 		}
 
-		if codec != nil {
-			backend.BlockGroups = codec.BlockGroups()
-		}
-
-		if err := backend.Validate(settings.MaxIterations); err != nil {
-			return nil, err
-		}
-
-		return backend, nil
+		return backend.Validate(settings.MaxIterations)
 	case mayflyOptimizerName:
 		backend := &optimizer.MayflyOptimizer{
 			Variant:    settings.MayflyVariant,
@@ -786,16 +824,11 @@ func selectOptimizer(settings fitRequest, codec *optimizer.ParamCodec) (optimize
 			Tuning:     settings.mayflyTuning(),
 		}
 
-		// The configuration is built and checked here rather than left to
-		// Optimize, so a bad request is a 400 on the start request instead of a
-		// job that is accepted, takes the single fit slot, and then fails.
-		if err := backend.Validate(settings.MaxIterations); err != nil {
-			return nil, err
-		}
-
-		return backend, nil
+		return backend.Validate(settings.MaxIterations)
 	default:
-		return nil, fmt.Errorf("unsupported optimizer %q", settings.Optimizer)
+		// "simple" (and any future backend the table lists but this switch has
+		// nothing further to say about) needs no settings of its own checked.
+		return nil
 	}
 }
 
