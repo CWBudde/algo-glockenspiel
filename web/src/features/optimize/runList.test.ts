@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { FitJobListEntry } from "../../api/types";
 import {
+  FOLLOWED_REASON,
   formatRunCost,
   formatRunElapsed,
   hasActiveRun,
   runElapsedMs,
+  runOriginLabel,
   runStateLabel,
   sortRunsNewestFirst,
 } from "./runList";
@@ -20,6 +22,7 @@ function job(overrides: Partial<FitJobListEntry> = {}): FitJobListEntry {
     velocity: 100,
     optimizer: "mayfly",
     metric: "balanced",
+    followed: false,
     ...overrides,
   };
 }
@@ -66,6 +69,23 @@ describe("runStateLabel", () => {
   });
 });
 
+describe("runOriginLabel", () => {
+  it("marks a run the server only follows", () => {
+    expect(runOriginLabel(job({ followed: true }))).toBe("followed");
+  });
+
+  it("leaves a run the server started unmarked", () => {
+    expect(runOriginLabel(job({ followed: false }))).toBeNull();
+  });
+
+  it("has a reason to show beside the mark", () => {
+    // The word alone does not say why the stop control refuses; the sentence
+    // the row and the form both use does, and it is one constant so the two
+    // cannot drift apart.
+    expect(FOLLOWED_REASON).toMatch(/cannot stop it/);
+  });
+});
+
 describe("hasActiveRun", () => {
   it("is true while a job is queued", () => {
     expect(hasActiveRun([job({ state: "queued" })])).toBe(true);
@@ -87,6 +107,15 @@ describe("hasActiveRun", () => {
 
   it("is false for an empty list", () => {
     expect(hasActiveRun([])).toBe(false);
+  });
+
+  it("counts a running row the server only follows", () => {
+    // The whole point of following a run directory is that its numbers move
+    // without this page asking, so the row that most obviously needs the fast
+    // poll must not be the one excluded from it.
+    expect(hasActiveRun([job({ state: "running", followed: true })])).toBe(
+      true,
+    );
   });
 });
 

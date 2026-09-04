@@ -1563,6 +1563,19 @@ h1 {
   color: var(--charcoal-muted);
 }
 
+/* The mark on a run the server follows rather than runs. It rides in the
+   state cell rather than in a column of its own, so a history of the
+   server's own fits keeps exactly the layout it had; it is muted and light
+   because it qualifies the state beside it rather than competing with it. */
+.run-list-origin {
+  margin-left: var(--space-2xs);
+  color: var(--charcoal-muted);
+  font-size: 0.76rem;
+  font-weight: 400;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
 /* ------------------------------------------------------------------ */
 /* The fit form                                                        */
 /* ------------------------------------------------------------------ */
@@ -1797,6 +1810,16 @@ h1 {
   font-size: var(--type-caption);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+/* Why the stop control beside it is refusing. It sits under the buttons and
+   reads as a note rather than an error, because nothing has gone wrong: the
+   fit is simply not this server's to stop. */
+.fit-job-origin {
+  margin: var(--space-xs) 0 0;
+  max-width: 62ch;
+  color: var(--charcoal-muted);
+  font-size: var(--type-caption);
 }
 
 .fit-button {

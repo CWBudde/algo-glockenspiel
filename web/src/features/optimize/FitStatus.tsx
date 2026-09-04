@@ -103,6 +103,23 @@ export function FitStatus({
             <dd>{snapshot.jobId}</dd>
           </div>
 
+          {snapshot.followed && (
+            <div>
+              {/*
+                Only for a run the server did not start. It is a row rather
+                than a badge on the state because it explains a whole set of
+                things at once: why the stop control is refusing, why the
+                numbers arrive a little more slowly, and why the fit went on
+                existing when this page was never told about it.
+              */}
+              <dt>Source</dt>
+              <dd>
+                followed run directory; this server did not start it and cannot
+                stop it
+              </dd>
+            </div>
+          )}
+
           <div>
             <dt>Best cost</dt>
             <dd>{formatCost(snapshot.bestCost)}</dd>

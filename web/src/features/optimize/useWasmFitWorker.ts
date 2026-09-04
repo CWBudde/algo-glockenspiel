@@ -31,6 +31,10 @@ const EMPTY_EVENTS: FitEvents = {
   revision: 0,
   streaming: false,
   streamError: null,
+  // The worker is this page's own and answers about nothing else, so the
+  // stream-was-taken-over case the HTTP path has to guard against cannot
+  // arise here.
+  displaced: false,
 };
 
 function formNumber(form: FormData, name: string, fallback: number): number {
@@ -355,6 +359,7 @@ export function useWasmFitWorker(enabled: boolean): WasmFitWorker {
               revision: previous.revision + 1,
               streaming: !isTerminal(snapshot.state),
               streamError: null,
+              displaced: false,
             };
           });
 

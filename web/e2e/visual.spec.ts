@@ -40,6 +40,9 @@ function fitSnapshot(overrides: Partial<FitSnapshot> = {}): FitSnapshot {
     currentCost: 0.75,
     bestCost: 0.5,
     elapsedMs: 1250,
+    // The fixtures are the server's own fits: the visual baselines are of a
+    // page watching a job it started, not one it found in a work directory.
+    followed: false,
     sampleRate: 48_000,
     referenceSeconds: 1.5,
     note: 69,

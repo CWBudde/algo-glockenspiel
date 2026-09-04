@@ -1,6 +1,9 @@
 import path from "node:path";
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+
+import { goFitServerIsReal, noGoServerReason } from "./goServer";
+import { installStableEngine } from "./stableEngine";
 
 /**
  * Drives a real fit through `glockenspiel serve`, started by the second
@@ -17,42 +20,6 @@ const referencePath = path.resolve(
   "../../testdata/reference/glockenspiel_a4.wav",
 );
 
-/**
- * Replaces the audio engine worker with its stable loaded state, exactly as
- * visual.spec.ts does. This spec exercises the Optimize tab only, but App
- * starts the Play tab's WASM worker unconditionally on mount, and there is no
- * reason to pay for the real module load here.
- */
-async function installStableEngine(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    class StableEngineWorker {
-      onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
-      onerror: ((event: ErrorEvent) => void) | null = null;
-
-      postMessage(message: { type?: string }): void {
-        if (message.type !== "load") {
-          return;
-        }
-
-        window.queueMicrotask(() => {
-          this.onmessage?.(
-            new MessageEvent("message", { data: { type: "loaded" } }),
-          );
-        });
-      }
-
-      terminate(): void {
-        // The production hook deliberately keeps its worker for the app's life.
-      }
-    }
-
-    Object.defineProperty(window, "Worker", {
-      configurable: true,
-      value: StableEngineWorker,
-    });
-  });
-}
-
 /** One line of trace.jsonl, as far as this test reads it. */
 interface TraceLine {
   best: number;
@@ -68,14 +35,14 @@ test.describe("a real fit through the Go server", () => {
     // scripts/playwright-go-server.sh falls back to a bare listener when the
     // Go toolchain is unavailable or the build fails, so this suite is not
     // aborted for a developer without Go installed. That listener answers
-    // every path with 200, where the real server answers 404 to an idle
-    // GET /api/fit ("no fit has been started"). Anything other than 404
-    // here means this is the fallback, and there is no real fit to run.
-    const idle = await request.get("/api/fit");
-    test.skip(
-      idle.status() !== 404,
-      "the Go fit server is not available (see scripts/playwright-go-server.sh)",
-    );
+    // every path with the same small document, where the real server answers
+    // the job history with a `jobs` array. A real list is therefore the
+    // proof, and not -- as it once was -- a 404 from an idle GET /api/fit:
+    // the server now adopts run directories it finds in its work directory,
+    // so a server reused from an earlier run of this suite may well have an
+    // active job before this spec starts one, and reading that as "the
+    // fallback is up" would skip the one spec that runs a real fit.
+    test.skip(!(await goFitServerIsReal(request)), noGoServerReason);
 
     await installStableEngine(page);
     await page.goto("/#/optimize");

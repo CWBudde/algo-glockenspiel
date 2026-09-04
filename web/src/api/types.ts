@@ -178,6 +178,20 @@ export interface FitSnapshot {
   hasPreset: boolean;
 
   /**
+   * Whether the server merely *found* this run rather than starting it: a
+   * directory in its `--work-dir` that a `glockenspiel fit` or a campaign
+   * job is writing, which it reads by tailing `trace.jsonl`. Always present,
+   * because "this fit is the server's own" is a fact about every job rather
+   * than an occasional extra.
+   *
+   * It stays true after the run finishes, and it is what the stop control
+   * has to read: the cancel endpoint answers a followed job with a 409, so a
+   * client that offered the button anyway would be promising something it
+   * cannot deliver.
+   */
+  followed: boolean;
+
+  /**
    * What the mayfly backend settled on, present only once a mayfly run has
    * resolved its configuration. This is the whole point of reporting it: a
    * preset chooses a dialect without naming it, and without an echo there is
@@ -388,6 +402,15 @@ export interface FitJobListEntry {
   velocity: number;
   optimizer: OptimizerName;
   metric: MetricName;
+
+  /**
+   * Whether the server found this run rather than starting it; see
+   * `FitSnapshot.followed`. The history carries it as well as the snapshot
+   * because the run list is where a fit started in a terminal first appears,
+   * and a row that could not say where its run came from would have to be
+   * opened to find out.
+   */
+  followed: boolean;
 }
 
 /* ------------------------------------------------------------------ */

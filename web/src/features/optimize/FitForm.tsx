@@ -44,6 +44,7 @@ import {
   type MetricName,
   type OptimizerName,
 } from "../../api/types";
+import { FOLLOWED_REASON } from "./runList";
 
 /**
  * The fit form.
@@ -589,6 +590,12 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
   const [busy, setBusy] = useState(false);
 
   const running = snapshot?.state === "running";
+  // A run the server only follows: it is somebody else's search, read out of
+  // a run directory by tailing its trace. Nothing here can stop it -- the
+  // cancel endpoint answers such a job with a 409 -- and nothing here is
+  // blocked by it either: it holds no fit slot, so a fit can be started while
+  // one is being watched.
+  const followed = snapshot?.followed === true;
   const fitActions = actions ?? SERVER_ACTIONS;
   const mayfly = optimizer === "mayfly";
   const cmaes = optimizer === "cmaes";
@@ -596,7 +603,7 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
     snapshot === null
       ? "Ready to start"
       : snapshot.state === "running"
-        ? `Fit ${snapshot.jobId} running`
+        ? `Fit ${snapshot.jobId} running${followed ? ", started elsewhere" : ""}`
         : `Fit ${snapshot.jobId} ${snapshot.state}`;
 
   const openPresetDialog = () => {
@@ -1128,7 +1135,16 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
     }
 
     try {
-      onSnapshot(await fitActions.status());
+      const current = await fitActions.status();
+
+      // Unless the server's active job is one it merely follows. A followed
+      // run holds no fit slot, so it is never the job behind a 409, and
+      // switching the page to it would replace an actionable conflict with
+      // somebody else's fit -- and with a Cancel button that cannot be
+      // pressed.
+      if (current.followed !== true) {
+        onSnapshot(current);
+      }
     } catch {
       // The conflict itself is already on screen and is the actionable half.
       // A follow-up read that fails as well adds nothing the user can act on,
@@ -2095,21 +2111,36 @@ export function FitForm({ snapshot, onSnapshot, actions }: FitFormProps) {
         <div className="fit-actions">
           <button
             className="fit-button"
-            disabled={busy || running}
+            disabled={busy || (running && !followed)}
             type="submit"
           >
             {busy && !running ? "Starting…" : "Start fit"}
           </button>
 
+          {/*
+            The stop control is shown disabled rather than hidden for a
+            followed run. A missing button reads as a page that forgot the
+            fit; a disabled one beside the reason reads as what it is -- the
+            server has no search to stop, only a directory it is reading -- and
+            the reason has to be here, because the alternative is a click that
+            comes back as a 409 nobody asked for.
+          */}
           <button
             className="fit-button fit-button-secondary"
-            disabled={busy || !running}
+            disabled={busy || !running || followed}
             onClick={() => void onCancel()}
+            title={followed ? FOLLOWED_REASON : undefined}
             type="button"
           >
             Cancel fit
           </button>
         </div>
+
+        {followed && (
+          <p className="fit-job-origin">
+            This fit was {FOLLOWED_REASON}. Stop it where it was started.
+          </p>
+        )}
       </div>
 
       {/*
