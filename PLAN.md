@@ -1324,11 +1324,15 @@ Every job gets one under `--work-dir`, the 409 is a queue, jobs survive a restar
 Optimize tab now has the run history, the provenance and the comparison a campaign needs, proven
 by a real short fit through `serve` under Playwright rather than by a mock.
 
-Five defects are worth carrying forward, because all five looked like success and none would have
-failed a gate. Three were the same shape, a picture that disagrees with the score: the comparison
+Six defects are worth carrying forward, because all six looked like success and none would have
+failed a gate. Four were the same shape, a picture that disagrees with the score: the comparison
 clamped only the render to sixty seconds and left the reference at full length, it painted each
-spectrogram against its own noise floor where the objective clamps both to the reference's, and
-selecting a historical run played the active run's audio. The fourth is what de-duplication is
+spectrogram against its own noise floor where the objective clamps both to the reference's,
+selecting a historical run played the active run's audio, and, found only by the whole-phase
+review, the comparison drew and played the fitted preset raw when the objective is gain-invariant
+and lag-aligned. That last one is the phase's own lesson at its sharpest: a fit that scored well
+appeared as a near-flat line with a near-empty spectrogram, contradicting the score by exactly the
+quantity the score discards, in the feature built to prevent that. The fourth is what de-duplication is
 for: collapsing the three limit tables showed the browser fit had been accepting five requests the
 server refuses, having never bounded `cmaes-lambda`, `cmaes-restarts`, `mayfly-nc` or
 `mayfly-nc-ratio` and never bounding `mayfly-target-cost` at all. The fifth only appeared when a
