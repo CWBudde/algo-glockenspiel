@@ -789,12 +789,37 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
     768,
   );
 
-  for (const bars of [naturals, accidentals]) {
-    const metrics = await bars.evaluateAll((elements) =>
-      elements.map((element) => {
-        const box = element.getBoundingClientRect();
-        return { bottom: box.bottom, top: box.top, width: box.width };
-      }),
+  /*
+   * A row hangs from one of its two node-point mounts -- the naturals from the
+   * upper, the accidentals from the lower -- so that rail runs dead straight
+   * across the row and the opposite one carries the whole convergence. That
+   * asymmetry is the point: it holds the gap between the two lanes constant
+   * instead of letting it widen towards the treble, which a row centred on one
+   * axis cannot do.
+   */
+  for (const [bars, anchor] of [
+    [naturals, "upper"],
+    [accidentals, "lower"],
+  ] as const) {
+    const metrics = await bars.evaluateAll(
+      (elements, position) =>
+        elements.map((element) => {
+          const box = element.getBoundingClientRect();
+          const mount = element.querySelector(
+            `.bar-mount[data-mount-position="${position}"]`,
+          );
+          if (mount === null) {
+            throw new Error("bar mount is missing");
+          }
+          const mountBox = mount.getBoundingClientRect();
+          return {
+            anchorY: mountBox.top + mountBox.height / 2,
+            bottom: box.bottom,
+            top: box.top,
+            width: box.width,
+          };
+        }),
+      anchor,
     );
     const widths = metrics.map(({ width }) => width);
     expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(0.25);
@@ -802,12 +827,9 @@ test("rack geometry aligns constant bars, supports, and foreground mallet", asyn
       expect(metrics[index].top).toBeGreaterThan(metrics[index - 1].top);
       expect(metrics[index].bottom).toBeLessThan(metrics[index - 1].bottom);
     }
-    const first = metrics[0];
-    const last = metrics.at(-1)!;
-    expect(last.top - first.top).toBeCloseTo(first.bottom - last.bottom, 0);
-    const centers = metrics.map(({ top, bottom }) => (top + bottom) / 2);
-    expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(
-      0.25,
+    const anchorYs = metrics.map(({ anchorY }) => anchorY);
+    expect(Math.max(...anchorYs) - Math.min(...anchorYs)).toBeLessThanOrEqual(
+      0.5,
     );
   }
 
