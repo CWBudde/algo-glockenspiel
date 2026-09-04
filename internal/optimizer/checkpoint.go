@@ -223,9 +223,28 @@ func LoadCheckpoint(path string) (*Checkpoint, error) {
 	return &cp, nil
 }
 
-// FindLatestCheckpoint returns the checkpoint with the highest iteration index
-// in workDir.
+// runDirCheckpoint is the name a run directory's single checkpoint has. It is
+// spelled here rather than imported from internal/fitrun, which is the package
+// that owns the run directory's file contract, because that package is built
+// on this one and the dependency cannot point back.
+const runDirCheckpoint = "checkpoint.json"
+
+// FindLatestCheckpoint returns the checkpoint a resume should continue from.
+//
+// A run directory holds one checkpoint under a fixed name, overwritten as the
+// search improves, so when that file is there it is by construction the newest
+// state the directory has and it wins outright. The numbered stream is what the
+// fit command wrote before its work directory became a run directory: a
+// directory holding only those is read as it always was, newest index last, so
+// a work directory left over from an older build still resumes.
 func FindLatestCheckpoint(workDir string) (string, error) {
+	// A directory of that name is not a checkpoint, however tempting the name
+	// is: the file has to be readable back, and reporting it here would only
+	// move the failure one call further on.
+	if info, err := os.Stat(filepath.Join(workDir, runDirCheckpoint)); err == nil && info.Mode().IsRegular() {
+		return filepath.Join(workDir, runDirCheckpoint), nil
+	}
+
 	matches, err := filepath.Glob(filepath.Join(workDir, "checkpoint_*.json"))
 	if err != nil {
 		return "", fmt.Errorf("glob checkpoints: %w", err)

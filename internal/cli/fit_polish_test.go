@@ -2,15 +2,12 @@ package cli
 
 import (
 	"bytes"
-	"context"
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/spf13/cobra"
 )
 
@@ -140,53 +137,5 @@ func TestRunFitRejectsAPolishStepWiderThanTheBox(t *testing.T) {
 	// about a flag.
 	if _, statErr := os.Stat(outputPath); !os.IsNotExist(statErr) {
 		t.Fatalf("expected no preset to be written, got %v", statErr)
-	}
-}
-
-func TestRunFitKeepsTheSearchResultWhenThePolishStageFails(t *testing.T) {
-	dir := t.TempDir()
-	referencePath, _, _ := writeFitReference(t, dir)
-	outputPath := filepath.Join(dir, "fitted.json")
-	workDir := filepath.Join(dir, "work")
-
-	previous := polishRun
-
-	t.Cleanup(func() { polishRun = previous })
-
-	polishRun = func(context.Context, *optimizer.ObjectiveFunction, []float64, optimizer.PolishOptions) (*optimizer.PolishResult, error) {
-		return nil, errors.New("engine exploded")
-	}
-
-	options := baseFitOptions(referencePath, outputPath, workDir)
-	options.polish = "nelder-mead"
-	options.polishIterations = 5
-	options.polishSigma = 0.02
-	options.checkpointEvery = 1
-
-	var out bytes.Buffer
-
-	cmd := &cobra.Command{}
-	cmd.SetOut(&out)
-	cmd.SetErr(io.Discard)
-
-	if err := runFit(cmd, options); err != nil {
-		t.Fatalf("expected a failed polish to be survivable, got %v", err)
-	}
-
-	line := out.String()
-	if !strings.Contains(line, "polish (nelder-mead) failed: engine exploded; keeping the search result") {
-		t.Fatalf("expected the failure to be reported, got %q", line)
-	}
-
-	if !strings.Contains(line, "Finished: best=") {
-		t.Fatalf("expected the run to report its result, got %q", line)
-	}
-
-	if _, err := os.Stat(outputPath); err != nil {
-		t.Fatalf("expected the preset to be written anyway: %v", err)
-	}
-
-	if _, err := optimizer.FindLatestCheckpoint(workDir); err != nil {
-		t.Fatalf("expected the final checkpoint to be written anyway: %v", err)
 	}
 }

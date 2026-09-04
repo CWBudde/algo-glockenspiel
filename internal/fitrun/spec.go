@@ -77,6 +77,30 @@ type Spec struct {
 	// template's own modes and seeds nothing.
 	Modes int
 
+	// Analysis is the measurement the seed, the frequency box and the partial
+	// term all read, in place of measuring the reference here. Nil measures it,
+	// which is what a campaign job and a served fit both want.
+	//
+	// It exists for the fit command's --analysis flag: an operator who has
+	// already run `glockenspiel analyze`, and edited the partial list by hand
+	// or measured it under other options, is fitting against that document
+	// rather than against whatever a fresh measurement of the same file would
+	// say. The run's own analysis.json still records the reference as this
+	// package measures it, because that file describes the recording rather
+	// than the objective.
+	Analysis *analysis.Measurement
+
+	// Resume starts the search from a checkpoint's best vector instead of from
+	// the seeded template. Nil starts from the template, which is every run
+	// that is not a continuation.
+	//
+	// Only the vector is taken. Everything else a checkpoint records -- the
+	// backend, the metric, the mode count, the tuning document -- decides how
+	// the objective and the backend are built, so it has to be folded into the
+	// rest of the spec by the caller before the run starts rather than
+	// discovered here, half way through building them.
+	Resume *optimizer.Checkpoint
+
 	// Note, Velocity and SampleRate are the render the objective scores. Zero
 	// takes 69, 100 and 44100.
 	Note, Velocity, SampleRate int
@@ -107,7 +131,7 @@ type Spec struct {
 	ReportEvery int
 
 	// CheckpointEvery is the checkpoint cadence in backend iterations. Zero
-	// writes the final checkpoint only.
+	// writes the final checkpoint only. CheckpointNever writes none at all.
 	CheckpointEvery int
 
 	// Polish is the optional local refinement. Nil runs none.
@@ -187,6 +211,19 @@ const StopReasonCanceled = "context_canceled"
 // internal/server's reportEvery=0 asks for, and what the fit command's own
 // flag has always meant -- has no other way to say so.
 const ReportNever = -1
+
+// CheckpointNever asks for no checkpoint at all, not even the final one. It
+// exists for the same reason ReportNever does: zero already means "the
+// default", which here is the single final checkpoint, and the fit command's
+// --checkpoint-interval 0 has always meant "write nothing", including nothing
+// at the end. A run that asks for it cannot be resumed, which is the whole of
+// what the flag buys -- a fit that leaves no state behind.
+const CheckpointNever = -1
+
+// checkpoints reports whether this run writes checkpoints at all.
+func (s Spec) checkpoints() bool {
+	return s.CheckpointEvery >= 0
+}
 
 // reportEvery is the cadence the backend is given: a negative one is the
 // optimizer's own "never", which is how it spells the same thing.
@@ -268,6 +305,19 @@ type Outcome struct {
 	Preset  *preset.Preset
 	Metrics optimizer.Metrics
 	Encoded []float64
+
+	// Profile is the profile Metrics were scored under. The summary records
+	// its name, which is enough to read a finished run back, but a caller
+	// printing the breakdown has to weigh the terms by the same numbers the
+	// score used, and looking the profile up again by name is how the two
+	// quietly stop agreeing.
+	Profile optimizer.Profile
+
+	// Pinned are the dimensions of the shipped vector that sit on an edge of
+	// the search box, which is where the search wanted to go further and could
+	// not. The summary keeps only the count, because that is what a campaign
+	// puts in a column; the names are what an operator needs to widen the box.
+	Pinned []optimizer.PinnedDimension
 }
 
 // Resolved holds the values a backend chose for itself, reported through

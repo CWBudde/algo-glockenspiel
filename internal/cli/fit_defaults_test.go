@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/spf13/cobra"
 )
@@ -158,7 +159,16 @@ func TestRunFitRecordsTheResolvedWorkerCountAndRestoresItOnResume(t *testing.T) 
 	}
 }
 
-func TestRunFitCheckpointsOnOptimizerIterationsNotOnReports(t *testing.T) {
+// TestRunFitWritesOneCheckpointForTheWholeRun pins what --work-dir became: a
+// run directory, which holds a single checkpoint under a fixed name that the
+// search overwrites as it improves. The command used to leave one numbered
+// file per checkpointed report, which is thousands of files across a campaign
+// and, worse, a layout nothing else in the repository reads.
+//
+// The cadence itself -- counted in the backend's own iterations rather than in
+// progress reports -- is pinned where it now lives, by
+// internal/fitrun's TestShouldCheckpoint.
+func TestRunFitWritesOneCheckpointForTheWholeRun(t *testing.T) {
 	dir := t.TempDir()
 	referencePath, _, _ := writeFitReference(t, dir)
 	workDir := filepath.Join(dir, "work")
@@ -177,36 +187,24 @@ func TestRunFitCheckpointsOnOptimizerIterationsNotOnReports(t *testing.T) {
 		t.Fatalf("runFit failed: %v", err)
 	}
 
-	matches, err := filepath.Glob(filepath.Join(workDir, "checkpoint_*.json"))
+	entries, err := filepath.Glob(filepath.Join(workDir, "checkpoint*.json"))
 	if err != nil {
 		t.Fatalf("glob checkpoints: %v", err)
 	}
 
-	// Twelve iterations reported one at a time used to mean twelve
-	// checkpoints at an interval of five, because the interval counted
-	// reports. It now counts the backend's own iterations: one once five have
-	// passed, one once ten have, and the final one every run writes.
-	if len(matches) != 3 {
-		t.Fatalf("expected three checkpoints from twelve iterations at an interval of five, got %v", matches)
+	if len(entries) != 1 || filepath.Base(entries[0]) != fitrun.FileCheckpoint {
+		t.Fatalf("expected the run directory's single %s, got %v", fitrun.FileCheckpoint, entries)
 	}
 
-	counts := make([]int, 0, len(matches))
-
-	for _, match := range matches {
-		cp, err := optimizer.LoadCheckpoint(match)
-		if err != nil {
-			t.Fatalf("LoadCheckpoint failed: %v", err)
-		}
-
-		counts = append(counts, cp.OptimizerIterations)
+	cp, err := optimizer.LoadCheckpoint(entries[0])
+	if err != nil {
+		t.Fatalf("LoadCheckpoint failed: %v", err)
 	}
 
-	if counts[0] < 5 || counts[1] < 10 || counts[1]-counts[0] < 5 {
-		t.Fatalf("expected the periodic checkpoints at five iterations apart, got %v", counts)
-	}
-
-	if counts[2] != 12 {
-		t.Fatalf("expected the final checkpoint at the run's last iteration, got %v", counts)
+	// The last write wins, and the last write is the final one every run makes
+	// once the search is over.
+	if cp.OptimizerIterations != 12 {
+		t.Fatalf("expected the final checkpoint at the run's last iteration, got %d", cp.OptimizerIterations)
 	}
 }
 

@@ -2,15 +2,12 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime/pprof"
-	"slices"
 	"syscall"
 	"time"
 
@@ -18,8 +15,6 @@ import (
 	"github.com/cwbudde/algo-glockenspiel/internal/fitschema"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
-	"github.com/cwbudde/algo-glockenspiel/internal/synth"
-	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
 	"github.com/spf13/cobra"
 )
 
@@ -207,7 +202,11 @@ func newFitCmd() *cobra.Command {
 			"The resolved width is recorded in the checkpoint and reused by --resume, so a run "+
 			"continued on another machine keeps the width it started with. "+
 			"The simple (Nelder-Mead) backend is serial and ignores it")
-	flags.StringVar(&options.workDir, "work-dir", options.workDir, "Directory for checkpoints and rendered fit output, relative to the current directory")
+	flags.StringVar(&options.workDir, "work-dir", options.workDir,
+		"The run directory, relative to the current directory. The fit writes its configuration, "+
+			"the reference it scored, its trace, its checkpoint, the fitted preset, a render and a "+
+			"summary there: the same files a campaign job and a served fit leave, so the run can be "+
+			"collected and browsed like any other")
 	flags.BoolVar(&options.resume, "resume", options.resume, "Resume fit from the latest checkpoint in work-dir")
 	flags.StringVar(&options.metric, "metric", options.metric,
 		"Objective: a composite profile (balanced|placement|polish) or a single legacy term (rms|log|spectral)")
@@ -287,7 +286,94 @@ func newFitCmd() *cobra.Command {
 	return cmd
 }
 
+// runFit is the command's half of a fit: it turns flags into a spec, hands the
+// run to internal/fitrun, and reports what came back.
+//
+// Everything the run itself does -- loading the reference, seeding the modes,
+// searching, polishing, checkpointing and writing every file -- belongs to
+// fitrun, which is what the campaign runner and the server already call. That
+// is what makes --work-dir a run directory rather than a scratch space: a fit
+// started from a terminal leaves the same files a campaign job leaves, so the
+// tooling that reads them by name cannot tell which of the three started it.
 func runFit(cmd *cobra.Command, options fitOptions) error {
+	if err := validateFitOptions(cmd, &options); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(options.workDir, 0o755); err != nil {
+		return fmt.Errorf("create work dir: %w", err)
+	}
+
+	// A checkpoint can carry the optimizer, the metric and the mode count it
+	// was written with, and all three decide how the objective and the backend
+	// are built. It is read before anything is derived from those options,
+	// otherwise a resumed spectral run would be optimized with the default
+	// objective while reporting "spectral".
+	var checkpoint *optimizer.Checkpoint
+
+	if options.resume {
+		loaded, path, err := loadResumeCheckpoint(cmd, &options)
+		if err != nil {
+			return err
+		}
+
+		if loaded != nil {
+			applyResumeBudget(cmd, &options, loaded, path)
+		}
+
+		checkpoint = loaded
+	}
+
+	if err := validateResolvedFitOptions(cmd, &options); err != nil {
+		return err
+	}
+
+	metric, err := optimizer.ParseMetric(options.metric)
+	if err != nil {
+		return err
+	}
+
+	stopCPUProfile, err := startCPUProfile(options.cpuProfilePath)
+	if err != nil {
+		return err
+	}
+
+	defer stopCPUProfile()
+
+	spec, err := fitSpec(cmd, options, metric, checkpoint)
+	if err != nil {
+		return err
+	}
+
+	// Ctrl-C should stop the search and still write out the best result so far,
+	// rather than losing everything since the last checkpoint. The signal
+	// handling is the command's own job: fitrun takes the context and writes
+	// its whole run directory whatever cut the search short.
+	parent := cmd.Context()
+	if parent == nil {
+		parent = context.Background()
+	}
+
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// The run's log is the terminal as well as the directory's log.txt, so the
+	// reference line, the resolve line, every progress line and the polish and
+	// Finished lines are printed by the run that produced them rather than
+	// restated here.
+	outcome, err := fitrun.Run(ctx, spec, cmd.OutOrStdout())
+	if err != nil {
+		return err
+	}
+
+	return reportFit(cmd, options, outcome)
+}
+
+// validateFitOptions rejects what the command line can be judged on before
+// anything is read. It runs before the checkpoint is loaded, because the resume
+// rules ask whether a seed was written on the command line and an ambiguous
+// pair of seed flags has no answer to give them.
+func validateFitOptions(cmd *cobra.Command, options *fitOptions) error {
 	if options.referencePath == "" {
 		return fmt.Errorf("reference is required")
 	}
@@ -341,37 +427,15 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		return fmt.Errorf("workers must be >= 0, got %d", options.workers)
 	}
 
-	// Before the checkpoint is read: the resume rules below ask whether a seed
-	// was written on the command line, and an ambiguous pair of seed flags has
-	// no answer to give them.
-	if err := checkSeedFlags(cmd); err != nil {
-		return err
-	}
+	return checkSeedFlags(cmd)
+}
 
-	if err := os.MkdirAll(options.workDir, 0o755); err != nil {
-		return fmt.Errorf("create work dir: %w", err)
-	}
-
-	// A checkpoint can carry the optimizer and the metric it was written with,
-	// and both decide how the objective is built. Load it before anything is
-	// derived from those options, otherwise a resumed spectral run would be
-	// optimized with the default RMS objective while reporting "spectral".
-	var (
-		checkpoint     *optimizer.Checkpoint
-		checkpointPath string
-	)
-
-	if options.resume {
-		loaded, path, err := loadResumeCheckpoint(cmd, &options)
-		if err != nil {
-			return err
-		}
-
-		checkpoint, checkpointPath = loaded, path
-	}
-
+// validateResolvedFitOptions checks what only the resumed options can be judged
+// on: a checkpoint may have chosen the backend, the metric and the Mayfly
+// environment, and it is that choice the run is made with.
+func validateResolvedFitOptions(cmd *cobra.Command, options *fitOptions) error {
 	switch options.optimizerName {
-	case "simple", "mayfly", "cmaes":
+	case fitrun.EngineSimple, fitrun.EngineMayfly, fitrun.EngineCMAES:
 	default:
 		return fmt.Errorf("unsupported optimizer %q", options.optimizerName)
 	}
@@ -401,73 +465,128 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 		options.metric = string(optimizer.MetricBalanced)
 	}
 
-	metric, err := optimizer.ParseMetric(options.metric)
-	if err != nil {
+	if options.optimizerName != fitrun.EngineMayfly {
+		return nil
+	}
+
+	if err := validateMayflyOptions(cmd, *options); err != nil {
 		return err
 	}
 
-	if options.optimizerName == "mayfly" {
-		if err := validateMayflyOptions(cmd, options); err != nil {
-			return err
-		}
-
-		// A mayfly iteration is a whole generation -- roughly 43 objective
-		// evaluations at a population of ten, the figure
-		// optimizer.MayflyEvaluationsPerIteration records -- against about one
-		// for a simple major iteration, so the shared default of ten would mean
-		// the first progress line lands after some four hundred renders. The
-		// default follows the backend; a cadence the caller passed is left alone.
-		if !cmd.Flags().Changed("report-every") {
-			options.reportEvery = 1
-		}
+	// A mayfly iteration is a whole generation -- roughly 43 objective
+	// evaluations at a population of ten, the figure
+	// optimizer.MayflyEvaluationsPerIteration records -- against about one for
+	// a simple major iteration, so the shared default of ten would mean the
+	// first progress line lands after some four hundred renders. The default
+	// follows the backend; a cadence the caller passed is left alone.
+	if !flagChanged(cmd, "report-every") {
+		options.reportEvery = 1
 	}
 
-	stopCPUProfile, err := startCPUProfile(options.cpuProfilePath)
+	return nil
+}
+
+// fitSpec turns the flags into the run fitrun performs.
+//
+// Every flag the command has that the spec did not already model got a field of
+// its own there rather than a second code path here: an analysis document to
+// fit against, a checkpoint to continue from, and a cadence that means "write
+// no checkpoint at all". A flag handled here instead is one that is not a
+// property of the run -- where a copy of the preset is filed, whether a profile
+// is taken -- and the run directory would be wrong to record it.
+func fitSpec(
+	cmd *cobra.Command,
+	options fitOptions,
+	metric optimizer.Metric,
+	checkpoint *optimizer.Checkpoint,
+) (fitrun.Spec, error) {
+	template, err := loadPresetOrDefault(options.presetPath)
 	if err != nil {
-		return err
+		return fitrun.Spec{}, err
 	}
-	defer stopCPUProfile()
 
-	loaded, measurement, err := loadFitReference(options.referencePath, options.reference, options.sampleRate)
+	loadOptions, measurement, err := fitLoadOptions(options.reference)
 	if err != nil {
-		return err
+		return fitrun.Spec{}, err
 	}
 
-	writeReferenceCut(cmd.OutOrStdout(), options.referencePath, loaded)
+	// Bounds the operator wrote down are a hard constraint: they must not be
+	// widened to fit whatever the starting preset happens to contain, or the
+	// fitted preset can violate the limits that were asked for. Without a
+	// document the box is fitrun's own, drawn around the reference's measured
+	// fundamental and widened to hold the template.
+	var bounds *optimizer.ParamBounds
 
-	reference := loaded.Samples
-
-	initialPreset, err := loadPresetOrDefault(options.presetPath)
-	if err != nil {
-		return err
-	}
-
-	// The analysis is measured here when no document named one, so that the
-	// seed, the frequency box and the objective's partial term all read the
-	// same partials.
-	if measurement == nil {
-		measurement = optimizer.MeasureReference(reference, options.sampleRate)
-	}
-
-	initialPreset, seededModes, err := optimizer.SeedPreset(initialPreset, measurement, options.note, options.modes)
-	if err != nil {
-		return err
-	}
-
-	writeSeededModes(cmd.OutOrStdout(), initialPreset, seededModes, options.modes)
-
-	bounds := optimizer.DefaultParamBounds
-
-	explicitBounds := options.boundsPath != ""
-	if explicitBounds {
-		bounds, err = optimizer.LoadParamBounds(options.boundsPath)
+	if options.boundsPath != "" {
+		loaded, err := optimizer.LoadParamBounds(options.boundsPath)
 		if err != nil {
-			return err
+			return fitrun.Spec{}, err
 		}
-	} else {
-		bounds.Frequency = optimizer.FrequencyBoundsFor(measurement, options.sampleRate, initialPreset.Note, options.note)
+
+		bounds = &loaded
 	}
 
+	// AlignNone is the enum's zero value, so the mode is passed by pointer:
+	// leaving the field unset would silently give a run started with
+	// --align=false the onset correlation it asked not to have.
+	alignment := optimizer.AlignNone
+	if options.align {
+		alignment = optimizer.AlignOnsetCorrelation
+	}
+
+	engine, err := fitEngine(cmd, options)
+	if err != nil {
+		return fitrun.Spec{}, err
+	}
+
+	spec := fitrun.Spec{
+		Dir:             options.workDir,
+		ReferencePath:   options.referencePath,
+		Reference:       loadOptions,
+		Template:        template,
+		Analysis:        measurement,
+		Modes:           options.modes,
+		Note:            options.note,
+		Velocity:        options.velocity,
+		SampleRate:      options.sampleRate,
+		Metric:          metric,
+		Engine:          engine,
+		MaxIterations:   options.maxIter,
+		MaxEvaluations:  options.maxEvals,
+		TimeBudget:      options.timeBudget,
+		Seed:            options.seed,
+		Workers:         options.workers,
+		ReportEvery:     specReportEvery(options.reportEvery),
+		CheckpointEvery: specCheckpointEvery(options.checkpointEvery),
+		Polish:          fitPolish(options),
+		GeneratedBy:     fitGeneratedBy,
+		Resume:          checkpoint,
+		Bounds:          bounds,
+		StrictBounds:    bounds != nil,
+		Alignment:       &alignment,
+		OnProgress: func(_ optimizer.Progress, metrics *optimizer.Metrics) {
+			// The breakdown of the best point so far, one line under the
+			// progress line the run itself printed. It costs no extra render:
+			// the terms were measured for the trace line this report wrote.
+			if metrics != nil {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", formatMetricsLine(*metrics))
+			}
+		},
+	}
+
+	if options.normalizeGain {
+		spec.Gain = optimizer.GainLeastSquares
+	}
+
+	return spec, nil
+}
+
+// fitGeneratedBy is the marker a preset this command fitted carries, so a
+// preset found on its own says which of the three fit paths produced it.
+const fitGeneratedBy = "glockenspiel fit"
+
+// fitEngine describes the selected backend in the spec's own vocabulary.
+func fitEngine(cmd *cobra.Command, options fitOptions) (fitrun.Engine, error) {
 	// The scalar --mayfly-* flags and the tuning document are not two ways of
 	// configuring the same run: the flags become a document, the file is
 	// overlaid on it, and one applier writes the result. Precedence is one
@@ -478,447 +597,101 @@ func runFit(cmd *cobra.Command, options fitOptions) error {
 	if options.mayflyTuningPath != "" {
 		document, err := optimizer.LoadMayflyTuning(options.mayflyTuningPath)
 		if err != nil {
-			return err
+			return fitrun.Engine{}, err
 		}
 
 		tuning = tuning.Overlay(document)
 	}
 
-	objectiveConfig := optimizer.DefaultObjectiveConfig(metric)
-	objectiveConfig.Bounds = bounds
-	// Bounds the user wrote down are a hard constraint: they must not be
-	// widened to fit whatever the starting preset happens to contain, or the
-	// fitted preset can violate the limits that were asked for.
-	objectiveConfig.StrictBounds = explicitBounds
-	objectiveConfig.Alignment = optimizer.AlignNone
-
-	if options.align {
-		objectiveConfig.Alignment = optimizer.AlignOnsetCorrelation
-	}
-
-	if options.normalizeGain {
-		objectiveConfig.Gain = optimizer.GainLeastSquares
-	}
-
-	objectiveConfig.Analysis = measurement
-
-	objective, err := optimizer.NewObjectiveFunctionWithConfig(
-		reference, initialPreset, options.sampleRate, options.note, options.velocity, objectiveConfig,
-	)
-	if err != nil {
-		return err
-	}
-
-	initialEncoded, err := objective.Codec().EncodeParams(&initialPreset.Parameters)
-	if err != nil {
-		return err
-	}
-
-	if checkpoint != nil {
-		initialEncoded, err = applyResumeCheckpoint(cmd, &options, checkpoint, checkpointPath, initialEncoded)
-		if err != nil {
-			return err
-		}
-	}
-
-	optBounds := objective.Codec().EncodedBounds()
-
-	// With strict bounds the starting preset can sit outside the box, so pull
-	// it in rather than handing the backend an infeasible initial point.
-	initialEncoded, err = clampInitialPoint(cmd, optBounds, initialEncoded, explicitBounds)
-	if err != nil {
-		return err
-	}
-
-	// What the checkpoint records about the modes is the choice that was
-	// made, so a resumed run makes it again.
-	options.modes = optimizer.KeepTemplateModes
-	if seededModes > 0 {
-		options.modes = seededModes
-	}
-
-	bestCheckpointPath := func(iter int) string {
-		return filepath.Join(options.workDir, fmt.Sprintf("checkpoint_%04d.json", iter))
-	}
-	lastCheckpointIteration := 0
-	lastCheckpointOptimizerIteration := 0
-	saveCheckpoint := func(index, optimizerIterations int, params []float64, cost float64) error {
-		if len(params) == 0 {
-			return nil
-		}
-
-		return optimizer.SaveCheckpoint(bestCheckpointPath(index), &optimizer.Checkpoint{
-			Version:             optimizer.CheckpointVersion,
-			Iteration:           index,
-			OptimizerIterations: optimizerIterations,
-			BestCost:            cost,
-			BestParams:          append([]float64(nil), params...),
-			Optimizer:           options.optimizerName,
-			Metric:              options.metric,
-			State:               checkpointStateForOptions(options, tuning),
-		})
-	}
-
-	// Ctrl-C should stop the search and still write out the best result so far,
-	// rather than losing everything since the last checkpoint.
-	parent := cmd.Context()
-	if parent == nil {
-		parent = context.Background()
-	}
-
-	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	var selectedOptimizer optimizer.Optimizer
+	engine := fitrun.Engine{Name: options.optimizerName}
 
 	switch options.optimizerName {
-	case "simple":
-		selectedOptimizer = &optimizer.SimpleOptimizer{}
-	case "mayfly":
-		selectedOptimizer = &optimizer.MayflyOptimizer{
+	case fitrun.EngineMayfly:
+		engine.Mayfly = fitrun.MayflySettings{
 			Variant:    mayflyVariantFor(cmd, options, tuning),
 			Preset:     options.mayflyPreset,
 			Population: options.mayflyPop,
-			Seed:       options.seed,
-			MaxWorkers: options.workers,
+			Epochs:     options.mayflyEpochs,
+			Restarts:   options.mayflyRestarts,
 			Tuning:     tuning,
-			OnResolve: func(resolved optimizer.ResolvedMayfly) {
-				// Record the effective seed and width before the search starts,
-				// so every checkpoint carries what the run actually used. With
-				// --seed 0 that is the difference between a resumed run
-				// continuing the original stream and starting a new one, and
-				// with --workers 0 it is the difference between a resume that
-				// reproduces the run and one that follows a different machine.
-				options.seed = resolved.Seed
-				options.workers = resolved.Workers
-				options.mayflyVariant = resolved.Variant
-				options.mayflyPreset = resolved.Preset
-				// The swarm the run was configured with, for the reason the
-				// CMA-ES backend writes back its population: a preset or a
-				// tuning document chooses one privately, and the provenance
-				// would otherwise name the flag's value instead.
-				if resolved.Population > 0 {
-					options.mayflyPop = resolved.Population
-				}
-
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), formatResolvedMayfly(resolved))
-			},
 		}
-	case "cmaes":
-		selectedOptimizer = &optimizer.CMAESOptimizer{
-			Covariance: options.cmaesCovariance,
-			// The partition can only come from the codec, which is why the
-			// backend is built here rather than beside the flags: block mode
-			// learns one dense matrix per mode and the codec is what knows
-			// which encoded coordinates a mode owns.
-			BlockGroups:    objective.Codec().BlockGroups(),
+	case fitrun.EngineCMAES:
+		engine.CMAES = fitrun.CMAESSettings{
+			Covariance:     options.cmaesCovariance,
 			Lambda:         options.cmaesLambda,
-			InitialSigma:   options.cmaesSigma,
-			Seed:           options.seed,
-			MaxWorkers:     options.workers,
+			Sigma:          options.cmaesSigma,
 			RestartLimit:   options.cmaesRestarts,
 			RunEvaluations: options.cmaesRunEvals,
 			LambdaGrowth:   options.cmaesLambdaGrowth,
-			OnResolve: func(resolved optimizer.ResolvedCMAES) {
-				// The effective seed and width, recorded before the search
-				// starts, for the reason the mayfly backend records its own:
-				// with --seed 0 and --workers 0 they are the difference between
-				// a resumed run reproducing this one and drifting off it.
-				options.seed = resolved.Seed
-				options.workers = resolved.Workers
-				// The population too: with --cmaes-lambda 0 the preset's
-				// provenance would otherwise record the zero that asked for
-				// Hansen's default rather than the generation that ran.
-				options.cmaesLambda = resolved.Lambda
-
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), formatResolvedCMAES(resolved))
-			},
 		}
 	}
 
-	result, err := selectedOptimizer.Optimize(ctx, objective.Objective(), initialEncoded, optBounds, optimizer.OptimizeOptions{
-		MaxIterations:  options.maxIter,
-		MaxEvaluations: options.maxEvals,
-		TimeBudget:     options.timeBudget,
-		ReportEvery:    options.reportEvery,
-		Report: func(progress optimizer.Progress) {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-				"iteration %d: current=%0.6g best=%0.6g evals=%d elapsed=%s\n",
-				progress.Iteration, progress.CurrentCost, progress.BestCost, progress.Evaluations, progress.Elapsed.Round(time.Millisecond))
-
-			// The breakdown of the best point so far, one line under the
-			// progress line. One extra render per report is a fraction of a
-			// percent of a Mayfly generation.
-			if metrics, err := objective.EvaluateMetrics(progress.BestParams); err == nil {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", formatMetricsLine(metrics))
-			}
-
-			if shouldCheckpoint(progress.OptimizerIterations, lastCheckpointOptimizerIteration, options.checkpointEvery) {
-				if saveCheckpoint(progress.Iteration, progress.OptimizerIterations, progress.BestParams, progress.BestCost) == nil {
-					lastCheckpointIteration = progress.Iteration
-					lastCheckpointOptimizerIteration = progress.OptimizerIterations
-				}
-			}
-		},
-	})
-	if err != nil {
-		return err
-	}
-
-	// The polish stage refines the search result locally under the polish
-	// profile. It runs here, before anything is written, so that the preset,
-	// the render and the reported terms all describe the same vector.
-	bestEncoded, bestCost := runPolishStage(ctx, cmd, options, objective, result)
-
-	bestParams, err := objective.Codec().DecodeParams(bestEncoded)
-	if err != nil {
-		return err
-	}
-
-	fittedPreset := *initialPreset
-
-	fittedPreset.Parameters = *bestParams
-
-	// Before the first save and before the render below, so every artifact this
-	// run writes describes the same preset at the same level. The objective
-	// solves the level in closed form and subtracts it from every term, which
-	// leaves level a flat ridge the search drifts along; this is where that
-	// drift is measured out. See synth.PresetPeakTargetDBFS.
-	outputGainDB, outputGainClamped, err := synth.ApplyOutputGain(&fittedPreset)
-	if err != nil {
-		return err
-	}
-
-	if outputGainClamped {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
-			"output gain: %+.2f dB, clamped at the bound; the fit renders far enough from the target "+
-				"that the preset stays off it\n", outputGainDB)
-	}
-
-	if err := preset.Save(&fittedPreset, options.outputPath); err != nil {
-		return err
-	}
-
-	// The final result is usually better than the last periodic checkpoint, so
-	// record it too -- but only when checkpointing is enabled at all. Its index
-	// stays above the last periodic one so FindLatestCheckpoint still picks the
-	// newest file. The index is a file ordering key, not an iteration count;
-	// the resumable budget lives in OptimizerIterations.
-	if options.checkpointEvery > 0 {
-		finalIndex := maxInt(result.Iterations, lastCheckpointIteration+1)
-		// The search result, not the polished vector: the polish stage neither
-		// resumes from a checkpoint nor writes one, so the checkpoint stream
-		// stays the record of the search a --resume would continue.
-		if err := saveCheckpoint(finalIndex, result.Iterations, result.BestParams, result.BestCost); err != nil {
-			return err
-		}
-	}
-
-	engine, err := synth.NewSynthesizer(&fittedPreset, options.sampleRate)
-	if err != nil {
-		return err
-	}
-
-	renderedDuration := float64(len(reference)) / float64(options.sampleRate)
-	fittedSamples := engine.RenderNote(options.note, options.velocity, renderedDuration)
-
-	renderedPath := filepath.Join(options.workDir, "fitted_output.wav")
-	if err := wavio.WriteMono(renderedPath, options.sampleRate, fittedSamples); err != nil {
-		return err
-	}
-
-	// The breakdown of the result, through the objective's own code. The
-	// earlier un-aligned, PCM16-quantised rms= and log= figures on this line
-	// were a different quantity from best= and disagreed with it by up to a
-	// hundred percentage points; a run is judged by its terms now.
-	// The restart count is appended only when there were restarts, so the line
-	// keeps the shape every other backend has produced so far: only CMA-ES
-	// restarts, and a run of it that was cut before its first search finished
-	// has nothing to say either.
-	restarts := ""
-	if result.Restarts > 0 {
-		restarts = fmt.Sprintf(" restarts=%d", result.Restarts)
-	}
-
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"Finished: best=%0.6g stop=%s iterations=%d evals=%d%s\n",
-		bestCost, result.StopReason, result.Iterations, result.Evaluations, restarts)
-
-	metrics, err := objective.EvaluateMetrics(bestEncoded)
-	if err != nil {
-		return err
-	}
-
-	profile := objective.Profile()
-	if !metric.Composite() {
-		profile = optimizer.ProfileBalanced
-	}
-
-	// Written a second time, now with its provenance: the terms and the
-	// profile the block records are only known here, and a preset that says
-	// which reference and which search produced it is worth one extra write.
-	fittedPreset.Provenance, err = fitProvenance(cmd.ErrOrStderr(), options, profile, metrics, bestCost, result.Evaluations)
-	if err != nil {
-		return err
-	}
-
-	if err := preset.Save(&fittedPreset, options.outputPath); err != nil {
-		return err
-	}
-
-	writeMetrics(cmd.OutOrStdout(), metrics, profile)
-
-	pinned, err := objective.Codec().Pinned(bestEncoded)
-	if err != nil {
-		return err
-	}
-
-	writePinned(cmd.OutOrStdout(), pinned, objective.Codec().Dimension())
-
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"Saved preset to %s and rendered fit to %s\n", options.outputPath, renderedPath)
-
-	return nil
+	return engine, nil
 }
 
-// fitProvenance records where a fitted preset came from, so that a preset
-// copied out of a work directory still answers for itself: which recording it
-// was scored against, which search found it, and what it scored.
-//
-// A reference that cannot be hashed here is reported and survived. The search
-// is over by the time this runs, and losing a finished fit because the
-// recording was unplugged in the meantime costs more than the missing digest,
-// which the empty field says is missing.
-func fitProvenance(
-	logTo io.Writer,
-	options fitOptions,
-	profile optimizer.Profile,
-	metrics optimizer.Metrics,
-	score float64,
-	evaluations int,
-) (*preset.Provenance, error) {
-	sum, err := fitrun.FileSHA256(options.referencePath)
-	if err != nil {
-		_, _ = fmt.Fprintf(logTo, "provenance: %v; preset written without it\n", err)
-
-		sum = ""
-	}
-
-	terms, err := json.Marshal(metrics)
-	if err != nil {
-		return nil, fmt.Errorf("encode provenance terms: %w", err)
-	}
-
-	engine := preset.EngineProvenance{Name: options.optimizerName}
-
-	switch options.optimizerName {
-	case "mayfly":
-		engine.Variant, engine.Population, engine.Restarts = options.mayflyVariant, options.mayflyPop, options.mayflyRestarts
-	case "cmaes":
-		engine.Covariance, engine.Lambda, engine.Restarts = options.cmaesCovariance, options.cmaesLambda, options.cmaesRestarts
-	}
-
-	return &preset.Provenance{
-		GeneratedBy: "glockenspiel fit",
-		Version:     version,
-		Timestamp:   time.Now().UTC(),
-		Reference:   preset.ReferenceProvenance{Path: options.referencePath, SHA256: sum},
-		Note:        options.note,
-		Profile:     profile.Name,
-		// The seed OnResolve reported, so a preset drawn from a zero seed
-		// still names the stream that produced it.
-		Seed:        options.seed,
-		Engine:      engine,
-		Score:       score,
-		Terms:       terms,
-		Evaluations: evaluations,
-		Libraries:   fitrun.ReadIdentity().Libraries,
-	}, nil
-}
-
-// polishRun is optimizer.Polish behind a variable so a test can make the stage
-// fail without a fixture that provokes a real failure: every input the stage
-// takes is validated before the search starts, so there is no cheap way in.
-var polishRun = optimizer.Polish
-
-// polishEnabled reports whether a polish engine was asked for.
-func polishEnabled(engine string) bool {
-	return engine != "" && engine != optimizer.PolishEngineNone
-}
-
-// runPolishStage runs the optional local refinement and returns the vector the
-// run should ship along with its primary cost.
-//
-// Acceptance is judged under the primary metric even though the stage searches
-// under the polish profile, because every report, `distance` and the checkpoint
-// score the preset under the primary metric: a polish that lowered the waveform
-// term while raising the primary cost would ship a regression those reports go
-// on to show.
-//
-// A failing stage is reported and then ignored. The search has already run by
-// the time it starts, so returning its error would throw away the whole fit --
-// no preset, no final checkpoint, no metrics line -- over a refinement that is
-// optional by construction.
-func runPolishStage(
-	ctx context.Context,
-	cmd *cobra.Command,
-	options fitOptions,
-	objective *optimizer.ObjectiveFunction,
-	result *optimizer.Result,
-) ([]float64, float64) {
+// fitPolish describes the optional refinement stage, or nothing when none was
+// asked for. The seed and the worker count are left out: the run replaces them
+// with the ones the search resolved, so a polish is as repeatable as the search
+// it follows even when both were told to choose for themselves.
+func fitPolish(options fitOptions) *optimizer.PolishOptions {
 	if !polishEnabled(options.polish) {
-		return result.BestParams, result.BestCost
+		return nil
 	}
 
-	polished, err := polishRun(ctx, objective, result.BestParams, optimizer.PolishOptions{
+	return &optimizer.PolishOptions{
 		Engine:        options.polish,
 		Sigma:         options.polishSigma,
 		MaxIterations: options.polishIterations,
 		TimeBudget:    options.polishBudget,
-		Seed:          options.seed,
-		MaxWorkers:    options.workers,
-	})
-	if err != nil {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-			"polish (%s) failed: %v; keeping the search result\n", options.polish, err)
-
-		return result.BestParams, result.BestCost
 	}
-
-	verdict := "rejected"
-	if polished.Accepted {
-		verdict = "accepted"
-	}
-
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(),
-		"polish (%s): primary %0.6g -> %0.6g, polish %0.6g -> %0.6g, %s\n",
-		options.polish, polished.PrimaryBefore, polished.PrimaryAfter,
-		polished.PolishBefore, polished.PolishAfter, verdict)
-
-	if !polished.Accepted {
-		return result.BestParams, result.BestCost
-	}
-
-	return polished.Params, polished.PrimaryAfter
 }
 
-// shouldCheckpoint reports whether a progress report should be checkpointed.
-//
-// The cadence is counted in the backend's own iterations, which is the unit
-// --max-iter and the resume budget are already in, rather than in progress
-// reports: a report count means different amounts of work per backend and
-// changes with --report-every, so the same --checkpoint-interval used to buy
-// wildly different checkpoint spacing. A report is checkpointed once at least
-// checkpointEvery optimizer iterations have passed since the last one was
-// written, which is "at least" rather than "exactly" because a backend reports
-// on its own schedule and may skip past the exact multiple. An interval of
-// zero disables checkpointing completely.
-func shouldCheckpoint(optimizerIterations, lastCheckpointed, checkpointEvery int) bool {
-	if checkpointEvery <= 0 || optimizerIterations <= 0 {
-		return false
+// specReportEvery and specCheckpointEvery translate the flags' "off" into the
+// spec's. The two spell it differently: a flag's zero is "no reports" and "no
+// checkpoints at all", while a spec's zero asks for the default -- a report
+// every iteration, because the trace is what a campaign scores from, and the
+// final checkpoint only.
+func specReportEvery(cadence int) int {
+	if cadence <= 0 {
+		return fitrun.ReportNever
 	}
 
-	return optimizerIterations-lastCheckpointed >= checkpointEvery
+	return cadence
+}
+
+func specCheckpointEvery(cadence int) int {
+	if cadence <= 0 {
+		return fitrun.CheckpointNever
+	}
+
+	return cadence
+}
+
+// reportFit prints the result and files the fitted preset where --output asked
+// for it.
+//
+// The preset is written twice on purpose: the run directory's preset.json is
+// the record beside the trace and the render, and --output is where the
+// operator wanted the preset itself, which is usually outside any run
+// directory. It is the same bytes either way, provenance block included.
+func reportFit(cmd *cobra.Command, options fitOptions, outcome *fitrun.Outcome) error {
+	if err := preset.Save(outcome.Preset, options.outputPath); err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+
+	writeMetrics(out, outcome.Metrics, outcome.Profile)
+	writePinned(out, outcome.Pinned, outcome.Summary.Dimension)
+
+	_, _ = fmt.Fprintf(out, "Saved preset to %s and the run to %s\n", options.outputPath, options.workDir)
+
+	return nil
+}
+
+// polishEnabled reports whether a polish engine was asked for.
+func polishEnabled(engine string) bool {
+	return engine != "" && engine != optimizer.PolishEngineNone
 }
 
 // durationFlag parses Go durations and, for compatibility with the earlier
@@ -979,25 +752,12 @@ func loadResumeCheckpoint(cmd *cobra.Command, options *fitOptions) (*optimizer.C
 	return cp, latestPath, nil
 }
 
-// applyResumeCheckpoint folds the already loaded checkpoint into the encoded
-// starting point and the remaining iteration budget.
-func applyResumeCheckpoint(
-	cmd *cobra.Command,
-	options *fitOptions,
-	cp *optimizer.Checkpoint,
-	latestPath string,
-	initialEncoded []float64,
-) ([]float64, error) {
-	// A checkpoint from a differently shaped preset (Chebyshev toggled, other
-	// harmonic count) cannot be decoded by this codec. Resuming was requested
-	// explicitly, so fail loudly instead of quietly starting from scratch.
-	if len(cp.BestParams) != len(initialEncoded) {
-		return nil, fmt.Errorf(
-			"checkpoint %s holds %d parameters but the preset encodes %d: use the preset the checkpoint was written with, or drop --resume",
-			latestPath, len(cp.BestParams), len(initialEncoded),
-		)
-	}
-
+// applyResumeBudget charges the resumed run for the work the checkpoint
+// already did and says so on the terminal.
+//
+// The vector itself is not touched here: it travels in the spec, and the run is
+// where it can be checked against the codec that will decode it.
+func applyResumeBudget(cmd *cobra.Command, options *fitOptions, cp *optimizer.Checkpoint, latestPath string) {
 	// Only OptimizerIterations is in the same unit as --max-iter.
 	// Checkpoint.Iteration is a file index derived from the progress report
 	// count, so subtracting it would charge a run with --report-every 10 a
@@ -1022,31 +782,6 @@ func applyResumeCheckpoint(
 		"Resuming from %s written %s (iteration=%d optimizer-iterations=%d best=%0.6g optimizer=%s metric=%s remaining-iter=%d)\n",
 		latestPath, cp.Timestamp.UTC().Format(time.RFC3339), cp.Iteration, cp.OptimizerIterations, cp.BestCost,
 		options.optimizerName, options.metric, options.maxIter)
-
-	return append(initialEncoded[:0], cp.BestParams...), nil
-}
-
-// clampInitialPoint pulls the encoded starting point into the search box. With
-// explicit --bounds the box is no longer widened to contain the starting
-// preset, so a preset outside the requested range would otherwise be handed to
-// the backend as an infeasible initial point.
-func clampInitialPoint(
-	cmd *cobra.Command,
-	bounds optimizer.Bounds,
-	initialEncoded []float64,
-	warn bool,
-) ([]float64, error) {
-	clamped, err := bounds.Clamp(initialEncoded)
-	if err != nil {
-		return nil, err
-	}
-
-	if warn && !slices.Equal(clamped, initialEncoded) {
-		_, _ = fmt.Fprint(cmd.ErrOrStderr(),
-			"warning: the starting preset lies outside the --bounds box and was clamped into it\n")
-	}
-
-	return clamped, nil
 }
 
 // validateMayflyOptions rejects the flag combinations the CLI can see before
@@ -1177,63 +912,6 @@ func tuningFromFlags(cmd *cobra.Command, options fitOptions) *optimizer.MayflyTu
 	}
 
 	return tuning
-}
-
-func checkpointStateForOptions(options fitOptions, tuning *optimizer.MayflyTuning) *optimizer.OptimizerState {
-	state := &optimizer.OptimizerState{
-		Kind:  options.optimizerName,
-		Modes: options.modes,
-		// The width OnResolve reported, not the zero that asked for the
-		// machine's own count, so a resume elsewhere keeps this run's width.
-		Workers: options.workers,
-	}
-	if options.optimizerName == "mayfly" {
-		// The schedule the run was given, not the one the flags asked for: a
-		// tuning document may have overridden either, and the checkpoint should
-		// describe what happened.
-		epochs, restarts := options.mayflyEpochs, options.mayflyRestarts
-
-		if tuning != nil && tuning.Schedule != nil {
-			if tuning.Schedule.Epochs != nil {
-				epochs = *tuning.Schedule.Epochs
-			}
-
-			if tuning.Schedule.Restarts != nil {
-				restarts = *tuning.Schedule.Restarts
-			}
-		}
-
-		state.Mayfly = &optimizer.MayflyCheckpointEnv{
-			Variant:    options.mayflyVariant,
-			Preset:     options.mayflyPreset,
-			Population: options.mayflyPop,
-			Seed:       options.seed,
-			Epochs:     epochs,
-			Restarts:   restarts,
-			// The merged document rather than the flags: it is what the run was
-			// actually configured with, so a resume reproduces it without
-			// needing the tuning file to still be on disk.
-			Tuning: tuning,
-		}
-	}
-
-	if options.optimizerName == "cmaes" {
-		state.CMAES = &optimizer.CMAESCheckpointEnv{
-			Covariance: options.cmaesCovariance,
-			// OnResolve has replaced a zero with the population the run
-			// resolved, as it has with the seed, so both name what ran.
-			Lambda: options.cmaesLambda,
-			Sigma:  options.cmaesSigma,
-			Seed:   options.seed,
-			// The ladder's shape. A resume that dropped it would continue as a
-			// single fixed-population search.
-			Restarts:       options.cmaesRestarts,
-			RunEvaluations: options.cmaesRunEvals,
-			LambdaGrowth:   options.cmaesLambdaGrowth,
-		}
-	}
-
-	return state
 }
 
 func applyCheckpointResume(cmd *cobra.Command, options *fitOptions, cp *optimizer.Checkpoint) {

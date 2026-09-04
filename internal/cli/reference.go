@@ -8,7 +8,6 @@ import (
 
 	"github.com/cwbudde/algo-glockenspiel/internal/analysis"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
-	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/spf13/pflag"
 )
 
@@ -33,21 +32,48 @@ func addReferenceFlags(flags *pflag.FlagSet, options *referenceOptions) {
 		"An analysis.json from `glockenspiel analyze` whose partials the partial term uses (default: measure the reference)")
 }
 
+// fitLoadOptions turns the loader flags into the policy a fit reads its
+// reference under, and reads the analysis document if one was named.
+//
+// The document is returned rather than applied here because it is the
+// measurement the seed, the frequency box and the partial term all read: an
+// operator who ran `glockenspiel analyze` and edited the partial list is
+// fitting against that list, not against a fresh measurement of the same file.
+func fitLoadOptions(options referenceOptions) (analysis.LoadOptions, *analysis.Measurement, error) {
+	downmix, err := analysis.ParseDownmix(options.downmix)
+	if err != nil {
+		return analysis.LoadOptions{}, nil, err
+	}
+
+	if options.window < 0 {
+		return analysis.LoadOptions{}, nil, fmt.Errorf("window must not be negative, got %s", options.window)
+	}
+
+	loadOptions := analysis.LoadOptions{Downmix: downmix, Window: options.window, KeepLevel: options.keepLevel}
+
+	if options.analysisPath == "" {
+		return loadOptions, nil, nil
+	}
+
+	document, err := analysis.ReadFile(options.analysisPath)
+	if err != nil {
+		return analysis.LoadOptions{}, nil, err
+	}
+
+	return loadOptions, &document.Measurement, nil
+}
+
 // loadFitReference reads a reference the way a fit sees it: one channel,
 // cut to its first strike, peak-normalised, and checked against the sample
 // rate the fit runs at. It also reads the analysis document, if one was
 // named, for the partial term.
 func loadFitReference(path string, options referenceOptions, sampleRate int) (*analysis.Reference, *analysis.Measurement, error) {
-	downmix, err := analysis.ParseDownmix(options.downmix)
+	loadOptions, measurement, err := fitLoadOptions(options)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if options.window < 0 {
-		return nil, nil, fmt.Errorf("window must not be negative, got %s", options.window)
-	}
-
-	reference, err := analysis.LoadReference(path, analysis.LoadOptions{Downmix: downmix, Window: options.window, KeepLevel: options.keepLevel})
+	reference, err := analysis.LoadReference(path, loadOptions)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -56,34 +82,7 @@ func loadFitReference(path string, options referenceOptions, sampleRate int) (*a
 		return nil, nil, fmt.Errorf("reference sample rate %d does not match requested sample rate %d", reference.SampleRate, sampleRate)
 	}
 
-	var measurement *analysis.Measurement
-
-	if options.analysisPath != "" {
-		document, err := analysis.ReadFile(options.analysisPath)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		measurement = &document.Measurement
-	}
-
 	return reference, measurement, nil
-}
-
-// writeSeededModes prints one line saying where the starting modes came from.
-func writeSeededModes(out io.Writer, starting *preset.Preset, seeded, requested int) {
-	switch {
-	case seeded > 0 && requested > seeded:
-		_, _ = fmt.Fprintf(out, "modes: %d seeded from the reference's partials (asked for %d, the analysis lists %d)\n",
-			seeded, requested, seeded)
-	case seeded > 0:
-		_, _ = fmt.Fprintf(out, "modes: %d seeded from the reference's partials\n", seeded)
-	case requested >= 0:
-		_, _ = fmt.Fprintf(out, "modes: keeping the preset's %d (the analysis lists no partials to seed from)\n",
-			len(starting.Parameters.Modes))
-	default:
-		_, _ = fmt.Fprintf(out, "modes: keeping the preset's %d\n", len(starting.Parameters.Modes))
-	}
 }
 
 // writePinned lists the dimensions of a result that sit on an edge of the
