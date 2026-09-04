@@ -138,6 +138,21 @@ async function installStableFitApi(page: Page): Promise<void> {
       body: JSON.stringify({ error: "no fit has been started" }),
     });
   });
+
+  /*
+   * The run history too, and not because Optimize needs it to render: the
+   * pattern above matches `/api/fit` exactly, so `/api/fit/jobs` would fall
+   * through to the Go server this suite also starts -- and pick up whatever
+   * serve-fit.spec.ts left in it. A row of somebody else's fit moves the whole
+   * page down and prints an elapsed time that is different every run, which no
+   * screenshot can be held to.
+   */
+  await page.route("**/api/fit/jobs", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ jobs: [] }),
+    });
+  });
 }
 
 /** Makes Optimize select its browser-WASM backend instead of the fit API. */
