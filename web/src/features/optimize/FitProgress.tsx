@@ -5,6 +5,8 @@ import { Audition } from "./Audition";
 import { Comparison } from "./Comparison";
 import { CostChart } from "./CostChart";
 import { FitStatus } from "./FitStatus";
+import { ParameterTable } from "./ParameterTable";
+import { TermBars } from "./TermBars";
 import { useFitEvents, type FitEvents } from "./useFitEvents";
 import type { FitArtifacts } from "./Audition";
 
@@ -102,9 +104,26 @@ export function FitProgress({
         {points.length === 0 ? (
           <p className="fit-chart-waiting">Waiting for first cost report…</p>
         ) : (
-          <CostChart points={points} revision={revision} />
+          <CostChart
+            points={points}
+            revision={revision}
+            // The compare picker reads /api/fit/jobs and /trace, neither of
+            // which exists in the browser worker's contract -- passing no
+            // job id there is what keeps the picker absent rather than
+            // broken, the same rule Comparison follows below.
+            compareJobId={artifacts === undefined ? jobId : undefined}
+          />
         )}
       </div>
+
+      <TermBars metrics={snapshot?.metrics} profile={snapshot?.profile} />
+
+      <ParameterTable
+        jobId={jobId}
+        hasPreset={snapshot?.hasPreset ?? false}
+        pinned={snapshot?.pinned}
+        artifacts={artifacts}
+      />
 
       {/*
         The comparison has no counterpart in the browser worker: `artifacts`

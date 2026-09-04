@@ -85,6 +85,9 @@
   --state-idle: #a67b43;
   --state-ready: #477359;
   --chart-grid: rgba(85, 52, 24, 0.16);
+  --chart-compare-1: #3a6ea5;
+  --chart-compare-2: #2f8f6f;
+  --chart-compare-3: #8a4fae;
 
   /*
    * The ink for surfaces that stay bright in both themes: the brass controls
@@ -246,6 +249,9 @@
     --state-idle: #cf9c56;
     --state-ready: #74b892;
     --chart-grid: rgba(236, 208, 168, 0.16);
+    --chart-compare-1: #7fb1e8;
+    --chart-compare-2: #6fd1ab;
+    --chart-compare-3: #c497e8;
 
     --shadow-strong-color: rgba(0, 0, 0, 0.62);
     --shadow-soft-color: rgba(0, 0, 0, 0.42);
@@ -327,6 +333,9 @@
   --state-idle: #cf9c56;
   --state-ready: #74b892;
   --chart-grid: rgba(236, 208, 168, 0.16);
+  --chart-compare-1: #7fb1e8;
+  --chart-compare-2: #6fd1ab;
+  --chart-compare-3: #c497e8;
 
   --shadow-strong-color: rgba(0, 0, 0, 0.62);
   --shadow-soft-color: rgba(0, 0, 0, 0.42);
@@ -1927,6 +1936,177 @@ h1 {
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-group);
   background: var(--panel-fill-strong);
+}
+
+.cost-chart-compare {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: 0 0 var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-group);
+}
+
+.cost-chart-compare legend {
+  padding: 0 var(--space-2xs);
+  color: var(--charcoal-muted);
+  font-size: 0.76rem;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.cost-chart-compare-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+}
+
+.cost-chart-compare-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.cost-chart-compare-option label {
+  color: var(--charcoal);
+  font-size: 0.86rem;
+}
+
+.cost-chart-compare-option input:disabled + label {
+  color: var(--charcoal-muted);
+}
+
+/* ------------------------------------------------------------------ */
+/* Parameter table                                                     */
+/* ------------------------------------------------------------------ */
+
+.fit-parameters {
+  margin-top: var(--space-2xl);
+}
+
+.fit-parameters h3 {
+  margin: 0 0 var(--space-sm);
+  color: var(--charcoal);
+  font-family: var(--font-display);
+  font-size: var(--type-title-sm);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.param-table {
+  width: 100%;
+  margin: 0 0 var(--space-lg);
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.param-table th,
+.param-table td {
+  padding: var(--space-2xs) var(--space-sm);
+  border-bottom: 1px solid var(--surface-border);
+  text-align: left;
+}
+
+.param-table thead th {
+  color: var(--charcoal-muted);
+  font-size: 0.76rem;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.param-table tbody th {
+  font-weight: 600;
+}
+
+/*
+ * A pinned cell is never colour alone: the dashed border and the printed
+ * "min"/"max" badge both survive a colour-blind or high-contrast reading, and
+ * `describePin`'s sentence is read by anyone using a screen reader instead of
+ * looking at either.
+ */
+.param-cell[data-pinned="true"] {
+  border: 1px dashed var(--copper-accent);
+  border-bottom: 1px dashed var(--copper-accent);
+  background: var(--panel-fill-soft);
+}
+
+.param-pin-badge {
+  display: inline-block;
+  margin-left: var(--space-2xs);
+  padding: 0 var(--space-2xs);
+  border: 1px solid var(--copper-accent);
+  border-radius: var(--radius-button);
+  color: var(--copper-accent);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------------ */
+/* Term bars                                                           */
+/* ------------------------------------------------------------------ */
+
+.term-bars {
+  margin-top: var(--space-2xl);
+}
+
+.term-bars h3 {
+  margin: 0 0 var(--space-sm);
+  color: var(--charcoal);
+  font-family: var(--font-display);
+  font-size: var(--type-title-sm);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.term-bar-list {
+  display: grid;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.term-bar-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.9fr) minmax(80px, 1fr) auto;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.term-bar-row-raw {
+  grid-template-columns: minmax(120px, 0.9fr) auto;
+}
+
+.term-bar-label {
+  color: var(--charcoal);
+  font-size: 0.86rem;
+}
+
+.term-bar-track {
+  overflow: hidden;
+  height: 10px;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-button);
+  background: var(--panel-fill-strong);
+}
+
+.term-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--copper-accent);
+}
+
+.term-bar-fill[data-measured="false"] {
+  background: none;
+}
+
+.term-bar-value {
+  color: var(--charcoal-muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .fit-status h3,

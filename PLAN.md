@@ -1168,9 +1168,20 @@ Goal: the UI a campaign needs — history, provenance, comparison.
       signals from the code that scored them: one time axis, and both clamped to the reference's
       floor exactly as `spectrogram.errorDB` does. Painting each side against its own floor was
       the defect that made the render appear to hold content the score counted as nothing.
-- [ ] A results view with the reference beside the fit — waveform and spectrogram from the same
+- [x] A results view with the reference beside the fit — waveform and spectrogram from the same
       STFT code — A/B audition of both, a parameter table with bound-pinned values highlighted,
-      per-term bars, and a run list with a compare picker for cost curves.
+      per-term bars, and a run list with a compare picker for cost curves. Done 2026-09-04. Both
+      sides share one scale throughout: the amplitude range is scanned across both waveforms, the
+      spectrogram ceiling is the louder side's peak, and the floor and the time span arrive from
+      the server rather than being derived per side, because a per-side range draws a better
+      picture that disagrees with the objective. The bars are computed only from the weights and
+      norms the snapshot carries, reproducing `Metrics.Contributions` including its renormalisation
+      over measured terms, so nothing about the score is retyped in TypeScript. Pins are read from
+      `PinnedDimension` by name rather than by re-comparing values against bounds, and are marked
+      three ways that do not rely on colour. The parameter table reconstructs the codec's own
+      dimension names against the preset's frequency-sorted mode order, so a row is one mode.
+      Selecting a historical run once played the active run's audio instead; audition now
+      addresses the per-job endpoints.
 - [x] Collapse the three limit tables and three optimizer selectors into one generated source,
       and keep one duration parser per language. Done 2026-09-04. `internal/fitschema` holds the
       one table and `cmd/gen-fit-schema` writes `web/src/api/fitSchema.generated.ts`, with a
