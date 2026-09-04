@@ -30,13 +30,24 @@ export interface VersionResponse {
 
 /**
  * Where a job is. `fitState` in internal/server/job.go; every value but
- * "running" is terminal.
+ * "queued" and "running" is terminal.
+ *
+ * "queued" is a job the server has accepted and not begun: it runs one fit at
+ * a time, and a start request that arrives while one is going is lined up
+ * rather than refused. A client that starts a single fit never sees it, since
+ * a job with nothing ahead of it is running by the time its start request is
+ * answered.
  */
-export type FitState = "running" | "succeeded" | "failed" | "canceled";
+export type FitState =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "canceled";
 
 /** Whether a state is one a job never leaves. */
 export function isTerminal(state: FitState): boolean {
-  return state !== "running";
+  return state !== "running" && state !== "queued";
 }
 
 /**
@@ -133,10 +144,242 @@ export interface FitSnapshot {
   mayflySeed?: string;
 
   /**
-   * The zero-based index of the search in progress. Only the CMA-ES backend
-   * restarts, so it is absent for every other one.
+   * The zero-based index of the search in progress: CMA-ES stops a converged
+   * run and starts another from a wider sigma, and this counts them. Absent
+   * for every other backend.
    */
   restart?: number;
+
+  /**
+   * The mayfly backend's round index. It is the same counter of the Go
+   * `optimizer.Progress` under the other backend's meaning -- a mayfly round
+   * is a fresh population, not a restart of a converged search -- so it is a
+   * field of its own and exactly one of the two is ever present.
+   */
+  epoch?: number;
+
+  /** Evaluations over elapsed wall time. Zero before the clock has moved. */
+  evaluationsPerSecond: number;
+
+  /**
+   * How much of the tightest binding budget the run has spent: the larger of
+   * iterations over the iteration cap and elapsed over the time budget, and 0
+   * when neither is set.
+   *
+   * It is **not** an ETA. A run stops at the first budget that binds, so this
+   * is a lower bound on how far along it is: a search that converges, or one
+   * whose backend stops itself, ends well below 1.
+   */
+  budgetFraction: number;
+
+  /**
+   * The backend's own verdict: the run stopped on a convergence criterion
+   * rather than on its budget. False while it is still going, and false for
+   * one that was cancelled.
+   */
+  converged: boolean;
+
+  /** Every setting the fit ran under, defaults and resolved values included. */
+  request: FitRequestEcho;
+
+  /**
+   * How the run's metric weighs the terms `metrics` reports. Absent for the
+   * single-term legacy metrics, which have no profile.
+   *
+   * The weights and the norms are sent rather than carried here, so a
+   * per-term display and the score it sits beside cannot disagree: a norm
+   * that changes in `optimizer.DefaultNorms` changes both at once.
+   */
+  profile?: FitProfile;
+}
+
+/**
+ * `fitRequestEcho` in internal/server/job.go: the whole request as it was
+ * resolved, which is the provenance a results view reads.
+ *
+ * Both seeds and the resolved `seed` are decimal **strings** for the reason
+ * `mayflySeed` is on the request: they are int64 and a JS `Number` stops
+ * representing every integer past 2^53.
+ *
+ * A job rebuilt from a run directory after a server restart fills this in
+ * from the run's own config.json, which records everything here except the
+ * mayfly form fields -- the stagnation rule, the selection strategy and the
+ * crossover knobs were folded into the tuning document before the run wrote
+ * anything, so a restored job echoes them at 0 and "".
+ */
+export interface FitRequestEcho {
+  note: number;
+  velocity: number;
+  modes: number;
+  optimizer: OptimizerName;
+  metric: MetricName;
+  maxIterations: number;
+  timeBudgetMs: number;
+  reportEvery: number;
+  align: boolean;
+  normalizeGain: boolean;
+  downmix: string;
+  windowMs: number;
+
+  mayflyVariant?: MayflyVariant;
+  mayflyPreset?: MayflyPreset;
+  mayflyPopulation?: number;
+
+  /**
+   * Always present, whichever backend ran: it is a formatted int64 and never
+   * the empty string, so it is not omitted the way the rest of the backend
+   * block is. For a CMA-ES run it is simply the mayfly seed the request
+   * carried and nothing read.
+   */
+  mayflySeed: string;
+  mayflyEpochs?: number;
+  mayflyRestarts?: number;
+  mayflyStagnation?: number;
+  mayflySelection?: MayflySelection;
+  mayflyTargetCost?: number;
+  mayflyNc?: number;
+  mayflyNcRatio?: number;
+
+  cmaesCovariance?: CmaesCovariance;
+  cmaesLambda?: number;
+  cmaesSigma?: number;
+  /** Always present, for the reason `mayflySeed` is. */
+  cmaesSeed: string;
+  cmaesRestarts?: number;
+
+  /** Whether a mayfly tuning document was uploaded. The document itself is
+   * not echoed: the run directory's config.json holds it. */
+  mayflyTuning: boolean;
+
+  /**
+   * What the backend resolved for itself: the seed it actually drew, which is
+   * what makes a run repeatable, and the worker count it sized to the
+   * machine. `workers` is 0 until the backend has resolved itself, which
+   * happens one report before the first progress line.
+   */
+  seed: string;
+  workers: number;
+
+  /**
+   * The search box the client uploaded, absent when the run used the default
+   * one. The default is not echoed in its place because it is not a constant:
+   * it is drawn from the reference's own measured fundamental.
+   */
+  bounds?: FitBoundsEcho;
+}
+
+/** An echoed search box: each dimension a `[min, max]` pair. */
+export interface FitBoundsEcho {
+  inputMix: BoundsRange;
+  filterFreq: BoundsRange;
+  amplitude: BoundsRange;
+  frequency: BoundsRange;
+  decayMs: BoundsRange;
+  harmonicGain: BoundsRange;
+}
+
+/** The active metric's profile: every term it scores by, in reporting order. */
+export interface FitProfile {
+  name: string;
+  terms: FitProfileTerm[];
+}
+
+/**
+ * One weighted term. `norm` is the value at which the term scores one half,
+ * so a raw metric can be drawn against the scale the score judged it on.
+ */
+export interface FitProfileTerm {
+  term: keyof FitMetrics;
+  weight: number;
+  norm: number;
+  unit?: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* The comparison                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `GET api/fit/jobs/{id}/compare?columns=&frames=`: both sides of the A/B in
+ * one document, the reference the objective actually scored and a render of
+ * the preset the fit produced.
+ *
+ * It is served pre-reduced because the picture must be the objective's own:
+ * the spectrogram comes from `optimizer.ComputeSpectrogram`, the same
+ * transform and the same noise-aware floor the score was computed with, so a
+ * partial the eye finds is one the score counted.
+ *
+ * `columns` and `frames` are the resolutions that were asked for, after the
+ * server's caps (4096 columns, 256 frames). What each side was actually built
+ * at is on the side itself: a signal with fewer samples, or fewer analysis
+ * frames, keeps what it has rather than being stretched.
+ *
+ * `seconds` and `floorDb` are on the comparison and not on a side, because
+ * both sides share them by construction. A reference longer than the render
+ * cap is **cut** to it, so the two are one time axis; and both spectrograms
+ * are painted against the *reference's* noise-aware floor, which is what the
+ * objective scores both signals against. Draw them that way: a render given a
+ * floor of its own would show detail the score counted as nothing.
+ */
+export interface FitCompare {
+  sampleRate: number;
+  seconds: number;
+  columns: number;
+  frames: number;
+
+  /** Absent when the reference is shorter than one analysis frame, in which
+   * case neither side carries a spectrogram. */
+  floorDb?: number;
+
+  reference: FitCompareSide;
+  render: FitCompareSide;
+}
+
+/** One signal of a comparison. */
+export interface FitCompareSide {
+  samples: number;
+  waveform: FitWaveform;
+
+  /**
+   * Absent when the reference is shorter than one analysis frame, which is
+   * exactly when the objective measures no spectral term either. The two
+   * sides are the same length, so they are absent together.
+   */
+  spectrogram?: FitSpectrogram;
+}
+
+/**
+ * The envelope a waveform is drawn from: the lowest and the highest sample in
+ * each column. Both, because a column of a decayed strike is symmetric about
+ * zero and one magnitude per column would draw a shape the signal has not
+ * got. Each array is `columns` long.
+ */
+export interface FitWaveform {
+  columns: number;
+  min: number[];
+  max: number[];
+}
+
+/**
+ * A spectrogram reduced to a drawable size. `db` is `frames` rows of `bins`
+ * values, each the *loudest* bin of the frames and bins it stands for -- the
+ * maximum and not the mean, because a partial occupies one bin whose
+ * neighbours hold nothing and averaging would fade out what the picture is of.
+ *
+ * Every value is already held to the comparison's shared `floorDb`; `peakDb`
+ * is the loudest value in this matrix, so a display scales between the two
+ * without a pass over the data. It is per side because the two peaks are a
+ * real difference between the signals, which the floor is not. Row `r` covers
+ * `r * maxHz / bins` upwards, and `maxHz` is the Nyquist rate.
+ */
+export interface FitSpectrogram {
+  frames: number;
+  bins: number;
+  frameSize: number;
+  hop: number;
+  peakDb: number;
+  maxHz: number;
+  db: number[][];
 }
 
 /**

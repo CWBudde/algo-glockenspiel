@@ -16,9 +16,17 @@ import (
 // into chosen before the search starts. Without them a run started with a zero
 // seed cannot be repeated: the wrapper draws one, uses it, and would otherwise
 // throw it away.
-func buildOptimizer(spec Spec, prepared *preparation, chosen *resolved, out io.Writer) (optimizer.Optimizer, *optimizer.MayflyTuning, error) {
+func buildOptimizer(spec Spec, prepared *preparation, chosen *Resolved, out io.Writer) (optimizer.Optimizer, *optimizer.MayflyTuning, error) {
 	switch spec.Engine.Name {
 	case EngineSimple:
+		// The simple backend draws nothing of its own: chosen is already
+		// final (Seed and Workers were resolved before this call), so
+		// OnResolve fires here rather than from a callback that will never
+		// come.
+		if spec.OnResolve != nil {
+			spec.OnResolve(*chosen)
+		}
+
 		return &optimizer.SimpleOptimizer{}, nil, nil
 	case EngineMayfly:
 		return buildMayfly(spec, chosen, out)
@@ -29,7 +37,7 @@ func buildOptimizer(spec Spec, prepared *preparation, chosen *resolved, out io.W
 	}
 }
 
-func buildMayfly(spec Spec, chosen *resolved, out io.Writer) (optimizer.Optimizer, *optimizer.MayflyTuning, error) {
+func buildMayfly(spec Spec, chosen *Resolved, out io.Writer) (optimizer.Optimizer, *optimizer.MayflyTuning, error) {
 	settings := spec.Engine.Mayfly
 	tuning := scheduleOverlay(settings)
 
@@ -38,6 +46,7 @@ func buildMayfly(spec Spec, chosen *resolved, out io.Writer) (optimizer.Optimize
 
 	backend := &optimizer.MayflyOptimizer{
 		Variant:    settings.Variant,
+		Preset:     settings.Preset,
 		Population: settings.Population,
 		Seed:       spec.Seed,
 		MaxWorkers: spec.Workers,
@@ -49,6 +58,10 @@ func buildMayfly(spec Spec, chosen *resolved, out io.Writer) (optimizer.Optimize
 
 			_, _ = fmt.Fprintf(out, "mayfly: variant=%s seed=%d rounds=%dx%d workers=%d\n",
 				report.Variant, report.Seed, report.Rounds, report.IterationsPerRound, report.Workers)
+
+			if spec.OnResolve != nil {
+				spec.OnResolve(*chosen)
+			}
 		},
 	}
 
@@ -59,7 +72,7 @@ func buildMayfly(spec Spec, chosen *resolved, out io.Writer) (optimizer.Optimize
 	return backend, tuning, nil
 }
 
-func buildCMAES(spec Spec, prepared *preparation, chosen *resolved, out io.Writer) (optimizer.Optimizer, *optimizer.MayflyTuning, error) {
+func buildCMAES(spec Spec, prepared *preparation, chosen *Resolved, out io.Writer) (optimizer.Optimizer, *optimizer.MayflyTuning, error) {
 	settings := spec.Engine.CMAES
 	chosen.Covariance = settings.Covariance
 
@@ -84,6 +97,10 @@ func buildCMAES(spec Spec, prepared *preparation, chosen *resolved, out io.Write
 
 			_, _ = fmt.Fprintf(out, "cmaes: covariance=%s lambda=%d sigma=%g seed=%d workers=%d\n",
 				report.Covariance, report.Lambda, report.Sigma, report.Seed, report.Workers)
+
+			if spec.OnResolve != nil {
+				spec.OnResolve(*chosen)
+			}
 		},
 	}
 
@@ -143,7 +160,7 @@ func mayflyPopulation(settings MayflySettings, tuning *optimizer.MayflyTuning) i
 func saveCheckpoint(
 	spec Spec,
 	prepared *preparation,
-	chosen *resolved,
+	chosen *Resolved,
 	tuning *optimizer.MayflyTuning,
 	iteration, optimizerIterations int,
 	params []float64,
@@ -168,7 +185,7 @@ func saveCheckpoint(
 // checkpointState records what a resume would have to reproduce: the backend's
 // configuration, the mode choice the codec was built around, and the width the
 // run resolved.
-func checkpointState(spec Spec, prepared *preparation, chosen *resolved, tuning *optimizer.MayflyTuning) *optimizer.OptimizerState {
+func checkpointState(spec Spec, prepared *preparation, chosen *Resolved, tuning *optimizer.MayflyTuning) *optimizer.OptimizerState {
 	modes := optimizer.KeepTemplateModes
 	if prepared.seededModes > 0 {
 		modes = prepared.seededModes

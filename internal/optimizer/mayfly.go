@@ -266,7 +266,7 @@ func (o *MayflyOptimizer) Optimize(ctx context.Context, objective ObjectiveFunc,
 		// context error, and the round is treated as finished rather than as
 		// an abort, which is what lets the next round start.
 		roundCtx, cancelRound := context.WithCancel(runCtx)
-		tracker.beginRound(evalCaps[round], cancelRound)
+		tracker.beginRound(round, evalCaps[round], cancelRound)
 
 		res, runErr := mayfly.OptimizeContext(roundCtx, cfg, options...)
 
@@ -786,6 +786,13 @@ type mayflyTracker struct {
 	evalCap     int
 	cancelRound context.CancelFunc
 	capped      bool
+
+	// round is the zero-based index of the schedule round in progress, set by
+	// beginRound and read back into Progress.Restart, per the field's own
+	// contract ("the zero-based index of the search in progress"). Mayfly's
+	// restarts are the schedule's rounds, so this is that index rather than a
+	// count the tracker derives some other way.
+	round int
 }
 
 func newMayflyTracker(objective ObjectiveFunc, bounds Bounds, start time.Time, opts OptimizeOptions) *mayflyTracker {
@@ -891,6 +898,7 @@ func (t *mayflyTracker) observe(progress mayfly.Progress) {
 		BestParams:          append([]float64(nil), t.bestParams...),
 		Elapsed:             time.Since(t.start),
 		Evaluations:         t.evals,
+		Restart:             t.round,
 	}
 
 	t.mu.Unlock()
@@ -928,13 +936,15 @@ func (t *mayflyTracker) enforceEvaluationCap() {
 	t.cancelRound = nil
 }
 
-// beginRound arms the evaluation cap for the round about to start. The cap is
-// the running total, so a round that inherits an unspent remainder is simply
-// allowed to run further before it fires.
-func (t *mayflyTracker) beginRound(evalCap int, cancel context.CancelFunc) {
+// beginRound arms the evaluation cap for the round about to start and records
+// its index, so the progress reported during it carries the right restart
+// number. The cap is the running total, so a round that inherits an unspent
+// remainder is simply allowed to run further before it fires.
+func (t *mayflyTracker) beginRound(round, evalCap int, cancel context.CancelFunc) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	t.round = round
 	t.evalCap = evalCap
 	t.cancelRound = cancel
 	t.capped = false

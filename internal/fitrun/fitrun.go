@@ -13,7 +13,13 @@ import (
 	"github.com/cwbudde/algo-glockenspiel/internal/analysis"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
 )
+
+// analysisMinFrameSize is the smallest window the reference's partials are
+// measured with, the same floor optimizer.measurePartials holds itself to: a
+// window below it resolves nothing a mode could be read off.
+const analysisMinFrameSize = 256
 
 // preparation is everything the search needs, built once before it starts.
 type preparation struct {
@@ -96,12 +102,22 @@ func prepare(spec Spec, out io.Writer) (*preparation, error) {
 	// The analysis document is written from the same cut the objective scores,
 	// so the partials in it are the ones the fit was actually shaped by rather
 	// than a second measurement of the same file under other options.
-	document, err := analysis.AnalyzeReference(spec.ReferencePath, loaded, analysis.PartialOptions{})
+	document, err := analysis.AnalyzeReference(spec.ReferencePath, loaded,
+		analysis.PartialOptions{FrameSize: analysisFrameSize(len(loaded.Samples))})
 	if err != nil {
 		return nil, err
 	}
 
 	if err := document.WriteFile(filepath.Join(spec.Dir, FileAnalysis)); err != nil {
+		return nil, err
+	}
+
+	// Written next to analysis.json rather than derived later from
+	// reference_options, because this is the signal the objective actually
+	// scored: loaded, cut, downmixed and peak-normalised. A caller comparing
+	// it against render.wav is comparing what the fit saw, not a fresh reload
+	// of the original file under whatever policy it can reconstruct.
+	if err := wavio.WriteMono(filepath.Join(spec.Dir, FileReference), spec.SampleRate, loaded.Samples); err != nil {
 		return nil, err
 	}
 
@@ -128,6 +144,19 @@ func prepare(spec Spec, out io.Writer) (*preparation, error) {
 	config.Bounds.Frequency = optimizer.FrequencyBoundsFor(measurement, spec.SampleRate, seeded.Note, spec.Note)
 	config.StrictBounds = false
 	config.Analysis = measurement
+
+	if spec.Bounds != nil {
+		// A caller's own box replaces the whole thing, frequency included: it
+		// is asking for a specific search, not a widening of the default one.
+		config.Bounds = *spec.Bounds
+		config.StrictBounds = spec.StrictBounds
+	}
+
+	if spec.Alignment != nil {
+		config.Alignment = *spec.Alignment
+	}
+
+	config.Gain = spec.Gain
 
 	objective, err := optimizer.NewObjectiveFunctionWithConfig(
 		loaded.Samples, seeded, spec.SampleRate, spec.Note, spec.Velocity, config,
@@ -164,6 +193,29 @@ func prepare(spec Spec, out io.Writer) (*preparation, error) {
 	}, nil
 }
 
+// analysisFrameSize is the window analysis.json is measured with: the default
+// one, halved until it fits the signal.
+//
+// It is the rule optimizer.measurePartials already follows, and it exists for
+// the same reason: a reference shorter than the default window is not an error
+// but a short reference. A fit against a fifth of a second -- which is what a
+// single strike auditioned through the server can be -- would otherwise write
+// no analysis at all and fail before the search ever started. Zero, for a
+// signal shorter than any usable window, is PartialOptions' own "take the
+// default", which then reports the reference as too short exactly as before.
+func analysisFrameSize(samples int) int {
+	frameSize := analysis.DefaultFrameSize
+	for frameSize > samples {
+		frameSize /= 2
+	}
+
+	if frameSize < analysisMinFrameSize {
+		return 0
+	}
+
+	return frameSize
+}
+
 // templateFor returns the starting preset, copied so the caller's own value is
 // never rewritten by the seeding step.
 func templateFor(spec Spec) (*preset.Preset, error) {
@@ -181,7 +233,7 @@ func templateFor(spec Spec) (*preset.Preset, error) {
 
 // search runs the backend, the polish stage and every write that follows.
 func search(ctx context.Context, spec Spec, prepared *preparation, out io.Writer) (*Outcome, error) {
-	chosen := resolved{Seed: spec.Seed, Workers: spec.Workers}
+	chosen := Resolved{Seed: spec.Seed, Workers: spec.Workers}
 	if chosen.Workers == 0 {
 		chosen.Workers = runtime.NumCPU()
 	}
@@ -221,7 +273,7 @@ func search(ctx context.Context, spec Spec, prepared *preparation, out io.Writer
 			MaxIterations:  spec.MaxIterations,
 			MaxEvaluations: spec.MaxEvaluations,
 			TimeBudget:     spec.TimeBudget,
-			ReportEvery:    spec.ReportEvery,
+			ReportEvery:    spec.reportEvery(),
 			Report:         reporter.report,
 		})
 
@@ -247,7 +299,7 @@ type progressReporter struct {
 	prepared *preparation
 	trace    *traceWriter
 	out      io.Writer
-	chosen   *resolved
+	chosen   *Resolved
 	tuning   *optimizer.MayflyTuning
 
 	lastCheckpoint int
@@ -259,21 +311,44 @@ func (r *progressReporter) report(progress optimizer.Progress) {
 		progress.Iteration, progress.CurrentCost, progress.BestCost, progress.Evaluations,
 		progress.Elapsed.Round(time.Millisecond))
 
+	// Measured at most once per report and only when the trace line actually
+	// carries a breakdown (an improved line), so OnProgress costs nothing
+	// beyond what the trace already spends: it shares the one EvaluateMetrics
+	// call rather than asking for a second.
+	var (
+		measured    bool
+		metrics     optimizer.Metrics
+		metricsOkay bool
+	)
+
 	breakdown := func() (optimizer.Metrics, float64, bool) {
+		measured = true
+
 		if len(progress.BestParams) == 0 {
 			return optimizer.Metrics{}, 0, false
 		}
 
-		metrics, err := r.prepared.objective.EvaluateMetrics(progress.BestParams)
+		m, err := r.prepared.objective.EvaluateMetrics(progress.BestParams)
 		if err != nil {
 			return optimizer.Metrics{}, 0, false
 		}
 
-		return metrics, metrics.Score(r.prepared.profile), true
+		metrics = m
+		metricsOkay = true
+
+		return m, m.Score(r.prepared.profile), true
 	}
 
 	if err := r.trace.append(progress, breakdown); err != nil && r.err == nil {
 		r.err = err
+	}
+
+	if r.spec.OnProgress != nil {
+		if measured && metricsOkay {
+			r.spec.OnProgress(progress, &metrics)
+		} else {
+			r.spec.OnProgress(progress, nil)
+		}
 	}
 
 	if !shouldCheckpoint(progress.OptimizerIterations, r.lastCheckpoint, r.spec.CheckpointEvery) {

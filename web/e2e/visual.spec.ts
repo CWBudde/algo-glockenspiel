@@ -1,11 +1,34 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
-import type { FitSnapshot } from "../src/api/types";
+import type { FitRequestEcho, FitSnapshot } from "../src/api/types";
 import { computePlayfieldLayout } from "../src/lib/layout";
 
 const ENGINE_READY = "WASM loaded. Strike a bar to start audio.";
 const MOBILE_PLAYFIELD = computePlayfieldLayout();
+
+/** The request echo every snapshot carries, at the server's own defaults. */
+function fitRequestEcho(): FitRequestEcho {
+  return {
+    note: 69,
+    velocity: 100,
+    modes: 0,
+    optimizer: "simple",
+    metric: "rms",
+    maxIterations: 100,
+    timeBudgetMs: 30_000,
+    reportEvery: 10,
+    align: true,
+    normalizeGain: false,
+    downmix: "first",
+    windowMs: 0,
+    mayflySeed: "1",
+    cmaesSeed: "0",
+    mayflyTuning: false,
+    seed: "1",
+    workers: 4,
+  };
+}
 
 function fitSnapshot(overrides: Partial<FitSnapshot> = {}): FitSnapshot {
   return {
@@ -26,6 +49,10 @@ function fitSnapshot(overrides: Partial<FitSnapshot> = {}): FitSnapshot {
     startedAt: "2026-08-22T12:00:00Z",
     hasPreset: false,
     seededModes: 0,
+    evaluationsPerSecond: 19.2,
+    budgetFraction: 0.1,
+    converged: false,
+    request: fitRequestEcho(),
     ...overrides,
   };
 }

@@ -964,6 +964,53 @@ func TestMayflyColdRoundsDoNotRepeatEachOther(t *testing.T) {
 	}
 }
 
+// TestMayflyReportsTheSchedulesRoundAsRestart pins Progress.Restart to the
+// contract every other backend already honours: the zero-based index of the
+// search in progress. Before this, mayfly's tracker never set the field, so a
+// scheduled run reported restart zero throughout, and a front end reading the
+// trace could not tell a cold restart from the first round.
+func TestMayflyReportsTheSchedulesRoundAsRestart(t *testing.T) {
+	bounds := Bounds{Ranges: []Range{{Min: -10, Max: 10}}}
+
+	restarts := 1
+	tuning := &MayflyTuning{Schedule: &MayflySchedule{Restarts: &restarts}}
+
+	const iterationsPerRound = 10
+
+	var reported []int
+
+	_, err := (&MayflyOptimizer{
+		Population: 4, Seed: 1, Tuning: tuning,
+	}).Optimize(context.Background(), func(x []float64) float64 { return square(x[0]) },
+		[]float64{5}, bounds, OptimizeOptions{
+			MaxIterations: 2 * iterationsPerRound,
+			ReportEvery:   1,
+			Report:        func(p Progress) { reported = append(reported, p.Restart) },
+		})
+	if err != nil {
+		t.Fatalf("Optimize failed: %v", err)
+	}
+
+	if len(reported) != 2*iterationsPerRound {
+		t.Fatalf("got %d reports, want one per iteration of two rounds", len(reported))
+	}
+
+	firstRound := reported[:iterationsPerRound]
+	secondRound := reported[iterationsPerRound:]
+
+	for i, restart := range firstRound {
+		if restart != 0 {
+			t.Fatalf("first round report %d has Restart = %d, want 0", i, restart)
+		}
+	}
+
+	for i, restart := range secondRound {
+		if restart != 1 {
+			t.Fatalf("second round report %d has Restart = %d, want 1", i, restart)
+		}
+	}
+}
+
 // TestMayflyHMMAIsSelectableAndNamed covers the dialect mayfly v0.7.0 split out
 // of GSASMA. Its Use flag is its own, so without a case in variantNameForConfig
 // a run asking for it would report itself as plain "ma" and its two knobs would

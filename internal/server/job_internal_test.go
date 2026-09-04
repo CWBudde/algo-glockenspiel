@@ -1,0 +1,165 @@
+package server
+
+// This file is package server, not server_test: it drives jobManager
+// directly, reaching states an HTTP-level test either cannot reach at all or
+// can only reach by racing real timing. TestHistoryCapStopsAtTheOldestRunningJob
+// pushes recordLocked's cap-trimming loop past a still-running job, which
+// would otherwise mean running enough real fits through the HTTP surface to
+// cross maxStoredJobs. TestStartRefusesAJobThatFinishesSetupAfterStopAll pins
+// a start/stopAll interleaving down to a channel handshake instead of hoping
+// a sleep lands in the right place.
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"testing"
+)
+
+// syntheticJob returns a fitJob with no run directory and no goroutine ever
+// running it, fit only for exercising jobManager's bookkeeping. Leaving
+// terminal false keeps it "running" in the sense recordLocked cares about:
+// its done channel is never closed, because nothing ever calls finish.
+func syntheticJob(id string, terminal bool) *fitJob {
+	_, cancel := context.WithCancel(context.Background())
+	job := newFitJob(id, "", fitRequest{}, 0, 0, cancel)
+
+	if terminal {
+		job.finish(fitSucceeded, nil, nil, nil, nil, nil)
+	}
+
+	return job
+}
+
+// TestHistoryCapStopsAtTheOldestRunningJob pins Finding 5 of the Task 3
+// review: the trim loop in recordLocked is a while, not a slice expression,
+// because it must never forget a job that is still going to report into it.
+// The consequence, exercised here, is that the loop stops dead at the first
+// still-running entry: everything older than it is still trimmed away, but
+// nothing at or behind it is, however far past the cap the history grows,
+// until that job finishes and frees the loop to resume.
+func TestHistoryCapStopsAtTheOldestRunningJob(t *testing.T) {
+	manager := &jobManager{}
+
+	// The oldest entries: ordinary terminal jobs the trim loop should have no
+	// trouble evicting once the history overflows the cap.
+	const stale = 5
+	for i := range stale {
+		manager.adopt(syntheticJob(fmt.Sprintf("stale-%d", i), true))
+	}
+
+	// The one job the loop must refuse to drop, however long the history
+	// grows behind it.
+	running := syntheticJob("running", false)
+	manager.adopt(running)
+
+	// Enough fresh terminal jobs behind it to overflow the cap and then some,
+	// so the loop is given real work and still cannot reach past running.
+	const fresh = maxStoredJobs + 20
+	for i := range fresh {
+		manager.adopt(syntheticJob(fmt.Sprintf("fresh-%d", i), true))
+	}
+
+	if got, want := len(manager.jobs), 1+fresh; got != want {
+		t.Fatalf("history length = %d, want %d (the running job plus every fresh one, never trimmed)", got, want)
+	}
+
+	if manager.jobs[0] != running {
+		t.Fatal("the running job was not left as the oldest surviving entry")
+	}
+
+	for i := range stale {
+		id := fmt.Sprintf("stale-%d", i)
+		if _, ok := manager.byID[id]; ok {
+			t.Errorf("stale job %q is still indexed after the history overflowed the cap", id)
+		}
+	}
+
+	if _, ok := manager.byID["running"]; !ok {
+		t.Fatal("the running job dropped out of byID despite staying in history")
+	}
+
+	// Finishing it frees the loop: the next arrival must trim the history
+	// straight back down to the cap, running included.
+	running.finish(fitCanceled, nil, nil, nil, nil, nil)
+	manager.adopt(syntheticJob("last", true))
+
+	if got := len(manager.jobs); got != maxStoredJobs {
+		t.Fatalf("history length after the block cleared = %d, want the cap %d", got, maxStoredJobs)
+	}
+
+	if _, ok := manager.byID["running"]; ok {
+		t.Fatal("the now-finished job is still indexed after the history was trimmed back to the cap")
+	}
+}
+
+// TestStartRefusesAJobThatFinishesSetupAfterStopAll pins Finding 1 of the
+// fix-round-1 re-review: start now does its Mkdir and setup with mu released,
+// so stopAll can run its entire drain -- find the queue empty, the job not
+// yet recorded, nothing to cancel -- while a start is still mid-setup on
+// another goroutine. Without the m.stopped check that start's second
+// critical section takes afterwards, that start would go on to record and
+// enqueue a job, and spawn a worker for it, after the manager had already
+// told the world it had stopped everything.
+//
+// setup is held open on a channel rather than raced against a sleep, so the
+// interleaving this test needs -- stopAll landing inside setup's window,
+// every time -- is guaranteed rather than merely likely.
+func TestStartRefusesAJobThatFinishesSetupAfterStopAll(t *testing.T) {
+	manager := &jobManager{}
+	workDir := t.TempDir()
+
+	setupStarted := make(chan struct{})
+	releaseSetup := make(chan struct{})
+
+	var (
+		startedJob *fitJob
+		startErr   error
+	)
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		startedJob, startErr = manager.start(jobDetails{}, workDir,
+			func(dir string) error {
+				close(setupStarted)
+				<-releaseSetup
+
+				return nil
+			},
+			func(ctx context.Context, job *fitJob) {})
+	}()
+
+	<-setupStarted
+	manager.stopAll()
+	close(releaseSetup)
+	<-done
+
+	if !errors.Is(startErr, errServerStopped) {
+		t.Fatalf("start error = %v, want errServerStopped", startErr)
+	}
+
+	if startedJob != nil {
+		t.Fatalf("start returned job %q for a server that had already stopped", startedJob.id)
+	}
+
+	if len(manager.jobs) != 0 {
+		t.Fatalf("history has %d jobs, want none: a stopped server must never record a job it will never run or cancel", len(manager.jobs))
+	}
+
+	if manager.working {
+		t.Fatal("a worker was started for a job the manager should have refused")
+	}
+
+	entries, err := os.ReadDir(workDir)
+	if err != nil {
+		t.Fatalf("read work dir: %v", err)
+	}
+
+	if len(entries) != 0 {
+		t.Fatalf("the refused job's run directory was left behind: %v", entries)
+	}
+}

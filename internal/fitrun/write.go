@@ -43,7 +43,20 @@ type runConfig struct {
 	GeneratedBy      string            `json:"generated_by"`
 	Name             string            `json:"name,omitempty"`
 
-	Resolved  resolved        `json:"resolved"`
+	// Bounds, StrictBounds, Alignment and Gain are left out entirely when the
+	// spec never touched them, so a campaign job's config.json (which never
+	// sets any of the four) keeps the field set it wrote before this task:
+	// see TestCampaignSpecStillWritesTheSameConfigFields. A served fit that
+	// uploads its own box, turns alignment off, or asks for gain
+	// normalisation writes them, which is the point of recording a served
+	// run at all -- two fits differing only in one of these must not write
+	// byte-identical config.json.
+	Bounds       *boundsRecord `json:"bounds,omitempty"`
+	StrictBounds bool          `json:"strict_bounds,omitempty"`
+	Alignment    *string       `json:"alignment,omitempty"`
+	Gain         string        `json:"gain,omitempty"`
+
+	Resolved  Resolved        `json:"resolved"`
 	Identity  Identity        `json:"identity"`
 	Reference referenceRecord `json:"reference"`
 	Started   time.Time       `json:"started"`
@@ -80,6 +93,62 @@ func newLoadOptionsRecord(options analysis.LoadOptions) loadOptionsRecord {
 		WindowMS:  options.Window.Milliseconds(),
 		KeepLevel: options.KeepLevel,
 	}
+}
+
+// boundsRecord is optimizer.ParamBounds in this file's snake_case, recorded
+// only when a caller supplied its own box: the default box is a function of
+// the measured reference, not a constant, so writing it here would just
+// duplicate what config.json's reference block and resolved.frequency_bounds
+// already say.
+type boundsRecord struct {
+	InputMix     rangeRecord `json:"input_mix"`
+	FilterFreq   rangeRecord `json:"filter_freq"`
+	Amplitude    rangeRecord `json:"amplitude"`
+	Frequency    rangeRecord `json:"frequency"`
+	DecayMs      rangeRecord `json:"decay_ms"`
+	HarmonicGain rangeRecord `json:"harmonic_gain"`
+}
+
+// rangeRecord is optimizer.Range in this file's snake_case.
+type rangeRecord struct {
+	Min float64 `json:"min"`
+	Max float64 `json:"max"`
+}
+
+func newBoundsRecord(bounds optimizer.ParamBounds) boundsRecord {
+	toRecord := func(r optimizer.Range) rangeRecord {
+		return rangeRecord{Min: r.Min, Max: r.Max}
+	}
+
+	return boundsRecord{
+		InputMix:     toRecord(bounds.InputMix),
+		FilterFreq:   toRecord(bounds.FilterFreq),
+		Amplitude:    toRecord(bounds.Amplitude),
+		Frequency:    toRecord(bounds.Frequency),
+		DecayMs:      toRecord(bounds.DecayMs),
+		HarmonicGain: toRecord(bounds.HarmonicGain),
+	}
+}
+
+// alignmentName names an alignment mode the way this file's other enums are
+// named: lower snake_case, matching the CLI and server's own vocabulary.
+func alignmentName(mode optimizer.AlignmentMode) string {
+	if mode == optimizer.AlignOnsetCorrelation {
+		return "onset_correlation"
+	}
+
+	return "none"
+}
+
+// gainName names a gain mode the same way. GainNone is the common case and is
+// named "" so runConfig.Gain's omitempty drops it: a run that never asked for
+// gain normalisation should not clutter config.json with a field saying so.
+func gainName(mode optimizer.GainMode) string {
+	if mode == optimizer.GainLeastSquares {
+		return "least_squares"
+	}
+
+	return ""
 }
 
 // templateRecord names the starting preset. The parameters themselves are not
@@ -173,7 +242,7 @@ func renderPreset(path string, fitted *preset.Preset, sampleRate, note, velocity
 // in the fields a preset on its own can be judged by, which is why it repeats
 // values result.json also holds: a preset copied out of a run directory has to
 // answer for itself.
-func provenanceFor(spec Spec, identity Identity, reference referenceRecord, summary Summary, chosen resolved) (*preset.Provenance, error) {
+func provenanceFor(spec Spec, identity Identity, reference referenceRecord, summary Summary, chosen Resolved) (*preset.Provenance, error) {
 	terms, err := json.Marshal(summary.Terms)
 	if err != nil {
 		return nil, fmt.Errorf("encode provenance terms: %w", err)

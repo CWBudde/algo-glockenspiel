@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +30,7 @@ type fitSnapshot struct {
 	OptimizerIterations int     `json:"optimizerIterations"`
 	Evaluations         int     `json:"evaluations"`
 	Restart             int     `json:"restart"`
+	Epoch               int     `json:"epoch"`
 	CurrentCost         float64 `json:"currentCost"`
 	BestCost            float64 `json:"bestCost"`
 	ElapsedMS           int64   `json:"elapsedMs"`
@@ -45,6 +45,9 @@ type fitSnapshot struct {
 	HasPreset           bool    `json:"hasPreset"`
 	SeededModes         int     `json:"seededModes"`
 
+	StartedAt  time.Time  `json:"startedAt"`
+	FinishedAt *time.Time `json:"finishedAt"`
+
 	Pinned []struct {
 		Name  string  `json:"name"`
 		Value float64 `json:"value"`
@@ -54,6 +57,75 @@ type fitSnapshot struct {
 
 	MayflyVariant string `json:"mayflyVariant"`
 	MayflySeed    string `json:"mayflySeed"`
+
+	EvaluationsPerSecond float64 `json:"evaluationsPerSecond"`
+	BudgetFraction       float64 `json:"budgetFraction"`
+	Converged            bool    `json:"converged"`
+
+	Request fitRequestEcho `json:"request"`
+	Profile *fitProfile    `json:"profile"`
+}
+
+// fitRequestEcho mirrors the request echo the snapshot carries, re-spelled
+// here for the reason the snapshot itself is: a field the server renames must
+// fail a test rather than quietly disappear from every client.
+type fitRequestEcho struct {
+	Note          int    `json:"note"`
+	Velocity      int    `json:"velocity"`
+	Modes         int    `json:"modes"`
+	Optimizer     string `json:"optimizer"`
+	Metric        string `json:"metric"`
+	MaxIterations int    `json:"maxIterations"`
+	TimeBudgetMS  int64  `json:"timeBudgetMs"`
+	ReportEvery   int    `json:"reportEvery"`
+	Align         bool   `json:"align"`
+	NormalizeGain bool   `json:"normalizeGain"`
+	Downmix       string `json:"downmix"`
+	WindowMS      int64  `json:"windowMs"`
+
+	MayflyVariant    string `json:"mayflyVariant"`
+	MayflyPreset     string `json:"mayflyPreset"`
+	MayflyPopulation int    `json:"mayflyPopulation"`
+	MayflySeed       string `json:"mayflySeed"`
+	MayflyEpochs     int    `json:"mayflyEpochs"`
+	MayflyRestarts   int    `json:"mayflyRestarts"`
+	MayflyStagnation int    `json:"mayflyStagnation"`
+	MayflySelection  string `json:"mayflySelection"`
+
+	MayflyTargetCost *float64 `json:"mayflyTargetCost"`
+	MayflyNC         *int     `json:"mayflyNc"`
+	MayflyNCRatio    *float64 `json:"mayflyNcRatio"`
+
+	CmaesCovariance string  `json:"cmaesCovariance"`
+	CmaesLambda     int     `json:"cmaesLambda"`
+	CmaesSigma      float64 `json:"cmaesSigma"`
+	CmaesSeed       string  `json:"cmaesSeed"`
+	CmaesRestarts   int     `json:"cmaesRestarts"`
+
+	MayflyTuning bool `json:"mayflyTuning"`
+
+	Seed    string `json:"seed"`
+	Workers int    `json:"workers"`
+
+	Bounds *struct {
+		InputMix     [2]float64 `json:"inputMix"`
+		FilterFreq   [2]float64 `json:"filterFreq"`
+		Amplitude    [2]float64 `json:"amplitude"`
+		Frequency    [2]float64 `json:"frequency"`
+		DecayMs      [2]float64 `json:"decayMs"`
+		HarmonicGain [2]float64 `json:"harmonicGain"`
+	} `json:"bounds"`
+}
+
+// fitProfile mirrors the profile block: the active metric's weights and norms.
+type fitProfile struct {
+	Name  string `json:"name"`
+	Terms []struct {
+		Term   string  `json:"term"`
+		Weight float64 `json:"weight"`
+		Norm   float64 `json:"norm"`
+		Unit   string  `json:"unit"`
+	} `json:"terms"`
 }
 
 // The reference used throughout. 8000 Hz keeps a render cheap while staying a
@@ -106,17 +178,54 @@ func shortMayflyFit() map[string]string {
 func newFitServer(t *testing.T) *server.Server {
 	t.Helper()
 
+	return newFitServerIn(t, t.TempDir())
+}
+
+// newFitServerIn is newFitServer with the work directory named, for a test
+// that wants to read the run directory a fit leaves behind.
+func newFitServerIn(t *testing.T, workDir string) *server.Server {
+	t.Helper()
+
 	srv, err := server.New(server.Config{
 		Addr:            "127.0.0.1:0",
 		Version:         "test-version",
 		Static:          testTree(),
 		DistDir:         t.TempDir(),
+		WorkDir:         workDir,
 		Log:             io.Discard,
 		ShutdownTimeout: 5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
+
+	// A test that leaves a fit running would otherwise race its own temporary
+	// directory: the run keeps writing its trace, its checkpoint and its
+	// preset into the work directory while t.TempDir is removing it. So every
+	// server stops everything it owns here -- Stop empties the queue as well as
+	// cancelling the running fit, which matters now that a second start is
+	// queued rather than refused -- and then waits for the search to notice.
+	t.Cleanup(func() {
+		srv.Stop()
+
+		handler := srv.Handler()
+
+		// The whole history is polled rather than the most recent job: with a
+		// queue the newest job is often not the one still writing into the
+		// directory, and waiting on the wrong one would let the temporary
+		// directory be removed under a search that is still going.
+		deadline := time.Now().Add(30 * time.Second)
+		for time.Now().Before(deadline) {
+			status := httptest.NewRecorder()
+			handler.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/api/fit/jobs", nil))
+
+			if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte(`"state":"running"`)) {
+				return
+			}
+
+			time.Sleep(5 * time.Millisecond)
+		}
+	})
 
 	return srv
 }
@@ -263,14 +372,16 @@ func fitStatus(t *testing.T, handler http.Handler) fitSnapshot {
 	return decodeSnapshot(t, recorder.Body.Bytes())
 }
 
-// waitForTerminalState polls the status endpoint until the job stops running.
+// waitForTerminalState polls the status endpoint until the job reaches a state
+// it never leaves. Queued counts as still going: a job waiting its turn has
+// not produced anything to read yet.
 func waitForTerminalState(t *testing.T, handler http.Handler, timeout time.Duration) fitSnapshot {
 	t.Helper()
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		snapshot := fitStatus(t, handler)
-		if snapshot.State != "running" {
+		if snapshot.State != "running" && snapshot.State != "queued" {
 			return snapshot
 		}
 
@@ -429,7 +540,10 @@ func TestSimpleKeepsTheSharedReportCadence(t *testing.T) {
 	}
 }
 
-func TestSecondStartIsRefusedWhileAFitRuns(t *testing.T) {
+// A second start no longer collides with the first: it is accepted and waits.
+// The server still runs one search at a time, which is what the queued state
+// says out loud, and the running job is not disturbed by the newcomer.
+func TestSecondStartIsQueuedRatherThanRefused(t *testing.T) {
 	srv := newFitServer(t)
 	handler := srv.Handler()
 
@@ -443,14 +557,28 @@ func TestSecondStartIsRefusedWhileAFitRuns(t *testing.T) {
 	firstID := decodeSnapshot(t, first.Body.Bytes()).JobID
 
 	second := startFit(t, handler, endlessFit())
-	if second.Code != http.StatusConflict {
-		t.Fatalf("second start = %d, want 409: %s", second.Code, second.Body.String())
+	if second.Code != http.StatusAccepted {
+		t.Fatalf("second start = %d, want 202: %s", second.Code, second.Body.String())
 	}
 
-	// The refusal must not have disturbed the running job.
-	if current := fitStatus(t, handler); current.JobID != firstID || current.State != "running" {
-		t.Fatalf("after the refused start the job is %s/%s, want %s/running",
-			current.JobID, current.State, firstID)
+	queued := decodeSnapshot(t, second.Body.Bytes())
+	if queued.State != "queued" {
+		t.Fatalf("the second job is %q, want queued", queued.State)
+	}
+
+	if queued.JobID == firstID {
+		t.Fatalf("both starts claimed the job id %q", firstID)
+	}
+
+	// A queued job has spent no time searching, so its clock has not started.
+	if queued.ElapsedMS != 0 {
+		t.Errorf("a queued job reports %d ms elapsed, want 0", queued.ElapsedMS)
+	}
+
+	// The first job is still the one that is running, and it is still running.
+	firstState := jobSnapshot(t, handler, firstID)
+	if firstState.State != "running" {
+		t.Fatalf("after the second start the first job is %q, want running", firstState.State)
 	}
 }
 
@@ -518,6 +646,32 @@ func TestCancelRefusesAStaleJobID(t *testing.T) {
 
 	if current := fitStatus(t, handler); current.State != "running" {
 		t.Fatalf("the refused cancel stopped the job anyway: state = %q", current.State)
+	}
+}
+
+// Cancelling a job that has already finished must also be refused with 409:
+// a job in a terminal state has nothing left for cancel to stop, and letting
+// the request succeed would let a client believe it just stopped a search
+// that in fact ended on its own, possibly with a different outcome.
+func TestCancelRefusesAFinishedJobID(t *testing.T) {
+	handler := newFitServer(t).Handler()
+
+	finished := startFit(t, handler, shortFit())
+	if finished.Code != http.StatusAccepted {
+		t.Fatalf("start = %d: %s", finished.Code, finished.Body.String())
+	}
+
+	finishedID := decodeSnapshot(t, finished.Body.Bytes()).JobID
+
+	waitForJob(t, handler, finishedID, 60*time.Second)
+
+	response := postCancel(t, handler, finishedID)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("cancel of a finished job = %d, want 409: %s", response.Code, response.Body.String())
+	}
+
+	if current := jobSnapshot(t, handler, finishedID); current.State != "succeeded" {
+		t.Fatalf("the refused cancel changed the finished job's state to %q", current.State)
 	}
 }
 
@@ -1140,138 +1294,6 @@ func TestOpenEventStreamDoesNotDelayShutdown(t *testing.T) {
 	if limit := shutdownTimeout / 10; elapsed > limit {
 		t.Fatalf("shutdown took %s, which is over the %s that says the stream was closed rather than waited out",
 			elapsed, limit)
-	}
-}
-
-// The job manager is shared mutable state reached from every request goroutine
-// and from the goroutine running the fit. Hammer all of it at once; the
-// assertion this test carries is the race detector's, so it is only meaningful
-// under -race.
-func TestConcurrentAccessIsRaceClean(t *testing.T) {
-	srv := newFitServer(t)
-	httpServer := httptest.NewServer(srv.Handler())
-
-	t.Cleanup(httpServer.Close)
-
-	reference := referenceWAV(t, testReferenceLength, testSampleRate)
-
-	body, contentType := multipartFit(t, reference, endlessFit())
-
-	started, err := http.Post(httpServer.URL+"/api/fit/start", contentType, body)
-	if err != nil {
-		t.Fatalf("start: %v", err)
-	}
-
-	_, _ = io.Copy(io.Discard, started.Body)
-	_ = started.Body.Close()
-
-	var waiting sync.WaitGroup
-
-	stop := make(chan struct{})
-
-	// Readers: status, preset and audio, all racing the reporting goroutine.
-	for range 4 {
-		waiting.Add(1)
-
-		go func() {
-			defer waiting.Done()
-
-			for {
-				select {
-				case <-stop:
-					return
-				default:
-				}
-
-				for _, target := range []string{"/api/fit", "/api/fit/preset", "/api/fit/audio"} {
-					response, err := http.Get(httpServer.URL + target)
-					if err != nil {
-						return
-					}
-
-					_, _ = io.Copy(io.Discard, response.Body)
-					_ = response.Body.Close()
-				}
-			}
-		}()
-	}
-
-	// Subscribers coming and going, which is what exercises the subscriber map
-	// against notifyLocked.
-	for range 3 {
-		waiting.Add(1)
-
-		go func() {
-			defer waiting.Done()
-
-			for {
-				select {
-				case <-stop:
-					return
-				default:
-				}
-
-				response, err := http.Get(httpServer.URL + "/api/fit/events")
-				if err != nil {
-					return
-				}
-
-				buffer := make([]byte, 256)
-				_, _ = response.Body.Read(buffer)
-				_ = response.Body.Close()
-			}
-		}()
-	}
-
-	// Start requests that must all be refused, racing the one that is running.
-	for range 2 {
-		waiting.Add(1)
-
-		go func() {
-			defer waiting.Done()
-
-			for {
-				select {
-				case <-stop:
-					return
-				default:
-				}
-
-				attempt, contentType := multipartFit(t, reference, endlessFit())
-
-				response, err := http.Post(httpServer.URL+"/api/fit/start", contentType, attempt)
-				if err != nil {
-					return
-				}
-
-				_, _ = io.Copy(io.Discard, response.Body)
-				_ = response.Body.Close()
-			}
-		}()
-	}
-
-	time.Sleep(250 * time.Millisecond)
-
-	cancelled, err := http.Post(httpServer.URL+"/api/fit/cancel", "", nil)
-	if err != nil {
-		t.Fatalf("cancel: %v", err)
-	}
-
-	cancelledBody, _ := io.ReadAll(cancelled.Body)
-	_ = cancelled.Body.Close()
-
-	close(stop)
-	waiting.Wait()
-
-	// The cancel is allowed to answer 200 or -- if one of the racing readers
-	// happened to be mid-flight -- to report a state that is already terminal.
-	// What it may not do is leave the job running.
-	if cancelled.StatusCode != http.StatusOK {
-		t.Fatalf("cancel = %d: %s", cancelled.StatusCode, cancelledBody)
-	}
-
-	if state := decodeSnapshot(t, cancelledBody).State; state == "running" {
-		t.Fatalf("cancel returned with the job still running")
 	}
 }
 

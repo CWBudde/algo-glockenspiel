@@ -11,10 +11,17 @@ Then open <http://localhost:8080>.
 
 ## Flags
 
-| Flag     | Default    | Meaning                                                     |
-| -------- | ---------- | ----------------------------------------------------------- |
-| `--addr` | `:8080`    | Listen address, for example `:9000` or `127.0.0.1:8080`.    |
-| `--dist` | `web/dist` | Directory holding the built app and the WebAssembly module. |
+| Flag         | Default                              | Meaning                                                     |
+| ------------ | ------------------------------------ | ----------------------------------------------------------- |
+| `--addr`     | `:8080`                              | Listen address, for example `:9000` or `127.0.0.1:8080`.    |
+| `--dist`     | `web/dist`                           | Directory holding the built app and the WebAssembly module. |
+| `--work-dir` | `<user cache dir>/glockenspiel/fits` | Directory every served fit writes its run directory under.  |
+
+The work directory defaults to the user's cache directory — `~/.cache/glockenspiel/fits`
+on Linux — rather than to the working directory, because `serve` is run from
+wherever the user happens to be and a run directory appearing under whatever
+that was would be a surprise. Point it somewhere else with `--work-dir` when the
+runs are meant to be collected, for example `--work-dir out/serve`.
 
 ## Routes
 
@@ -77,25 +84,190 @@ picked up on the next reload; no restart is needed.
 
 ## The fit API
 
-`glockenspiel fit`, reachable over HTTP. The server owns exactly **one** fit at a
+`glockenspiel fit`, reachable over HTTP. The server runs exactly **one** fit at a
 time: fitting is CPU-bound and evaluates candidates on every core, so a second
 concurrent run would not do twice the work, it would do the same work half as
-fast in each — and it would make "the fitted preset" ambiguous for every read
-endpoint.
+fast in each. A second start request is therefore not refused — it is queued,
+and it begins when the fit ahead of it ends.
 
 | Route             | Method | Meaning                                               |
 | ----------------- | ------ | ----------------------------------------------------- |
 | `/api/fit/start`  | `POST` | Upload a reference and start a fit. `202` on success. |
-| `/api/fit/cancel` | `POST` | Stop the running fit and wait for it to stop.         |
-| `/api/fit`        | `GET`  | The current job's state.                              |
+| `/api/fit/cancel` | `POST` | Stop a fit and wait for it to stop.                   |
+| `/api/fit`        | `GET`  | The most recent job's state.                          |
 | `/api/fit/events` | `GET`  | Server-Sent Events carrying the same state, live.     |
 | `/api/fit/preset` | `GET`  | The fitted preset, as preset JSON.                    |
 | `/api/fit/audio`  | `GET`  | The fitted preset rendered as a 16-bit mono WAV.      |
+| `/api/fit/jobs`   | `GET`  | The job history, newest first.                        |
+
+The unnumbered routes all mean "the most recent job", which is the one a client
+watching a fit is watching. The per-job routes below mean a named one.
 
 The write routes accept `POST` and nothing else. That gate is a separate one
 from the read gate on purpose: loosening the existing gate to admit `POST` would
 have opened the static tree, the wasm and the version endpoint to writes at the
 same time.
+
+### The queue
+
+A start request is answered `202` with a snapshot whose state is `running` when
+nothing is ahead of it and `queued` when something is. A queued job has a job id
+and a run directory from the moment it is accepted, so a client can watch it,
+name it, and cancel it before it has done any work.
+
+`POST /api/fit/cancel?job=<id>` cancels the job it names, whether that job is
+running or still waiting. A waiting one is dropped and recorded as `canceled`
+with the stop reason `canceled_while_queued`; it never runs. Cancelling a job
+that has already finished, or one that does not exist, is a `409` — the client
+is asking to stop something that is not going to stop. Without `?job=`, cancel
+means the most recent job.
+
+Shutting the server down empties the queue and cancels whatever is running, so
+no search outlives the process that started it.
+
+### One job
+
+| Route                          | Method | Meaning                                         |
+| ------------------------------ | ------ | ----------------------------------------------- |
+| `/api/fit/jobs/{id}`           | `GET`  | That job's state, in the shape `/api/fit` uses. |
+| `/api/fit/jobs/{id}/preset`    | `GET`  | Its fitted preset, as preset JSON.              |
+| `/api/fit/jobs/{id}/audio`     | `GET`  | Its preset rendered as a WAV.                   |
+| `/api/fit/jobs/{id}/trace`     | `GET`  | Its `trace.jsonl`, as `application/x-ndjson`.   |
+| `/api/fit/jobs/{id}/reference` | `GET`  | The signal the objective scored, as a WAV.      |
+| `/api/fit/jobs/{id}/compare`   | `GET`  | Both signals as one comparison payload.         |
+
+An `{id}` that names no job is a `404`. An `{id}` that is not a job id at all —
+one carrying a path separator or a `..` — is a `400`, refused before anything is
+looked up. Nothing a client sends ever reaches the filesystem either way: a
+job's directory is the one the server recorded when it made it, never one built
+from the URL.
+
+The audio route renders the preset on demand, exactly as `/api/fit/audio` does,
+so `?note=`, `?velocity=` and `?duration=` mean the same thing for a fit from
+last week as for the one running now. The run directory's `render.wav` is
+`fitrun`'s own artifact at one fixed note and length, and it is not what this
+route serves.
+
+The reference route serves the run directory's `reference.wav`, which is the
+cut, downmixed, peak-normalised mono the objective actually scored, and not the
+upload. An A/B against the render has to be against that one, or part of the
+difference a listener hears is the loader's rather than the fit's.
+
+The compare route answers with both signals described the same way:
+
+```json
+{
+  "sampleRate": 44100,
+  "seconds": 1.5,
+  "columns": 1024,
+  "frames": 128,
+  "floorDb": -74.2,
+  "reference": { "samples": 66150, "waveform": {}, "spectrogram": {} },
+  "render": { "samples": 66150, "waveform": {}, "spectrogram": {} }
+}
+```
+
+The span and the floor are stated once because both sides share them. A
+reference longer than the render cap is cut to it rather than drawn whole beside
+a clamped render, so the same column is the same moment on both sides; and both
+spectrograms are painted against the reference's noise-aware floor, which is
+what the objective scores both signals against. A render given a floor of its
+own would show detail the score counted as nothing.
+
+`?columns=` sets the waveform envelope's width and `?frames=` the
+spectrogram's, capped at 4096 and 256, so the payload's size follows what was
+asked for rather than how long the reference is. A waveform column is the
+lowest and the highest sample of its span; a spectrogram column is the loudest
+value of each of 256 frequency rows, because a partial occupies one bin whose
+neighbours hold nothing and a mean would fade out exactly what the picture is
+of. A signal shorter than one analysis frame carries no spectrogram at all,
+which is the same signal the objective measures no spectral term for.
+
+The transform is `optimizer.ComputeSpectrogram`, the composite objective's own,
+noise-aware floor included. That is the point of serving a picture instead of
+two WAV files: a partial the eye finds in the picture is one the score counted.
+
+### What a snapshot says
+
+Every snapshot — the start reply, `/api/fit`, `/api/fit/jobs/{id}` and each SSE
+frame — carries the whole state of one job, and that includes its provenance:
+
+- `request` is every setting the fit ran under, the defaults the client never
+  sent included, plus the seed the backend actually drew and the worker count it
+  sized to the machine. Both seeds and the resolved `seed` are decimal strings,
+  because they are int64 and a JavaScript `Number` loses the low bits of one
+  past 2^53. An uploaded search box is echoed under `bounds`; the default box is
+  not, because it is drawn from the reference's own measured fundamental rather
+  than being a constant.
+- `profile` is the active metric's weights and norms, one entry per term the
+  score counts. It is sent so that a per-term display and the score beside it
+  cannot disagree: both are scaled by the same numbers. A single-term legacy
+  metric has no profile and the field is absent.
+- `metrics` is the raw breakdown of the best point so far, `gain_db` — the level
+  gain solved and applied before the spectral and envelope terms — included. It
+  arrives with the first report and is renewed at every report that improves,
+  which is every report that carries a breakdown in `trace.jsonl`.
+- `evaluationsPerSecond` is throughput. `budgetFraction` is how much of the
+  tightest binding budget the run has spent, the larger of iterations over the
+  iteration cap and elapsed over the time budget. It is not an ETA: a run stops
+  at the first budget that binds, so a search that converges ends well below 1.
+- `converged` is the backend's own verdict, not a state: the run stopped on a
+  convergence criterion rather than on its budget.
+- `restart` counts CMA-ES restarts and `epoch` counts mayfly rounds. They are
+  the same counter inside the optimizer read under two meanings, so exactly one
+  of them is ever present and a reader never has to know which backend ran.
+
+### History and restarts
+
+`/api/fit/jobs` lists every job newest first: its id, state, start and finish,
+the best cost it reached, the score it recorded, and the note, velocity,
+optimizer and metric it was asked for.
+
+The list survives a restart. On startup the work directory is read back, and
+every directory in it holding a `config.json` becomes a job again. `fitrun`
+writes `config.json` before the search and `result.json` after it, so a
+directory holding the first and not the second is a fit that died with the
+process running it: it comes back as `failed` with the stop reason
+`interrupted`, never as `running`. A run whose `result.json` records a cancelled
+stop reason comes back as `canceled`, and everything else as `succeeded`. It is
+the same rule `glockenspiel-campaign status` reads a campaign's directories by,
+because these are the same directories.
+
+Every run directory stays on disk for good; only the list a running process
+holds is bounded, at the **200 newest**. A job past that cap is still on disk,
+is still read by the campaign tooling, and comes back if the server is restarted
+over the same work directory — it is simply not in `/api/fit/jobs` until then.
+
+### Where a fit is run
+
+The server does not fit anything itself. A start request is validated, written
+into a fresh run directory, and handed to `internal/fitrun` — the same engine
+`glockenspiel fitrun` and the training campaign use. A fit started from the
+browser therefore leaves exactly the directory a campaign job leaves, and the
+campaign's collect step can read it without knowing which front end produced it.
+
+The directory and the job id are one string, `fit-<UTC yyyymmddThhmmss>-<counter>`,
+so a client holding a job id can find the run it names. It sorts
+chronologically and it is safe as a path segment; nothing a client sends is ever
+part of it, which stays the cheapest possible answer to path traversal.
+
+| File              | What it holds                                                          |
+| ----------------- | ---------------------------------------------------------------------- |
+| `upload.wav`      | The uploaded recording, byte for byte.                                 |
+| `reference.wav`   | The signal the objective scored: cut, downmixed, peak-normalised mono. |
+| `analysis.json`   | The partials measured from that same cut.                              |
+| `config.json`     | The whole design of the run, and what the backend resolved for itself. |
+| `trace.jsonl`     | One line per progress report.                                          |
+| `checkpoint.json` | The state a resume would read.                                         |
+| `preset.json`     | The fitted preset, with its provenance block.                          |
+| `render.wav`      | That preset rendered over the reference's length.                      |
+| `result.json`     | The summary the campaign scores from.                                  |
+| `log.txt`         | The lines `fitrun` would have printed to a terminal.                   |
+
+`upload.wav` and `reference.wav` are both there on purpose: the first is what
+was sent, the second is what was scored. `/api/fit/audio` serves neither — it
+renders the fitted preset on demand, so `?note=`, `?velocity=` and `?duration=`
+can differ from the fit's own.
 
 ### Starting a fit
 

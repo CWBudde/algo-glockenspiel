@@ -14,6 +14,7 @@ import (
 	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/internal/synth"
 	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
 )
 
@@ -524,5 +525,531 @@ func TestRunSurvivesACheckpointItCannotWrite(t *testing.T) {
 
 	if !strings.Contains(log.String(), "checkpoint:") {
 		t.Errorf("the run log does not report the checkpoint failure: %s", log.String())
+	}
+}
+
+// TestOnProgressReceivesMonotonicIterationsAndMetrics pins the hook a live
+// server needs: it fires on the exact cadence the trace file does, in the same
+// order, and carries the same breakdown an improving line writes rather than a
+// second, independently measured one.
+func TestOnProgressReceivesMonotonicIterationsAndMetrics(t *testing.T) {
+	dir := t.TempDir()
+
+	var (
+		calls      int
+		lastIter   int
+		sawMetrics bool
+	)
+
+	spec := cmaesSpec(dir)
+	spec.OnProgress = func(progress optimizer.Progress, metrics *optimizer.Metrics) {
+		if calls > 0 && progress.OptimizerIterations < lastIter {
+			t.Errorf("optimizer iterations went backwards: %d after %d", progress.OptimizerIterations, lastIter)
+		}
+
+		lastIter = progress.OptimizerIterations
+		calls++
+
+		if metrics != nil {
+			sawMetrics = true
+		}
+	}
+
+	if _, err := fitrun.Run(context.Background(), spec, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if calls == 0 {
+		t.Fatal("OnProgress was never called")
+	}
+
+	if !sawMetrics {
+		t.Error("OnProgress never received a non-nil Metrics, want at least the first (improving) report to carry one")
+	}
+}
+
+// TestOnResolveFiresOnceBeforeTheFirstProgressCall pins the ordering a live
+// server relies on: the resolved seed and worker count have to be known
+// before the first progress update can be attributed to a repeatable run.
+func TestOnResolveFiresOnceBeforeTheFirstProgressCall(t *testing.T) {
+	dir := t.TempDir()
+
+	var (
+		resolveCalls  int
+		progressCalls int
+		orderViolated bool
+	)
+
+	spec := cmaesSpec(dir)
+	spec.OnResolve = func(fitrun.Resolved) {
+		resolveCalls++
+
+		if progressCalls > 0 {
+			orderViolated = true
+		}
+	}
+	spec.OnProgress = func(optimizer.Progress, *optimizer.Metrics) {
+		progressCalls++
+	}
+
+	if _, err := fitrun.Run(context.Background(), spec, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if resolveCalls != 1 {
+		t.Errorf("OnResolve was called %d times, want exactly 1", resolveCalls)
+	}
+
+	if orderViolated {
+		t.Error("OnResolve fired after the first OnProgress call")
+	}
+}
+
+// TestExplicitBoundsProduceACodecWithTheGivenBox pins the ruling that a
+// non-nil Spec.Bounds replaces the whole box rather than widening it, exactly
+// as internal/server/fit.go's client-supplied bounds do. The amplitude range
+// is narrowed far below what the reference actually calls for, so a preset
+// that ships outside it can only mean the box was never wired to the codec.
+func TestExplicitBoundsProduceACodecWithTheGivenBox(t *testing.T) {
+	dir := t.TempDir()
+
+	bounds := optimizer.DefaultParamBounds
+	bounds.Amplitude = optimizer.Range{Min: 0.1, Max: 0.2}
+
+	spec := fitrun.Spec{
+		Dir:           dir,
+		ReferencePath: referencePath,
+		Note:          69,
+		Engine:        fitrun.Engine{Name: fitrun.EngineSimple},
+		MaxIterations: 3,
+		Workers:       2,
+		Bounds:        &bounds,
+		StrictBounds:  true,
+	}
+
+	outcome, err := fitrun.Run(context.Background(), spec, nil)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	for i, mode := range outcome.Preset.Parameters.Modes {
+		if mode.Amplitude < bounds.Amplitude.Min || mode.Amplitude > bounds.Amplitude.Max {
+			t.Errorf("mode %d amplitude = %g, want inside the given box [%g, %g]",
+				i, mode.Amplitude, bounds.Amplitude.Min, bounds.Amplitude.Max)
+		}
+	}
+}
+
+// TestServedSpecFieldsReachConfigJSON pins the config.json half of Task 2's
+// point: a served fit's client-supplied bounds, alignment and gain settings
+// have to be recorded, or two fits differing only in one of them write
+// byte-identical config.json and neither can be reproduced from its own
+// record.
+func TestServedSpecFieldsReachConfigJSON(t *testing.T) {
+	dir := t.TempDir()
+
+	bounds := optimizer.DefaultParamBounds
+	bounds.Amplitude = optimizer.Range{Min: 0.1, Max: 0.2}
+	alignment := optimizer.AlignNone
+
+	spec := fitrun.Spec{
+		Dir:           dir,
+		ReferencePath: referencePath,
+		Note:          69,
+		Engine:        fitrun.Engine{Name: fitrun.EngineSimple},
+		MaxIterations: 2,
+		Workers:       2,
+		Bounds:        &bounds,
+		StrictBounds:  true,
+		Alignment:     &alignment,
+		Gain:          optimizer.GainLeastSquares,
+	}
+
+	if _, err := fitrun.Run(context.Background(), spec, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, fitrun.FileConfig))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	var config struct {
+		Bounds *struct {
+			Amplitude struct {
+				Min float64 `json:"min"`
+				Max float64 `json:"max"`
+			} `json:"amplitude"`
+		} `json:"bounds"`
+		StrictBounds bool    `json:"strict_bounds"`
+		Alignment    *string `json:"alignment"`
+		Gain         string  `json:"gain"`
+	}
+
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+
+	if config.Bounds == nil || config.Bounds.Amplitude.Min != 0.1 || config.Bounds.Amplitude.Max != 0.2 {
+		t.Errorf("config bounds = %+v, want amplitude [0.1, 0.2]", config.Bounds)
+	}
+
+	if !config.StrictBounds {
+		t.Error("config strict_bounds = false, want true")
+	}
+
+	if config.Alignment == nil || *config.Alignment != "none" {
+		t.Errorf("config alignment = %v, want \"none\"", config.Alignment)
+	}
+
+	if config.Gain != "least_squares" {
+		t.Errorf("config gain = %q, want \"least_squares\"", config.Gain)
+	}
+}
+
+// TestNilAlignmentKeepsOnsetCorrelation pins the ruling that a nil
+// Spec.Alignment leaves the objective at today's default rather than at
+// AlignNone, the enum's zero value. AlignOnsetCorrelation and AlignNone solve
+// the gain and waveform terms over different windows, so an explicit
+// AlignOnsetCorrelation run and the nil run below must score identically
+// under the Simple engine's deterministic Nelder-Mead search; that they
+// diverge from an explicit AlignNone run is pinned separately by
+// TestExplicitAlignNoneChangesTheScore.
+func TestNilAlignmentKeepsOnsetCorrelation(t *testing.T) {
+	base := fitrun.Spec{
+		ReferencePath: referencePath,
+		Note:          69,
+		Engine:        fitrun.Engine{Name: fitrun.EngineSimple},
+		MaxIterations: 3,
+		Workers:       1,
+	}
+
+	specNil := base
+	specNil.Dir = t.TempDir()
+
+	outcomeNil, err := fitrun.Run(context.Background(), specNil, nil)
+	if err != nil {
+		t.Fatalf("nil alignment run: %v", err)
+	}
+
+	onset := optimizer.AlignOnsetCorrelation
+	specOnset := base
+	specOnset.Dir = t.TempDir()
+	specOnset.Alignment = &onset
+
+	outcomeOnset, err := fitrun.Run(context.Background(), specOnset, nil)
+	if err != nil {
+		t.Fatalf("explicit AlignOnsetCorrelation run: %v", err)
+	}
+
+	if outcomeNil.Metrics.GainDB != outcomeOnset.Metrics.GainDB {
+		t.Errorf("nil alignment gain = %g, want the explicit AlignOnsetCorrelation gain %g",
+			outcomeNil.Metrics.GainDB, outcomeOnset.Metrics.GainDB)
+	}
+
+	if outcomeNil.Summary.Score != outcomeOnset.Summary.Score {
+		t.Errorf("nil alignment score = %g, want the explicit AlignOnsetCorrelation score %g",
+			outcomeNil.Summary.Score, outcomeOnset.Summary.Score)
+	}
+}
+
+// TestExplicitAlignNoneChangesTheScore pins the ruling that a non-nil
+// Spec.Alignment actually reaches the objective config rather than being read
+// and dropped. AlignNone skips the onset-correlation search the default
+// alignment runs, which moves the gain and waveform terms even on this
+// reference, whose candidate happens to need no time shift at all: the two
+// modes solve those terms over different windows regardless of the lag
+// either one finds, so a run forced to AlignNone must score differently from
+// the same run left at the default.
+func TestExplicitAlignNoneChangesTheScore(t *testing.T) {
+	base := fitrun.Spec{
+		ReferencePath: referencePath,
+		Note:          69,
+		Engine:        fitrun.Engine{Name: fitrun.EngineSimple},
+		MaxIterations: 3,
+		Workers:       1,
+	}
+
+	specDefault := base
+	specDefault.Dir = t.TempDir()
+
+	outcomeDefault, err := fitrun.Run(context.Background(), specDefault, nil)
+	if err != nil {
+		t.Fatalf("default alignment run: %v", err)
+	}
+
+	none := optimizer.AlignNone
+	specNone := base
+	specNone.Dir = t.TempDir()
+	specNone.Alignment = &none
+
+	outcomeNone, err := fitrun.Run(context.Background(), specNone, nil)
+	if err != nil {
+		t.Fatalf("explicit AlignNone run: %v", err)
+	}
+
+	if outcomeNone.Metrics.GainDB == outcomeDefault.Metrics.GainDB {
+		t.Errorf("AlignNone gain = %g, want it to differ from the default alignment's gain %g; "+
+			"the pointer did not reach the objective config",
+			outcomeNone.Metrics.GainDB, outcomeDefault.Metrics.GainDB)
+	}
+}
+
+// TestReferenceWavMatchesAnalysisJSONsCut pins reference.wav to the signal the
+// objective actually scored: the same cut analysis.json records, not a fresh
+// reload of the source file under some other policy.
+func TestReferenceWavMatchesAnalysisJSONsCut(t *testing.T) {
+	dir := t.TempDir()
+
+	spec := fitrun.Spec{
+		Dir:           dir,
+		ReferencePath: referencePath,
+		Note:          69,
+		Engine:        fitrun.Engine{Name: fitrun.EngineSimple},
+		MaxIterations: 2,
+		Workers:       2,
+	}
+
+	if _, err := fitrun.Run(context.Background(), spec, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, fitrun.FileAnalysis))
+	if err != nil {
+		t.Fatalf("read analysis: %v", err)
+	}
+
+	var document struct {
+		Reference struct {
+			Onset int `json:"onset"`
+			End   int `json:"end"`
+		} `json:"reference"`
+	}
+
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode analysis: %v", err)
+	}
+
+	want := document.Reference.End - document.Reference.Onset
+
+	samples, _, err := wavio.LoadMono(filepath.Join(dir, fitrun.FileReference))
+	if err != nil {
+		t.Fatalf("load %s: %v", fitrun.FileReference, err)
+	}
+
+	if len(samples) != want {
+		t.Errorf("%s has %d samples, want %d (analysis.json's onset..end cut)",
+			fitrun.FileReference, len(samples), want)
+	}
+}
+
+// TestLongReferenceRecordsTheDefaultFrameSize pins analysisFrameSize's no-op
+// case: a reference at least as long as analysis.DefaultFrameSize is measured
+// at that window, unhalved. legacy_synth_a4.wav cuts to 24579 samples, well
+// over the 16384-point default, so nothing here should ever shrink it. The
+// value is read back from analysis.json rather than the internal function,
+// because it is the recorded number a later edit to the halving rule would
+// have to keep honest, not the call that produced it.
+func TestLongReferenceRecordsTheDefaultFrameSize(t *testing.T) {
+	dir := t.TempDir()
+
+	spec := fitrun.Spec{
+		Dir:           dir,
+		ReferencePath: referencePath,
+		Note:          69,
+		Engine:        fitrun.Engine{Name: fitrun.EngineSimple},
+		MaxIterations: 2,
+		Workers:       2,
+	}
+
+	if _, err := fitrun.Run(context.Background(), spec, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	document := readAnalysisFrameSize(t, dir)
+
+	if document.Reference.End-document.Reference.Onset < analysis.DefaultFrameSize {
+		t.Fatalf("reference cut is %d samples, too short to prove the no-op case",
+			document.Reference.End-document.Reference.Onset)
+	}
+
+	if document.Options.FrameSize != analysis.DefaultFrameSize {
+		t.Errorf("analysis.json options.FrameSize = %d, want the default %d",
+			document.Options.FrameSize, analysis.DefaultFrameSize)
+	}
+}
+
+// TestShortReferenceRecordsAHalvedFrameSize pins analysisFrameSize's other
+// branch: a reference shorter than the default window is measured at a
+// smaller one, halved down until it fits, rather than failing outright. A
+// fit against a fifth of a second, which is what a single strike auditioned
+// through the server can be, must still produce an analysis.json.
+func TestShortReferenceRecordsAHalvedFrameSize(t *testing.T) {
+	dir := t.TempDir()
+	shortPath := filepath.Join(dir, "short.wav")
+
+	template, err := preset.Load(filepath.FromSlash("../../testdata/presets/minimal.json"))
+	if err != nil {
+		t.Fatalf("load preset: %v", err)
+	}
+
+	engine, err := synth.NewSynthesizer(template, 44100)
+	if err != nil {
+		t.Fatalf("new synthesizer: %v", err)
+	}
+
+	if err := wavio.WriteMono(shortPath, 44100, engine.RenderNote(69, 100, 0.05)); err != nil {
+		t.Fatalf("write short reference: %v", err)
+	}
+
+	spec := fitrun.Spec{
+		Dir:           dir,
+		ReferencePath: shortPath,
+		Note:          69,
+		Engine:        fitrun.Engine{Name: fitrun.EngineSimple},
+		MaxIterations: 2,
+		Workers:       2,
+	}
+
+	if _, err := fitrun.Run(context.Background(), spec, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	document := readAnalysisFrameSize(t, dir)
+
+	cut := document.Reference.End - document.Reference.Onset
+	if cut >= analysis.DefaultFrameSize {
+		t.Fatalf("reference cut is %d samples, too long to prove the halving case", cut)
+	}
+
+	want := analysis.DefaultFrameSize
+	for want > cut {
+		want /= 2
+	}
+
+	if document.Options.FrameSize != want {
+		t.Errorf("analysis.json options.FrameSize = %d, want %d (halved to fit %d samples)",
+			document.Options.FrameSize, want, cut)
+	}
+}
+
+// readAnalysisFrameSize decodes the cut and the measurement window out of a
+// run directory's analysis.json.
+func readAnalysisFrameSize(t *testing.T, dir string) struct {
+	Reference struct {
+		Onset int `json:"onset"`
+		End   int `json:"end"`
+	} `json:"reference"`
+	Options struct {
+		FrameSize int `json:"FrameSize"`
+	} `json:"options"`
+} {
+	t.Helper()
+
+	data, err := os.ReadFile(filepath.Join(dir, fitrun.FileAnalysis))
+	if err != nil {
+		t.Fatalf("read analysis: %v", err)
+	}
+
+	var document struct {
+		Reference struct {
+			Onset int `json:"onset"`
+			End   int `json:"end"`
+		} `json:"reference"`
+		Options struct {
+			FrameSize int `json:"FrameSize"`
+		} `json:"options"`
+	}
+
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode analysis: %v", err)
+	}
+
+	return document
+}
+
+// TestMayflyReportsBothRoundsAsRestarts pins Progress.Restart to the
+// schedule's own round index, per the field's contract: the zero-based index
+// of the search in progress. Before this, mayfly never set the field, so every
+// front end watching a scheduled run saw restart zero for the whole run.
+func TestMayflyReportsBothRoundsAsRestarts(t *testing.T) {
+	dir := t.TempDir()
+
+	spec := fitrun.Spec{
+		Dir:           dir,
+		ReferencePath: referencePath,
+		Note:          69,
+		Engine: fitrun.Engine{
+			Name:   fitrun.EngineMayfly,
+			Mayfly: fitrun.MayflySettings{Population: 10, Restarts: 1},
+		},
+		MaxEvaluations: 400,
+		Seed:           7,
+		Workers:        2,
+	}
+
+	if _, err := fitrun.Run(context.Background(), spec, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	seen := map[int]bool{}
+	for _, line := range readTrace(t, dir) {
+		seen[line.Restart] = true
+	}
+
+	if !seen[0] || !seen[1] {
+		t.Errorf("trace restarts seen = %v, want both round 0 and round 1", seen)
+	}
+}
+
+// TestCampaignSpecStillWritesTheSameConfigFields is the campaign smoke test
+// the brief asks for: a Spec built the way internal/campaign/run.go builds
+// one, with none of this task's additions set, writes exactly the config.json
+// field set it wrote before they existed.
+func TestCampaignSpecStillWritesTheSameConfigFields(t *testing.T) {
+	dir := t.TempDir()
+
+	spec := fitrun.Spec{
+		Dir:           dir,
+		ReferencePath: referencePath,
+		Note:          69,
+		Engine:        fitrun.Engine{Name: fitrun.EngineSimple},
+		MaxIterations: 3,
+		Seed:          7,
+		Workers:       2,
+		ReportEvery:   1,
+		GeneratedBy:   "glockenspiel-campaign",
+		Name:          "smoke/arm/b00",
+	}
+
+	if _, err := fitrun.Run(context.Background(), spec, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, fitrun.FileConfig))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+
+	want := []string{
+		"dir", "reference_options", "template", "modes", "note", "velocity",
+		"sample_rate", "metric", "engine", "max_iterations", "max_evaluations",
+		"time_budget", "seed", "workers", "report_every", "checkpoint_every",
+		"generated_by", "name", "resolved", "identity", "reference", "started", "finished",
+	}
+
+	for _, key := range want {
+		if _, ok := fields[key]; !ok {
+			t.Errorf("config.json is missing %q", key)
+		}
+	}
+
+	if len(fields) != len(want) {
+		t.Errorf("config.json has %d top-level fields, want %d: %v", len(fields), len(want), fields)
 	}
 }

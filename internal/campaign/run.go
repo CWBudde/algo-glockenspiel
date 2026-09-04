@@ -131,7 +131,7 @@ const (
 
 // stopReasonCanceled is the stop reason every backend reports for a run a
 // cancelled context ended.
-const stopReasonCanceled = "context_canceled"
+const stopReasonCanceled = fitrun.StopReasonCanceled
 
 // inspectJob reads a job's summary and says whether the job is done.
 //

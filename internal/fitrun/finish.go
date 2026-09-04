@@ -37,6 +37,18 @@ func newRunConfig(spec Spec, identity Identity, prepared *preparation, started t
 		Identity:         identity,
 		Reference:        prepared.reference,
 		Started:          started,
+		StrictBounds:     spec.StrictBounds,
+		Gain:             gainName(spec.Gain),
+	}
+
+	if spec.Bounds != nil {
+		record := newBoundsRecord(*spec.Bounds)
+		config.Bounds = &record
+	}
+
+	if spec.Alignment != nil {
+		name := alignmentName(*spec.Alignment)
+		config.Alignment = &name
 	}
 
 	return config
@@ -49,7 +61,7 @@ func finish(
 	spec Spec,
 	prepared *preparation,
 	result *optimizer.Result,
-	chosen *resolved,
+	chosen *Resolved,
 	config *runConfig,
 	tuning *optimizer.MayflyTuning,
 	out io.Writer,
@@ -170,7 +182,7 @@ func polishStage(
 	spec Spec,
 	prepared *preparation,
 	result *optimizer.Result,
-	chosen *resolved,
+	chosen *Resolved,
 	out io.Writer,
 ) ([]float64, float64, *optimizer.PolishResult) {
 	if spec.Polish == nil || spec.Polish.Engine == "" || spec.Polish.Engine == optimizer.PolishEngineNone {

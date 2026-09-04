@@ -1139,11 +1139,35 @@ Goal: the instrument CircleFit's `scripts/cmaes-measurement` is, for this object
 
 Goal: the UI a campaign needs — history, provenance, comparison.
 
-- [ ] Run history: each job gets a run directory under `--work-dir`; `GET /api/fit/jobs`,
+- [x] Run history: each job gets a run directory under `--work-dir`; `GET /api/fit/jobs`,
       `GET /api/fit/jobs/{id}` with the full config echo and metrics, plus `/preset`, `/audio`
       and `/trace` per job; a sequential queue instead of a 409; results survive a restart.
-- [ ] The snapshot gains the full request echo, the per-term metrics, evaluations per second,
+      Done 2026-09-04. The server stopped running its own fit loop: it delegates to
+      `internal/fitrun.Run`, so a served fit leaves the same run directory a campaign job does
+      and the three parallel pipelines 8.5 deferred become two. `fitrun` grew the hooks that
+      needed (`OnProgress`, `OnResolve`, client bounds, an alignment override) and now writes
+      `reference.wav`, the cut and normalised signal the objective actually scored, which is what
+      makes an honest A/B possible at all. Three request knobs had no home in `Spec` and were
+      added rather than dropped. The 409 is gone: a second start is queued, and one worker takes
+      jobs in order. Recovery reads the same rule `internal/campaign/status.go` already used, so
+      a job that died with its process comes back failed rather than running. **One consequence
+      to know:** after a restart over a populated work dir, `GET /api/fit` answers with a
+      finished fit from the previous session instead of 404, which is what "results survive a
+      restart" means for the mount-time read.
+- [x] The snapshot gains the full request echo, the per-term metrics, evaluations per second,
       the budget fraction, the restart and epoch index, `Converged` and the gain applied.
+      Done 2026-09-04. The gain needed no new field: `Metrics.GainDB` already carried it, and it
+      is now pinned to arrive mid-run rather than only at the end. The epoch index did not exist
+      before this phase — the Mayfly tracker never set `Progress.Restart`, so a round index was
+      invisible to every front end. The snapshot also carries the active profile's per-term
+      weights and norms, so the UI's bars cannot drift from the score by re-deriving
+      `optimizer.DefaultNorms` in TypeScript. Restored jobs echo what `config.json` holds and
+      **omit** the mayfly form fields they cannot recover rather than presenting a default as
+      though it were what the run used. `optimizer.ComputeSpectrogram` exports the objective's
+      own STFT, noise-aware floor and all, so `GET /api/fit/jobs/{id}/compare` paints both
+      signals from the code that scored them: one time axis, and both clamped to the reference's
+      floor exactly as `spectrogram.errorDB` does. Painting each side against its own floor was
+      the defect that made the render appear to hold content the score counted as nothing.
 - [ ] A results view with the reference beside the fit — waveform and spectrogram from the same
       STFT code — A/B audition of both, a parameter table with bound-pinned values highlighted,
       per-term bars, and a run list with a compare picker for cost curves.
@@ -1258,10 +1282,19 @@ the schema to fix it, which promoted "gain is searched, not solved" from a revie
 blocker in `## Deferred`; `default.json`'s reference holds one partial, so fitting it writes a
 one-mode preset. [docs/training.md](docs/training.md) holds all of it.
 
-**The next action is 8.7, serve and the Optimize tab.** It also has a debt 8.6 named: the CLI
-default is now `mayfly` while the server and browser fit still choose their own, which is exactly
-the three-way duplication 8.7 collapses. Before that, an output gain is the one thing standing
-between a measured refit and a shipped preset.
+**8.7 is under way, and its first two items are done 2026-09-04.** The Go half is built: the
+server delegates to `internal/fitrun`, every job leaves a run directory under `--work-dir`, the
+409 is replaced by a queue, jobs survive a restart, and the snapshot and the new `/compare`
+payload carry the provenance and the pictures a comparison view needs. Two defects worth carrying
+forward, both of the same shape, both caught in review rather than by a gate: the comparison
+first clamped only the render to sixty seconds and left the reference at full length, and it
+first painted each spectrogram against its own noise floor where the objective clamps both to the
+reference's. Either would have drawn a picture that disagreed with the score while looking
+entirely plausible. What remains is the UI itself, the three-way limit-table and optimizer-list
+duplication 8.7 collapses, and the Playwright fit through `serve`. The debt 8.6 named still
+stands until then: the CLI default is `mayfly` while the browser fit still chooses its own.
+Separately, an output gain is the one thing standing between a measured refit and a shipped
+preset.
 
 **Phase 5, payload size.** The one unaddressed sub-item. Adding the browser optimizer made the
 raw WASM larger, so this is now splitting or lazy-loading the Go payload rather than shaving

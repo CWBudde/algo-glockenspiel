@@ -392,6 +392,15 @@ type Profile struct {
 	Norms map[Term]float64 `json:"norms,omitempty"`
 }
 
+// Norm is the value at which a term scores one half under this profile: the
+// profile's own if it names one, and the default otherwise. It is exported
+// because a display of the terms beside the score has to scale them by the
+// same number the score used, and re-deriving DefaultNorms elsewhere is how
+// the two quietly stop agreeing.
+func (p Profile) Norm(term Term) float64 {
+	return p.norm(term)
+}
+
 func (p Profile) norm(term Term) float64 {
 	if norm, ok := p.Norms[term]; ok && norm > 0 {
 		return norm

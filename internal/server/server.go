@@ -8,9 +8,11 @@
 // what a user sees when the build step was skipped.
 //
 // Fitting over HTTP is Phase 4.2 and lives beside this file: job.go owns the
-// single-slot job manager, fit.go the JSON endpoints, events.go the SSE
-// progress stream and params.go the request parsing. This file stays the
-// static, read-only half.
+// job history and the queue that feeds the one fit slot, fit.go the JSON
+// endpoints for the most recent job, jobs.go the per-job endpoints, restore.go
+// the startup scan that rebuilds the history from the work directory,
+// events.go the SSE progress stream and params.go the request parsing. This
+// file stays the static, read-only half.
 package server
 
 import (
@@ -92,6 +94,28 @@ type Config struct {
 	// MaxReferenceBytes caps an uploaded reference recording. Zero means
 	// defaultMaxReferenceBytes; see there for why that number.
 	MaxReferenceBytes int64
+
+	// WorkDir is where every served fit writes its run directory, one
+	// directory per job, in the layout internal/fitrun defines and the
+	// campaign's collect step already reads. An empty value means
+	// DefaultWorkDir.
+	WorkDir string
+}
+
+// DefaultWorkDir is where served fits land when nothing names a directory: a
+// "glockenspiel/fits" tree under the user's cache directory.
+//
+// The cache directory rather than the working directory, because `serve` is
+// run from wherever the user happens to be and a run directory that appeared
+// under whatever that was would be a surprise. It falls back to "out/serve"
+// only when the platform has no cache directory to offer.
+func DefaultWorkDir() string {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return filepath.FromSlash("out/serve")
+	}
+
+	return filepath.Join(cache, "glockenspiel", "fits")
 }
 
 // staticAsset is one embedded file, prepared once at startup. The tree is a
@@ -108,8 +132,9 @@ type Server struct {
 	config Config
 	assets map[string]staticAsset
 
-	// jobs owns the one fit slot. It is reached from every request goroutine
-	// and from the goroutine running a fit, and is safe for all of them.
+	// jobs owns the history and the queue that feeds the one fit slot. It is
+	// reached from every request goroutine and from the goroutine running a
+	// fit, and is safe for all of them.
 	jobs jobManager
 
 	// shutdown is closed once, before http.Server.Shutdown is called, to end
@@ -139,11 +164,24 @@ func New(cfg Config) (*Server, error) {
 		cfg.ShutdownTimeout = defaultShutdownTimeout
 	}
 
-	return &Server{
+	if cfg.WorkDir == "" {
+		cfg.WorkDir = DefaultWorkDir()
+	}
+
+	srv := &Server{
 		config:   cfg,
 		assets:   assets,
 		shutdown: make(chan struct{}),
-	}, nil
+	}
+
+	// The work directory is read back before the first request, so a restart
+	// does not lose the history: a run directory is the whole record of a fit,
+	// and every one of them still on disk becomes a job the read endpoints can
+	// answer for. A work directory that cannot be read is logged and survived
+	// -- it costs the history, not the server.
+	srv.restoreJobs()
+
+	return srv, nil
 }
 
 // loadStaticAssets reads the whole embedded tree into memory, computing the
@@ -224,6 +262,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/fit/events", s.handleFitEvents)
 	mux.HandleFunc("/api/fit/preset", s.handleFitPreset)
 	mux.HandleFunc("/api/fit/audio", s.handleFitAudio)
+
+	// The per-job family. The wildcard patterns are more specific than the
+	// subtree pattern below, which ServeMux prefers, so they are matched
+	// first; a path under /api/fit/jobs/ that none of them describes still
+	// lands on the 404 rather than on the static tree.
+	mux.HandleFunc("/api/fit/jobs", s.handleFitJobs)
+	mux.HandleFunc("/api/fit/jobs/{id}", s.handleFitJob)
+	mux.HandleFunc("/api/fit/jobs/{id}/preset", s.handleFitJobPreset)
+	mux.HandleFunc("/api/fit/jobs/{id}/audio", s.handleFitJobAudio)
+	mux.HandleFunc("/api/fit/jobs/{id}/trace", s.handleFitJobTrace)
+	mux.HandleFunc("/api/fit/jobs/{id}/reference", s.handleFitJobReference)
+	mux.HandleFunc("/api/fit/jobs/{id}/compare", s.handleFitJobCompare)
+
 	mux.HandleFunc("/api/fit/", http.NotFound)
 
 	mux.HandleFunc("/", s.handleStatic)
@@ -542,7 +593,7 @@ func (s *Server) Stop() {
 		close(s.shutdown)
 	})
 
-	s.jobs.cancelActive()
+	s.jobs.stopAll()
 }
 
 // logf writes one line to the configured log sink, if there is one.

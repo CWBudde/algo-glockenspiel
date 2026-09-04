@@ -16,12 +16,14 @@ import (
 type serveOptions struct {
 	addr    string
 	distDir string
+	workDir string
 }
 
 func newServeCmd() *cobra.Command {
 	options := serveOptions{
 		addr:    ":8080",
 		distDir: filepath.FromSlash("web/dist"),
+		workDir: server.DefaultWorkDir(),
 	}
 
 	cmd := &cobra.Command{
@@ -30,12 +32,19 @@ func newServeCmd() *cobra.Command {
 		Long: "Host the browser front end on a local port. The app is read from disk, out of the " +
 			"--dist directory: both the bundle and the WebAssembly module are build artifacts " +
 			"that no checkout contains until `just build-web` has produced them. The binary " +
-			"carries only a placeholder page naming that command.",
+			"carries only a placeholder page naming that command.\n\n" +
+			"Every fit started from the browser writes a run directory under --work-dir, in the " +
+			"same layout `glockenspiel fitrun` and the training campaign use: the uploaded " +
+			"reference, the reference the objective scored, the trace, the checkpoint, the " +
+			"fitted preset and its render.",
 		Example: `  # Serve on the default port
   glockenspiel serve
 
   # Serve on another port with the app built somewhere else
-  glockenspiel serve --addr :9000 --dist ../glockenspiel/web/dist`,
+  glockenspiel serve --addr :9000 --dist ../glockenspiel/web/dist
+
+  # Keep the run directories somewhere the campaign tooling can read them
+  glockenspiel serve --work-dir out/serve`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runServe(cmd, options)
@@ -46,6 +55,8 @@ func newServeCmd() *cobra.Command {
 	flags.StringVar(&options.addr, "addr", options.addr, "Listen address, such as :8080 or 127.0.0.1:8080")
 	flags.StringVar(&options.distDir, "dist", options.distDir,
 		"Directory holding the built web app and the WebAssembly module, relative to the current directory")
+	flags.StringVar(&options.workDir, "work-dir", options.workDir,
+		"Directory the run directory of every served fit is written under")
 
 	return cmd
 }
@@ -60,6 +71,7 @@ func runServe(cmd *cobra.Command, options serveOptions) error {
 		Version: version,
 		Static:  web.StaticFS(),
 		DistDir: options.distDir,
+		WorkDir: options.workDir,
 		Log:     cmd.OutOrStdout(),
 	})
 	if err != nil {

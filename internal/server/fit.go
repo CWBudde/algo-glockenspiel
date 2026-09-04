@@ -280,7 +280,7 @@ func (s *Server) handleFitStart(writer http.ResponseWriter, request *http.Reques
 
 	// The reference is read once the request is parsed, because how it is
 	// prepared -- the channel, the cut -- is part of the request.
-	loaded, err := readReferencePart(request, limit, fitSettings.loadOptions())
+	loaded, upload, err := readReferencePart(request, limit, fitSettings.loadOptions())
 	if err != nil {
 		writeJSONError(writer, http.StatusBadRequest, err.Error())
 
@@ -289,7 +289,15 @@ func (s *Server) handleFitStart(writer http.ResponseWriter, request *http.Reques
 
 	reference, referenceRate := loaded.Samples, loaded.SampleRate
 
-	objective, initial, starting, err := buildObjective(fitSettings, reference, referenceRate, template, bounds)
+	// The objective is built here and built again inside fitrun.Run, which is
+	// a second measurement of a reference the upload limit keeps small and the
+	// price of one answer: every way a request can be impossible -- an unknown
+	// metric, a box no codec can encode, a box that leaves the model range --
+	// is a 400 on this request rather than a job that claims the slot and then
+	// fails. What is kept is the codec: it is the same codec fitrun will build
+	// from the same inputs, and it is what turns the encoded result back into
+	// the pinned dimensions the snapshot reports.
+	objective, _, starting, err := buildObjective(fitSettings, reference, referenceRate, template.Clone(), bounds)
 	if err != nil {
 		writeJSONError(writer, http.StatusBadRequest, err.Error())
 
@@ -298,104 +306,29 @@ func (s *Server) handleFitStart(writer http.ResponseWriter, request *http.Reques
 
 	referenceSeconds := float64(len(reference)) / float64(referenceRate)
 
-	job, err := s.jobs.start(fitSettings, referenceRate, referenceSeconds, starting.modes,
+	details := jobDetails{
+		settings:         fitSettings,
+		sampleRate:       referenceRate,
+		referenceSeconds: referenceSeconds,
+		seededModes:      starting.modes,
+		bounds:           bounds,
+	}
+
+	job, err := s.jobs.start(details, s.config.WorkDir,
+		func(dir string) error {
+			return writeUpload(dir, upload)
+		},
 		func(ctx context.Context, job *fitJob) {
-			s.runFit(ctx, job, objective, initial, starting.preset)
+			s.runFit(ctx, job, objective.Codec(), template, bounds)
 		})
 	if err != nil {
-		writeJSONError(writer, http.StatusConflict, err.Error())
+		s.logf("starting a fit failed: %v", err)
+		writeJSONError(writer, http.StatusInternalServerError, "the fit could not be started")
 
 		return
 	}
 
 	writeJSON(writer, http.StatusAccepted, job.snapshot())
-}
-
-// runFit is the body of a job. It is the same sequence runFit in
-// internal/cli/fit.go performs, with the file-shaped parts removed: no
-// checkpoint files, no rendered output on disk, and the fitted preset kept in
-// memory for the read endpoints instead of saved to a path.
-func (s *Server) runFit(
-	ctx context.Context,
-	job *fitJob,
-	objective *optimizer.ObjectiveFunction,
-	initial []float64,
-	template *preset.Preset,
-) {
-	settings := job.request
-
-	backend, err := selectOptimizer(settings, objective.Codec())
-	if err != nil {
-		job.finish(fitFailed, nil, nil, nil, nil, err)
-
-		return
-	}
-
-	// The resolution report is attached here rather than in selectOptimizer,
-	// which also runs at parse time to validate a request and has no job to
-	// report into. Without it a run started from a preset or with a zero seed
-	// could never be described back to the client that started it.
-	if mayflyBackend, ok := backend.(*optimizer.MayflyOptimizer); ok {
-		mayflyBackend.OnResolve = job.recordMayfly
-	}
-
-	result, err := backend.Optimize(ctx, objective.Objective(), initial, objective.Codec().EncodedBounds(),
-		optimizer.OptimizeOptions{
-			MaxIterations: settings.MaxIterations,
-			TimeBudget:    settings.timeBudget(),
-			ReportEvery:   settings.ReportEvery,
-			Report: func(progress optimizer.Progress) {
-				// The breakdown of the best point so far rides along with
-				// every report, so a client sees the terms move rather than
-				// one number.
-				var metrics *optimizer.Metrics
-
-				if measured, err := objective.EvaluateMetrics(progress.BestParams); err == nil {
-					metrics = &measured
-				}
-
-				job.report(progress, metrics)
-			},
-		})
-	if err != nil {
-		job.finish(fitFailed, nil, nil, nil, nil, err)
-
-		return
-	}
-
-	bestParams, err := objective.Codec().DecodeParams(result.BestParams)
-	if err != nil {
-		job.finish(fitFailed, nil, result, nil, nil, err)
-
-		return
-	}
-
-	fitted := template.Clone()
-	fitted.Parameters = *bestParams
-
-	// A cancelled run still produced the best parameters it found, so the
-	// preset is kept either way; only the state says which happened. Losing it
-	// would make "cancel" mean "throw away the last ten minutes", which is the
-	// opposite of what someone watching a cost curve flatten out wants.
-	state := fitSucceeded
-	if ctx.Err() != nil {
-		state = fitCanceled
-	}
-
-	var metrics *optimizer.Metrics
-
-	if measured, err := objective.EvaluateMetrics(result.BestParams); err == nil {
-		metrics = &measured
-	}
-
-	// Which dimensions finished on a bound is part of the result: a pinned
-	// one is where the search wanted to go further than the box allowed.
-	pinned, _ := objective.Codec().Pinned(result.BestParams)
-
-	job.finish(state, fitted, result, metrics, pinned, nil)
-
-	s.logf("fit %s finished: state=%s best=%0.6g stop=%s iterations=%d evals=%d",
-		job.id, state, result.BestCost, result.StopReason, result.Iterations, result.Evaluations)
 }
 
 // handleFitStatus reports the most recent job.
@@ -414,14 +347,16 @@ func (s *Server) handleFitStatus(writer http.ResponseWriter, request *http.Reque
 	writeJSON(writer, http.StatusOK, job.snapshot())
 }
 
-// handleFitCancel stops the running fit and waits for it to actually stop.
+// handleFitCancel stops a fit and waits for it to actually stop.
 //
-// Waiting is what makes cancel-then-start deterministic. If cancel returned as
-// soon as the context was cancelled, a client that immediately started a new
-// fit would race the old goroutine's last evaluation and get a 409 it could do
-// nothing about but retry. Both optimizer backends return promptly on a
+// Waiting is what makes cancel-then-start deterministic: a client that cancels
+// and immediately reads the status must not see the run it just stopped still
+// reporting itself as running. Both optimizer backends return promptly on a
 // cancelled context, so the wait is short; it is nevertheless bounded by the
 // request's own context so a wedged backend cannot pin the handler forever.
+//
+// A job that is only queued is dropped without ever running, and its done
+// channel is closed by the drop, so the same wait answers immediately.
 func (s *Server) handleFitCancel(writer http.ResponseWriter, request *http.Request) {
 	if !allowPostMethod(writer, request) {
 		return
@@ -436,15 +371,24 @@ func (s *Server) handleFitCancel(writer http.ResponseWriter, request *http.Reque
 
 	// An explicit job id makes cancel safe against the race it would otherwise
 	// have: a client that decides to cancel while the run it is watching ends
-	// and another begins must not silently kill the newcomer.
-	if wanted := request.URL.Query().Get("job"); wanted != "" && wanted != job.id {
-		writeJSONError(writer, http.StatusConflict,
-			fmt.Sprintf("the current fit is %s, not %s", job.id, wanted))
+	// and another begins must not silently kill the newcomer. It is also how a
+	// queued job is cancelled by name rather than by being the most recent
+	// one. A job that is not there at all, or one that has already finished,
+	// is a conflict rather than a silent success: the client is asking to stop
+	// something that is not going to stop.
+	if wanted := request.URL.Query().Get("job"); wanted != "" {
+		named := s.jobs.lookup(wanted)
+		if named == nil || named.snapshot().State.terminal() {
+			writeJSONError(writer, http.StatusConflict,
+				fmt.Sprintf("fit %s is not running; the most recent fit is %s", wanted, job.id))
 
-		return
+			return
+		}
+
+		job = named
 	}
 
-	job.cancel()
+	s.jobs.cancel(job)
 
 	select {
 	case <-job.done:
@@ -458,7 +402,7 @@ func (s *Server) handleFitCancel(writer http.ResponseWriter, request *http.Reque
 	}
 }
 
-// handleFitPreset returns the best preset the current job has produced.
+// handleFitPreset returns the best preset the most recent job has produced.
 func (s *Server) handleFitPreset(writer http.ResponseWriter, request *http.Request) {
 	if !allowReadMethods(writer, request) {
 		return
@@ -469,11 +413,18 @@ func (s *Server) handleFitPreset(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 
+	writeFitPreset(writer, job, fitted)
+}
+
+// writeFitPreset answers with one fitted preset. Both preset endpoints go
+// through it, so the file a client downloads is named after its job either
+// way.
+func writeFitPreset(writer http.ResponseWriter, job *fitJob, fitted *preset.Preset) {
 	writer.Header().Set("Content-Disposition", `attachment; filename="`+job.id+`.json"`)
 	writeJSON(writer, http.StatusOK, fitted)
 }
 
-// handleFitAudio renders the fitted preset and returns it as a WAV.
+// handleFitAudio renders the most recent job's fitted preset as a WAV.
 func (s *Server) handleFitAudio(writer http.ResponseWriter, request *http.Request) {
 	if !allowReadMethods(writer, request) {
 		return
@@ -484,6 +435,22 @@ func (s *Server) handleFitAudio(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 
+	s.writeFitAudio(writer, request, job, fitted)
+}
+
+// writeFitAudio renders one job's preset and sends it.
+//
+// Both audio endpoints go through it, which is the whole reason the render is
+// done on demand rather than served from the run directory's render.wav: that
+// file is one fixed note, velocity and length, while ?note=, ?velocity= and
+// ?duration= have to keep working for a job out of the history exactly as they
+// do for the live one.
+func (s *Server) writeFitAudio(
+	writer http.ResponseWriter,
+	request *http.Request,
+	job *fitJob,
+	fitted *preset.Preset,
+) {
 	query := request.URL.Query()
 
 	note, err := queryInt(query, "note", job.request.Note, 0, 127)
@@ -559,15 +526,36 @@ func (s *Server) fittedPreset(writer http.ResponseWriter) (*fitJob, *preset.Pres
 		return nil, nil, false
 	}
 
-	fitted := job.presetCopy()
-	if fitted == nil {
-		writeJSONError(writer, http.StatusConflict,
-			fmt.Sprintf("fit %s has produced no preset yet", job.id))
-
+	fitted, ok := s.presetOf(writer, job)
+	if !ok {
 		return nil, nil, false
 	}
 
 	return job, fitted, true
+}
+
+// presetOf resolves one job's fitted preset, answering the request itself when
+// there is none. A job rebuilt at startup reads it back from its run
+// directory, which is why a preset that cannot be read is a 500 and a preset
+// that was never produced stays the 409 it always was: the first is the
+// server's problem and the second is the client asking too early.
+func (s *Server) presetOf(writer http.ResponseWriter, job *fitJob) (*preset.Preset, bool) {
+	fitted, err := job.fittedPreset()
+	if err == nil {
+		return fitted, true
+	}
+
+	if !job.snapshot().HasPreset {
+		writeJSONError(writer, http.StatusConflict,
+			fmt.Sprintf("fit %s has produced no preset yet", job.id))
+
+		return nil, false
+	}
+
+	s.logf("reading the preset of %s failed: %v", job.id, err)
+	writeJSONError(writer, http.StatusInternalServerError, "the fitted preset could not be read")
+
+	return nil, false
 }
 
 // readReferencePart decodes the uploaded reference WAV and prepares it the
@@ -577,10 +565,10 @@ func (s *Server) fittedPreset(writer http.ResponseWriter) (*fitJob, *preset.Pres
 // The bytes stay in memory and the part's filename is never touched: it is
 // attacker-controlled and there is nothing here it could usefully name. The
 // only thing taken from the file is its audio.
-func readReferencePart(request *http.Request, limit int64, options analysis.LoadOptions) (*analysis.Reference, error) {
+func readReferencePart(request *http.Request, limit int64, options analysis.LoadOptions) (*analysis.Reference, []byte, error) {
 	file, header, err := request.FormFile("reference")
 	if err != nil {
-		return nil, errors.New("a reference WAV must be uploaded as the multipart field \"reference\"")
+		return nil, nil, errors.New("a reference WAV must be uploaded as the multipart field \"reference\"")
 	}
 
 	defer func() {
@@ -588,7 +576,7 @@ func readReferencePart(request *http.Request, limit int64, options analysis.Load
 	}()
 
 	if header.Size > limit {
-		return nil, fmt.Errorf("the reference is %d bytes, above the %d byte limit", header.Size, limit)
+		return nil, nil, fmt.Errorf("the reference is %d bytes, above the %d byte limit", header.Size, limit)
 	}
 
 	// io.LimitReader rather than trust in header.Size: the size is taken from
@@ -596,16 +584,16 @@ func readReferencePart(request *http.Request, limit int64, options analysis.Load
 	// limit has to hold whatever the body actually contains.
 	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
-		return nil, fmt.Errorf("the reference could not be read: %w", err)
+		return nil, nil, fmt.Errorf("the reference could not be read: %w", err)
 	}
 
 	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("the reference exceeds the %d byte limit", limit)
+		return nil, nil, fmt.Errorf("the reference exceeds the %d byte limit", limit)
 	}
 
 	reference, err := analysis.DecodeReference(bytes.NewReader(data), "the uploaded reference", options)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	sampleRate := reference.SampleRate
@@ -617,11 +605,11 @@ func readReferencePart(request *http.Request, limit int64, options analysis.Load
 	// samples, which is a 480 GB allocation and an unrecoverable
 	// "fatal error: out of memory" rather than a failed request.
 	if sampleRate < minReferenceSampleRate || sampleRate > maxReferenceSampleRate {
-		return nil, fmt.Errorf("the reference declares a sample rate of %d Hz, outside the supported [%d,%d] range",
+		return nil, nil, fmt.Errorf("the reference declares a sample rate of %d Hz, outside the supported [%d,%d] range",
 			sampleRate, minReferenceSampleRate, maxReferenceSampleRate)
 	}
 
-	return reference, nil
+	return reference, data, nil
 }
 
 // readPresetPart decodes an optional starting preset, falling back to the

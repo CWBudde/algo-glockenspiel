@@ -43,6 +43,13 @@ const (
 	FileRender     = "render.wav"
 	FileResult     = "result.json"
 	FileLog        = "log.txt"
+
+	// FileReference is the reference signal the objective actually scored:
+	// loaded, cut, downmixed and peak-normalised, the same samples
+	// analysis.json was measured from. It is what makes an honest A/B against
+	// render.wav possible without re-deriving the loader's own policy from
+	// the reference_options block.
+	FileReference = "reference.wav"
 )
 
 // Spec is one fit: what to fit against, with what, and under which budget.
@@ -95,7 +102,8 @@ type Spec struct {
 
 	// ReportEvery is the progress cadence in backend iterations. Zero takes 1,
 	// because the trace is the record a campaign scores from and a coarse
-	// cadence loses the improvements between reports.
+	// cadence loses the improvements between reports. ReportNever asks for no
+	// reports at all.
 	ReportEvery int
 
 	// CheckpointEvery is the checkpoint cadence in backend iterations. Zero
@@ -111,6 +119,83 @@ type Spec struct {
 
 	// Name is the fitted preset's name. Zero keeps the template's.
 	Name string
+
+	// OnProgress is called from the same report every trace line comes from,
+	// after that line is written, so a live caller sees exactly what the
+	// trace records and no faster. Nil runs none, which is every campaign
+	// job's Spec today.
+	OnProgress func(optimizer.Progress, *optimizer.Metrics)
+
+	// OnResolve is called once, before the search starts, with the values the
+	// backend chose for itself: the drawn seed, the machine-sized worker
+	// count, and (mayfly or CMA-ES) the variant, population, covariance mode
+	// or lambda. It fires before the first OnProgress call. Nil runs none.
+	OnResolve func(Resolved)
+
+	// Bounds replaces the whole search box in place of the default one
+	// widened around the seeded template's frequency. Nil keeps today's
+	// behaviour exactly: optimizer.DefaultParamBounds with Frequency drawn
+	// from the reference's measured fundamental, and the box widened rather
+	// than enforced (StrictBounds false).
+	//
+	// A non-nil value is a caller's own box, mirroring
+	// internal/server/fit.go's readBoundsPart: with StrictBounds it is a hard
+	// constraint the fitted preset must not leave, exactly as the fit
+	// command's --bounds flag is.
+	Bounds *optimizer.ParamBounds
+
+	// StrictBounds keeps Bounds as written instead of widening it to contain
+	// the seeded template. Read only when Bounds is non-nil.
+	StrictBounds bool
+
+	// Alignment selects how a candidate is time-aligned to the reference
+	// before the error is computed. Nil keeps today's behaviour: the
+	// objective's own default, optimizer.AlignOnsetCorrelation.
+	//
+	// A pointer rather than a bare optimizer.AlignmentMode, because
+	// optimizer.AlignNone is the type's zero value: a value field could not
+	// tell "the caller wants no alignment" apart from "the caller left this
+	// blank", and the server needs exactly that distinction (Align:false
+	// asks for AlignNone, mirroring internal/server/fit.go:759,772, while a
+	// campaign job that never mentions Alignment still gets onset
+	// correlation as it does today).
+	Alignment *optimizer.AlignmentMode
+
+	// Gain selects how a candidate's level is matched to the reference before
+	// the error is computed. The zero value is optimizer.GainNone, which is
+	// both the objective's own default and what every campaign job asks for,
+	// so this needs no pointer the way Alignment does: "unset" and "no gain
+	// normalisation" are the same request.
+	//
+	// optimizer.GainLeastSquares divides out the scalar gain that minimises
+	// the residual, which is what internal/server/fit.go's normalizeGain field
+	// asks for.
+	Gain optimizer.GainMode
+}
+
+// StopReasonCanceled is the stop reason every backend records for a run that
+// was stopped by its context rather than by its own criteria. It is spelled
+// here, beside result.json's own Summary, because it is a value of that file:
+// anything reading a run directory back -- the campaign's status command, the
+// server's restart recovery -- has to tell a cancelled run from a finished one
+// and must not do it by its own copy of the string.
+const StopReasonCanceled = "context_canceled"
+
+// ReportNever is the cadence that reports nothing: no progress line, no trace
+// line, no OnProgress call. It exists because zero already means "take the
+// default", and a caller that genuinely wants a silent run -- which is what
+// internal/server's reportEvery=0 asks for, and what the fit command's own
+// flag has always meant -- has no other way to say so.
+const ReportNever = -1
+
+// reportEvery is the cadence the backend is given: a negative one is the
+// optimizer's own "never", which is how it spells the same thing.
+func (s Spec) reportEvery() int {
+	if s.ReportEvery < 0 {
+		return 0
+	}
+
+	return s.ReportEvery
 }
 
 // Engine selects the search backend and carries its settings. Only the block
@@ -125,7 +210,13 @@ type Engine struct {
 // schedule overlay on Tuning, exactly as the fit command's flags do, so a
 // document that already named a schedule still wins.
 type MayflySettings struct {
-	Variant    string                  `json:"variant,omitempty"`
+	Variant string `json:"variant,omitempty"`
+
+	// Preset names one of the wrapper's own parameter sets. It selects a
+	// dialect of its own, so a run that names a preset leaves Variant empty
+	// and learns which dialect ran from the resolution report.
+	Preset string `json:"preset,omitempty"`
+
 	Population int                     `json:"population,omitempty"`
 	Epochs     int                     `json:"epochs,omitempty"`
 	Restarts   int                     `json:"restarts,omitempty"`
@@ -179,11 +270,15 @@ type Outcome struct {
 	Encoded []float64
 }
 
-// resolved holds the values a backend chose for itself, reported through
+// Resolved holds the values a backend chose for itself, reported through
 // OnResolve before the search starts. They are recorded rather than derived,
 // because a drawn seed and a machine-sized worker count are the difference
 // between a run that can be repeated and one that cannot.
-type resolved struct {
+//
+// Exported, with the tags config.json already wrote, so a caller that wants
+// to know what the backend chose (a live server watching a fit run) reads the
+// same struct the run directory records rather than a second copy of it.
+type Resolved struct {
 	Seed       int64  `json:"seed"`
 	Workers    int    `json:"workers"`
 	Lambda     int    `json:"lambda,omitempty"`
