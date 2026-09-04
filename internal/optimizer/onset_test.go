@@ -136,7 +136,7 @@ func TestOnsetIsUnmeasuredOnAStrikeTooShortToHold(t *testing.T) {
 
 	short := strikeWithClick(sampleRate, onsetFrameSize/2, 1000, 6000, 0.35, 2)
 
-	if levels := onsetLevels(short, onsetBands(sampleRate)); levels != nil {
+	if levels := onsetLevels(short, onsetBands(sampleRate), 1); levels != nil {
 		t.Fatalf("a strike of %d samples reported %d band levels, want none", len(short), len(levels))
 	}
 }

@@ -16,7 +16,9 @@ import (
 // multipliers sit inside the default box.
 func threeModePreset() *preset.Preset {
 	return &preset.Preset{
-		Version: "2.0",
+		// The current version, because TestScoreDoesNotDependOnTheCandidatesLevel
+		// gives this preset an output gain, and only v3 may carry one.
+		Version: preset.CurrentVersion,
 		Name:    "three modes",
 		Note:    69,
 		Parameters: model.BarParams{
@@ -636,4 +638,83 @@ func TestWaveformTermCostsAPhaseFlip(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestScoreDoesNotDependOnTheCandidatesLevel is the property the whole
+// gain-invariance claim rests on, and it did not hold.
+//
+// The objective solves the level in closed form and takes every term at that
+// gain, so what a candidate is measured against is its shape, not its loudness.
+// The dB floors underneath the spectral, onset and envelope terms are absolute,
+// though, and they used to be applied to the candidate in its own scale before
+// the gain was added. A quiet render therefore had its low bins flattened onto
+// the floor and lifted back afterwards, which produced a plateau near the
+// reference's own floor and scored better than the true spectrum -- always in
+// the flattering direction, so the search had a standing incentive to go quiet
+// that nothing in the score disclosed. The best fit of the Morphagene c6
+// recording drifted 37 dB down, and read spectral_fine_db 0.506 where the
+// honest figure for the same preset is 5.160.
+//
+// A preset that differs only in output_gain_db is the same sound at a different
+// level, so every term has to come out identical. The sweep is wide because the
+// artifact only appears once a signal is quiet enough to reach the floor.
+const levelInvarianceToleranceDB = 1e-3
+
+func TestScoreDoesNotDependOnTheCandidatesLevel(t *testing.T) {
+	template := threeModePreset()
+	reference := renderReference(t, template, 44100, 69, 100, 1.0)
+
+	want := metricsAtOutputGain(t, reference, template, 0)
+
+	for _, gainDB := range []float64{-40, -20, -6, 6, 20, 40} {
+		got := metricsAtOutputGain(t, reference, template, gainDB)
+
+		for _, term := range []struct {
+			name      string
+			want, got float64
+		}{
+			{"spectral_fine_db", want.SpectralFineDB, got.SpectralFineDB},
+			{"spectral_coarse_db", want.SpectralCoarseDB, got.SpectralCoarseDB},
+			{"onset_db", want.OnsetDB, got.OnsetDB},
+			{"envelope_db", want.EnvelopeDB, got.EnvelopeDB},
+			{"decay_slope_dbps", want.DecaySlopeDBps, got.DecaySlopeDBps},
+			{"waveform", want.Waveform, got.Waveform},
+			{"partial_cents", want.PartialCents, got.PartialCents},
+			{"partial_missing", want.PartialMissing, got.PartialMissing},
+		} {
+			// The renders are float32 and scaling one changes where it
+			// rounds, so the terms agree to about 1e-4 rather than exactly.
+			// The artifact this guards against was 4.65 dB on the same
+			// preset, four orders of magnitude clear of the tolerance.
+			if math.Abs(term.got-term.want) > levelInvarianceToleranceDB {
+				t.Errorf("output gain %+g dB: %s = %g, want %g -- the term reads the candidate's level",
+					gainDB, term.name, term.got, term.want)
+			}
+		}
+
+		// The solved gain is the one number that must move, by exactly the
+		// gain, since that is what it measures.
+		if delta := math.Abs((want.GainDB - got.GainDB) - gainDB); delta > levelInvarianceToleranceDB {
+			t.Errorf("output gain %+g dB: gain_db moved from %g to %g, want a move of exactly %+g",
+				gainDB, want.GainDB, got.GainDB, -gainDB)
+		}
+	}
+}
+
+// metricsAtOutputGain scores the template carrying an output gain against the
+// reference. The objective is rebuilt per gain because the codec carries the
+// gain through from its template: it is not a search dimension, so a candidate
+// encoded against a codec built at another level would simply lose it.
+func metricsAtOutputGain(t *testing.T, reference []float32, template *preset.Preset, gainDB float64) Metrics {
+	t.Helper()
+
+	candidate := template.Clone()
+	candidate.Parameters.OutputGainDB = gainDB
+
+	objective, err := NewObjectiveFunction(reference, candidate, 44100, 69, 100, MetricBalanced)
+	if err != nil {
+		t.Fatalf("NewObjectiveFunction at %+g dB: %v", gainDB, err)
+	}
+
+	return metricsOf(t, objective, candidate)
 }

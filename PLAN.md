@@ -26,7 +26,7 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | 5     | Web app                      | open — 5.1–5.6 done; payload size remains |
 | 6     | Split out VST3               | done                                      |
 | 7     | Documentation                | open — 7.1 and 7.2 done                   |
-| 8     | Training                     | open — 8.0–8.7 and 8.9 done, 8.8 open     |
+| 8     | Training                     | open — 8.0–8.7, 8.9, 8.10 done, 8.8 open  |
 
 Closed phases are summarised here and documented in full under [docs/](docs/); the detail that
 was in this file has moved there rather than been dropped.
@@ -1331,28 +1331,68 @@ patched:
   trap, not a live fix, and what actually punishes a flip is the alignment: above about 340 Hz the
   aligner slides the inversion away and it costs 0.28, below that it cannot and it costs 0.99.
   Making the first case expensive means scoring the lag itself, which is a different change.
-- The spectral term's absolute magnitude floor rewards a quiet render. See Deferred; it is the
-  reason the level ridge slopes rather than lies flat, and it is the larger of the two.
+- The spectral term's absolute magnitude floor rewarded a quiet render. It was the reason the
+  level ridge sloped rather than lay flat, and it was the larger of the two. Fixed in 8.10.
+
+---
+
+### Phase 8.10: A floor that means the same thing on both sides
+
+**Done.** The objective is gain-invariant, which it claimed to be and was not.
+
+Every dB term sits on an absolute floor -- `spectralMagnitudeFloor` at −100 dBFS under the
+spectral and onset terms, `envelopeFloorDBFS` under the envelope -- and the floor was applied to
+the candidate in its own scale, with the solved gain added only afterwards. Where the floor sits
+relative to a signal therefore depended on how loud that signal happened to be. A render far
+below the reference had its low bins flattened onto the floor, and adding the gain afterwards
+lifted that flat plateau up near the reference's own floor, where it scored far better than the
+true spectrum would.
+
+The bias only ever ran one way, so this was not noise: **it paid to be quiet.** That is the
+missing half of 8.9's diagnosis, which called level a free ridge. It is not free and it is not
+flat — it slopes, and the eight Morphagene seeds were all partly descending it.
+
+- [x] The gain is applied before the floor rather than after it, in all three terms. It folds
+      into `magScale`, which every bin is already multiplied by, so the fix costs nothing.
+- [x] `TestScoreDoesNotDependOnTheCandidatesLevel` pins the property: a preset differing only in
+      `output_gain_db` scores identically on every term across ±40 dB, to 1e-3 — the residual is
+      float32 render rounding, four orders of magnitude below the 4.65 dB artifact it replaces.
+      Reintroducing the old arithmetic makes a −20 dB candidate score `spectral_fine_db` 15.66
+      where it should score 0, so the test earns its place.
+- [x] The legacy `spectralErrorWithGain` is fixed the same way, since it had the same defect.
+
+Measured on the seed-4 Morphagene fit, at the level it was fitted at:
+
+| term               | before | after  |
+| ------------------ | ------ | ------ |
+| `spectral_fine_db` | 0.506  | 5.160  |
+| `onset_db`         | 11.000 | 13.208 |
+| `balanced`         | 0.2223 | 0.2589 |
+
+**What moves, measured rather than assumed.** Only candidates far from their reference's level
+move at all, because only they reach the floor:
+
+- Both shipped presets are unchanged to every decimal, on every term and all three profiles.
+  They render within 0.08 dB and 3.89 dB of their references, so the floor never bit.
+- The eight Morphagene seeds, which all drifted about 37 dB down, move `balanced` by 0.037 to
+  0.039 and `spectral_fine_db` by a factor of ten.
+
+The second row is the one that matters, and not only because the numbers are larger. Before the
+fix `spectral_fine_db` read 0.506, 0.506, 0.506, 0.506, 0.506, 0.509, 0.507 and 0.512 across the
+eight seeds: the term was reporting the height of the floor plateau, which is the same whatever
+the candidate does, so it was not discriminating between candidates at all. A twelfth of the
+balanced weight was being spent on a constant.
+
+**The ranking reorders.** Best of the eight was seed-6 before and is seed-4 after; seed-8 and
+seed-6 swap as well. So numbers taken under the old arithmetic cannot be compared with numbers
+taken after it, and a conclusion drawn from them about which arm or seed won may not survive
+re-measurement. `docs/training.md`'s tables, the `engine-shape` campaign results and the score in
+every committed `preset.json` provenance block are in that position. Re-taking them is a
+campaign, not an edit.
 
 ---
 
 ## Deferred
-
-- **The spectral term's magnitude floor is absolute, so a quiet render is flattered.**
-  `linToDB` (`internal/optimizer/spectral.go:226`) clamps magnitude at `1e-5`, −100 dBFS, in the
-  candidate's own scale, and `errorDB` adds the solved gain only afterwards. A render far below
-  the reference therefore has its low bins flattened to a constant and then lifted back into a
-  plateau near the reference's floor, which scores better than its true spectrum would. Measured
-  on the seed-4 Morphagene fit: `spectral_fine_db` reads 0.506 at the level it was fitted at and
-  5.160 once the same preset carries an output gain — a factor of ten, from the floor alone. The
-  level ridge the search wanders along is therefore not flat but sloped, and it slopes toward
-  quiet, which is a large part of why that fit came out 37.11 dB down. The output gain written in
-  Phase 8.9 pins the level of what ships, so the artifact is out of the finished preset, but it
-  does not reach the search: candidates are still rendered at whatever level their amplitudes
-  give, and going quiet still buys a flattered spectral score. Fixing it means folding the gain
-  in before the floor, or making the floor relative to the candidate's own peak, and either
-  changes every score this repository has recorded — so it is a deliberate comparability break to
-  take on its own, not a patch to slip into another phase.
 
 - **A two-sample step through the squared rotation matrix** (Phase 2.4). The recursion costs
   eight cycles per sample per block pair and this halves it, at the cost of a second
@@ -1393,7 +1433,7 @@ patched:
 ## Resume Point
 
 Phases 0-4 and 6 are closed and summarised above; their detail is in [docs/](docs/). **Phases
-5, 7 and 8 are open.** Phase 8 is the one to work on, at 8.8; 8.9 is done.
+5, 7 and 8 are open.** Phase 8 is the one to work on, at 8.8; 8.9 and 8.10 are done.
 
 **Phase 8, training.** Reviewed on 2026-09-02; 8.0 is done the same day. `glockenspiel distance`
 prints every objective term for a written preset and `docs/training.md` holds the baseline for

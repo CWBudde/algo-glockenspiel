@@ -97,7 +97,7 @@ func newCompositeReference(reference []float32, sampleRate int, measurement *ana
 	}
 
 	composite.edges = envelopeEdges(len(strike), sampleRate)
-	composite.levels = envelopeLevels(strike, composite.edges)
+	composite.levels = envelopeLevels(strike, composite.edges, 1)
 	composite.floorDB = envelopeFloorDBFS
 
 	if len(composite.levels) > 0 {
@@ -110,7 +110,7 @@ func newCompositeReference(reference []float32, sampleRate int, measurement *ana
 	}
 
 	composite.onsetBands = onsetBands(sampleRate)
-	composite.onsetLevels = onsetLevels(strike, composite.onsetBands)
+	composite.onsetLevels = onsetLevels(strike, composite.onsetBands, 1)
 	composite.onsetFloor = onsetFloorDB(composite.onsetLevels)
 
 	if measurement == nil {
@@ -219,7 +219,15 @@ func envelopeEdges(length, sampleRate int) []int {
 // envelopeLevels is the RMS level in dB of each window between the edges.
 // Windows beyond the signal are left out, so the result may be shorter than
 // the edge count minus one.
-func envelopeLevels(signal []float32, edges []int) []float64 {
+//
+// gain is a linear amplitude factor, 1 for a signal already at the level it
+// should be compared at. It is squared into the mean square rather than added
+// to the levels afterwards, because powerDBFS floors at an absolute
+// envelopeFloorDBFS: a candidate floored in its own scale and lifted afterwards
+// reports a level it does not have. The effect here is far smaller than in the
+// spectral term -- a broadband window sits well above -100 dBFS even for a very
+// quiet render -- but the arithmetic is the same and so is the fix.
+func envelopeLevels(signal []float32, edges []int, gain float64) []float64 {
 	var levels []float64
 
 	for i := 0; i+1 < len(edges); i++ {
@@ -235,7 +243,7 @@ func envelopeLevels(signal []float32, edges []int) []float64 {
 			energy += value * value
 		}
 
-		levels = append(levels, powerDBFS(energy/float64(end-start)))
+		levels = append(levels, powerDBFS(gain*gain*energy/float64(end-start)))
 	}
 
 	return levels
@@ -358,7 +366,7 @@ func levelGainDB(candEnergy, refEnergy float64) float64 {
 // the gain and the reference's, over the windows both cover, with both
 // clamped to the reference's floor.
 func (r *compositeReference) envelopeError(candidate []float32, gainDB float64) float64 {
-	levels := envelopeLevels(candidate, r.edges)
+	levels := envelopeLevels(candidate, r.edges, amplitudeFactor(gainDB))
 	count := minInt(len(levels), len(r.levels))
 
 	if count == 0 {
@@ -368,7 +376,7 @@ func (r *compositeReference) envelopeError(candidate []float32, gainDB float64) 
 	var sum float64
 
 	for i := range count {
-		delta := math.Max(levels[i]+gainDB, r.floorDB) - math.Max(r.levels[i], r.floorDB)
+		delta := math.Max(levels[i], r.floorDB) - math.Max(r.levels[i], r.floorDB)
 		sum += delta * delta
 	}
 
