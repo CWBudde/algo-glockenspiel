@@ -1,0 +1,101 @@
+Pack downloaded from Freesound
+----------------------------------------
+
+"Metallophone"
+
+This Pack of sounds contains sounds by the following user:
+ - JamieBlam ( https://freesound.org/people/JamieBlam/ )
+
+You can find this pack online at: https://freesound.org/people/JamieBlam/packs/9008/
+
+
+Pack description
+----------------
+
+Metallophone hard strikes with rubber mallet.
+
+Recorded using a Rode NT-A Condenser Mic.
+
+Recorded from a C Major metallophone (no sharps or flats) so sharp and flat samples have been created by pitch shifting.
+
+
+Licenses in this Pack (see below for individual sound licenses)
+---------------------------------------------------------------
+
+Attribution 3.0: http://creativecommons.org/licenses/by/3.0/
+
+
+Sounds in this Pack
+-------------------
+
+  * 146100__jamieblam__2f_hard.wav.wav
+    * url: https://freesound.org/s/146100/
+    * license: Attribution 3.0
+  * 146099__jamieblam__2g_hard.wav.wav
+    * url: https://freesound.org/s/146099/
+    * license: Attribution 3.0
+  * 146098__jamieblam__2d_hard.wav.wav
+    * url: https://freesound.org/s/146098/
+    * license: Attribution 3.0
+  * 146097__jamieblam__2d_hard.wav.wav
+    * url: https://freesound.org/s/146097/
+    * license: Attribution 3.0
+  * 146096__jamieblam__2e_hard.wav.wav
+    * url: https://freesound.org/s/146096/
+    * license: Attribution 3.0
+  * 146095__jamieblam__2f_hard.wav.wav
+    * url: https://freesound.org/s/146095/
+    * license: Attribution 3.0
+  * 146094__jamieblam__2a_hard.wav.wav
+    * url: https://freesound.org/s/146094/
+    * license: Attribution 3.0
+  * 146093__jamieblam__2b_hard.wav.wav
+    * url: https://freesound.org/s/146093/
+    * license: Attribution 3.0
+  * 146092__jamieblam__2c_hard.wav.wav
+    * url: https://freesound.org/s/146092/
+    * license: Attribution 3.0
+  * 146091__jamieblam__2c_hard.wav.wav
+    * url: https://freesound.org/s/146091/
+    * license: Attribution 3.0
+  * 146090__jamieblam__3a_hard.wav.wav
+    * url: https://freesound.org/s/146090/
+    * license: Attribution 3.0
+  * 146089__jamieblam__2g_hard.wav.wav
+    * url: https://freesound.org/s/146089/
+    * license: Attribution 3.0
+  * 146088__jamieblam__3a_hard.wav.wav
+    * url: https://freesound.org/s/146088/
+    * license: Attribution 3.0
+  * 146087__jamieblam__1g_hard.wav.wav
+    * url: https://freesound.org/s/146087/
+    * license: Attribution 3.0
+  * 146086__jamieblam__2a_hard.wav.wav
+    * url: https://freesound.org/s/146086/
+    * license: Attribution 3.0
+  * 146084__jamieblam__1e_hard.wav.wav
+    * url: https://freesound.org/s/146084/
+    * license: Attribution 3.0
+  * 146083__jamieblam__1f_hard.wav.wav
+    * url: https://freesound.org/s/146083/
+    * license: Attribution 3.0
+  * 146082__jamieblam__1f_hard.wav.wav
+    * url: https://freesound.org/s/146082/
+    * license: Attribution 3.0
+  * 146081__jamieblam__1g_hard.wav.wav
+    * url: https://freesound.org/s/146081/
+    * license: Attribution 3.0
+  * 146080__jamieblam__1c_hard.wav.wav
+    * url: https://freesound.org/s/146080/
+    * license: Attribution 3.0
+  * 146079__jamieblam__1c_hard.wav.wav
+    * url: https://freesound.org/s/146079/
+    * license: Attribution 3.0
+  * 146078__jamieblam__1d_hard.wav.wav
+    * url: https://freesound.org/s/146078/
+    * license: Attribution 3.0
+  * 146077__jamieblam__1d_hard.wav.wav
+    * url: https://freesound.org/s/146077/
+    * license: Attribution 3.0
+
+

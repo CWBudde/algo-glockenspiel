@@ -8,6 +8,17 @@
 | `legacy_synth_a4.wav` | The same bytes under a second name | -                                  |
 | `glockenspiel_c5.wav` | A real room recording              | `assets/presets/recorded-bar.json` |
 
+Alongside them, [`packs/`](packs/) holds four Freesound packs of struck-bar
+recordings cut and named one note per file — 56 recorded notes across a
+glockenspiel, two toy glockenspiels and a metallophone, with provenance,
+licences and a measured table per pack in [`packs/README.md`](packs/README.md). Nothing in the repository
+fits against them yet; they are there so that a fit can be checked against more
+than one instrument.
+
+Note that the packs name each file by the note it **sounds**, while the three
+files above are named for the note a glockenspiel part would have **written** —
+two octaves lower. See `packs/README.md`.
+
 ## The A4 pair
 
 `legacy_synth_a4.wav` and `glockenspiel_a4.wav` are **byte-identical**
