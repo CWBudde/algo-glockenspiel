@@ -85,8 +85,8 @@ func TestApplyOutputGainUpgradesAV1Preset(t *testing.T) {
 		t.Fatalf("ApplyOutputGain: %v", err)
 	}
 
-	if candidate.Version != preset.VersionV2 {
-		t.Fatalf("preset carries a gain in version %q, want %q", candidate.Version, preset.VersionV2)
+	if candidate.Version != preset.VersionV3 {
+		t.Fatalf("preset carries a gain in version %q, want %q", candidate.Version, preset.VersionV3)
 	}
 
 	if err := preset.Validate(candidate); err != nil {

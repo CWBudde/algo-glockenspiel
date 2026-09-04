@@ -133,7 +133,7 @@ Prints the build version.
 
 Presets are JSON files holding metadata plus the full bar parameter set. The reference note stored in the preset is the scaling origin for rendering any other MIDI note.
 
-Two schema versions exist side by side. **v1** (`"version": "1.0"`) carries exactly four modes, no per-mode harmonics and a Chebyshev shaper that always sits on the excitation. **v2** (`"version": "2.0"`) adds a variable-length mode array — one to 512 modes — per-mode harmonic partials of up to 64 per mode, and an explicit shaper stage. A v1 document is held to the v1 rules, so a file that quietly grew v2 fields is reported rather than rendered differently than its version claims. Saving preserves the version a preset was loaded with; converting is explicit, through `preset.Upgrade`.
+Three schema versions exist side by side. **v1** (`"version": "1.0"`) carries exactly four modes, no per-mode harmonics and a Chebyshev shaper that always sits on the excitation. **v2** (`"version": "2.0"`) adds a variable-length mode array — one to 512 modes — per-mode harmonic partials of up to 64 per mode, and an explicit shaper stage. **v3** (`"version": "3.0"`) adds `output_gain_db`, the level the bar renders at, and is what new presets are written in. Every document is held to its own version's rules, so a file that quietly grew a newer field is reported rather than rendered differently than its version claims — which is why the gain started a version instead of extending v2: a reader that ignored it would play the preset up to 60 dB from its calibrated level without saying so. Saving preserves the version a preset was loaded with; converting is explicit, through `preset.Upgrade`.
 
 A v2 preset:
 

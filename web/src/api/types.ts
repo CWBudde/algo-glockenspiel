@@ -793,8 +793,11 @@ export interface BarParams {
  * `preset.Preset`, the body of `GET api/fit/preset` and the document the
  * optional `preset` multipart field carries.
  *
- * `version` is "1.0" or "2.0"; v2 adds the variable-length mode array,
- * per-mode harmonics and the explicit Chebyshev stage.
+ * `version` is "1.0", "2.0" or "3.0"; v2 adds the variable-length mode array,
+ * per-mode harmonics and the explicit Chebyshev stage, and v3 adds
+ * `output_gain_db`. A document is held to its own version's rules, so a
+ * calibrated preset is v3 rather than a v2 one an older reader would play at
+ * the wrong level.
  */
 export interface Preset {
   version: string;

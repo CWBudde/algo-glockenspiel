@@ -455,19 +455,23 @@ search space, and `--trimmed-out reference.wav` writes the cut itself so that `f
 
 ## Parameter Guide
 
-### The Two Schema Versions
+### The Three Schema Versions
 
-A preset declares its schema in a top-level `version` field, and the loader holds it to that version's rules rather than accepting the union of both.
+A preset declares its schema in a top-level `version` field, and the loader holds it to that version's rules rather than accepting the union of all three. A document carrying a field newer than its own version is rejected with a message naming the field, rather than rendering differently than its version claims.
 
-**v1 (`"1.0"`)** is the original schema: exactly four modes, no per-mode harmonics, and a Chebyshev shaper that always sits on the excitation. A v1 document carrying a v2-only field is rejected with a message naming the field, rather than rendering differently than its version claims.
+**v1 (`"1.0"`)** is the original schema: exactly four modes, no per-mode harmonics, and a Chebyshev shaper that always sits on the excitation.
 
-**v2 (`"2.0"`)** is what new presets are written in. It adds three things:
+**v2 (`"2.0"`)** adds three things:
 
 - a mode array of one to 512 modes, because the oscillator bank sizes itself at runtime. The bounds are real and enforced on load: an empty array is rejected by the v2 rules, and more than `model.MaxModes` (512) by `ValidateBarParams`
 - `modes[i].harmonics`, a per-mode gain list that expands that mode into one rotor per integer-multiple partial
 - `chebyshev.stage`, either `"excitation"` or `"output"`, making explicit the placement v1 left implicit
 
-Saving preserves the version a preset was loaded with, so fitting from the shipped v1 `default.json` writes a v1 result. Converting is explicit and, today, library-only: `preset.Upgrade` makes the v1 defaults explicit and restamps the document as v2. No CLI flag reaches it yet — writing a v2 preset means hand-editing the `version` field and the fields it unlocks.
+**v3 (`"3.0"`)** is what new presets are written in. It adds one field, `output_gain_db`.
+
+One field earned a version of its own because of what an older reader does with it. A v2 reader meeting `output_gain_db` accepts the document, ignores the key it does not know, and renders at unity — up to 60 dB from the level the preset was calibrated to, with nothing anywhere reporting a problem. A reader that does not know v3 refuses the document instead, which is the only safe behaviour when the unknown field decides how loud the instrument is. The rule the ladder follows: a field a reader can ignore without changing the sound may extend a version, and a field it cannot must start a new one.
+
+Saving preserves the version a preset was loaded with, so a hand-written v1 document stays v1 through a load and a save. A fit is the exception, and deliberately: it writes the level it measured, so its result is a v3 document whatever the template was. Converting on its own is explicit and, today, library-only: `preset.Upgrade` makes the v1 defaults explicit and restamps the document as v3. No CLI flag reaches it yet — writing a v3 preset by hand means editing the `version` field and the fields it unlocks.
 
 ### Fields
 
@@ -476,7 +480,7 @@ The top-level `parameters` object holds:
 - `input_mix`: amount of dry filtered excitation mixed into the resonant output
 - `filter_frequency`: lowpass cutoff for the excitation path, in Hz
 - `base_frequency`: reference tuning for the preset note. It never reaches the audio, and a fit writes the starting preset's value through rather than searching it
-- `output_gain_db`: v2 only, the level the bar renders at, in dB, bounded to ±60. Zero is unity and the field is omitted when it is zero, so a preset written without it renders exactly as it always did. A fit does not search this either: the objective solves the level in closed form and subtracts it from every term, leaving nothing to follow along it, so a fit measures the level from its finished render and writes it — targeting 3 dB below full scale at the preset's own note and velocity 127. It is a v2 field because a loader that ignored it would play the preset at the wrong level rather than refuse it
+- `output_gain_db`: v3 only, the level the bar renders at, in dB, bounded to ±60. Zero is unity and the field is omitted when it is zero, so a preset written without it renders exactly as it always did. A fit does not search this either: the objective solves the level in closed form and subtracts it from every term, leaving nothing to follow along it, so a fit measures the level from its finished render and writes it — targeting 3 dB below full scale, measured at 44.1 kHz, velocity 100 and the preset's own note. That measurement point is the one the promotion rule already uses, so a fit and the level test agree by construction; level is nonlinear in velocity, because the shaper's input clamp saturates, so the target only means something with its velocity named. It is a v3 field because a loader that ignored it would play the preset at the wrong level rather than refuse it
 - `modes`: the resonant partials, exactly four in v1 and one to 512 in v2
 - `chebyshev.enabled`: enables harmonic shaping
 - `chebyshev.stage`: v2 only, `excitation` (the v1 behaviour, and the default) or `output`

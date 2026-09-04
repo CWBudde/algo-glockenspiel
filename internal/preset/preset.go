@@ -20,8 +20,21 @@ const (
 	// and an explicit Chebyshev stage.
 	VersionV2 = "2.0"
 
+	// VersionV3 adds output_gain_db, the level the bar renders at.
+	//
+	// It is a version of its own rather than another v2 field because of what
+	// an older reader does with it. A v2 reader accepts the document, ignores
+	// the key it does not know, and renders at unity -- up to 60 dB from the
+	// level the preset was calibrated to, with no error anywhere. A reader that
+	// does not know v3 refuses the document instead, which is the only
+	// behaviour that is safe when the unknown field decides how loud the
+	// instrument is. The rule the ladder follows: a field a reader can ignore
+	// without changing the sound may extend a version; a field it cannot must
+	// start a new one.
+	VersionV3 = "3.0"
+
 	// CurrentVersion is the schema new presets are written in.
-	CurrentVersion = VersionV2
+	CurrentVersion = VersionV3
 
 	// v1ModeCount is the fixed mode count a v1 document carries. It belongs to
 	// this compatibility layer, not to the model: the bank sizes itself at
@@ -163,20 +176,19 @@ func Decode(data []byte, source string) (*Preset, error) {
 		return nil, fmt.Errorf("validate preset %q: %w", source, err)
 	}
 
-	if preset.Version == VersionV1 {
-		if err := rejectV2Fields(data); err != nil {
-			return nil, fmt.Errorf("validate preset %q: %w", source, err)
-		}
+	if err := rejectNewerFields(data, preset.Version); err != nil {
+		return nil, fmt.Errorf("validate preset %q: %w", source, err)
 	}
 
 	return &preset, nil
 }
 
-// rejectV2Fields reports a v2-only field that is present in a v1 document. The
-// value checks in validateV1 cannot do this on their own: an explicit
-// "stage": "" or "harmonics": [] is indistinguishable from an omitted field
-// once it has been decoded, so presence has to be read off the raw JSON.
-func rejectV2Fields(data []byte) error {
+// rejectNewerFields reports a field that is present in a document older than
+// the version that introduced it. The value checks in validateV1 and
+// validateV2 cannot do this on their own: an explicit "stage": "",
+// "harmonics": [] or "output_gain_db": 0 is indistinguishable from an omitted
+// field once it has been decoded, so presence has to be read off the raw JSON.
+func rejectNewerFields(data []byte, version string) error {
 	var raw struct {
 		Parameters struct {
 			Modes []struct {
@@ -193,18 +205,20 @@ func rejectV2Fields(data []byte) error {
 		return fmt.Errorf("decode schema fields: %w", err)
 	}
 
-	for i, mode := range raw.Parameters.Modes {
-		if mode.Harmonics != nil {
-			return fmt.Errorf("modes[%d].harmonics needs version %s", i, VersionV2)
+	if version == VersionV1 {
+		for i, mode := range raw.Parameters.Modes {
+			if mode.Harmonics != nil {
+				return fmt.Errorf("modes[%d].harmonics needs version %s", i, VersionV2)
+			}
+		}
+
+		if raw.Parameters.Chebyshev.Stage != nil {
+			return fmt.Errorf("chebyshev.stage needs version %s", VersionV2)
 		}
 	}
 
-	if raw.Parameters.Chebyshev.Stage != nil {
-		return fmt.Errorf("chebyshev.stage needs version %s", VersionV2)
-	}
-
-	if raw.Parameters.OutputGainDB != nil {
-		return fmt.Errorf("output_gain_db needs version %s", VersionV2)
+	if version != VersionV3 && raw.Parameters.OutputGainDB != nil {
+		return fmt.Errorf("output_gain_db needs version %s", VersionV3)
 	}
 
 	return nil
@@ -213,7 +227,9 @@ func rejectV2Fields(data []byte) error {
 // Upgrade returns an equivalent preset in the current schema version. The v1
 // defaults it makes explicit -- the excitation-stage shaper, no per-mode
 // harmonics -- are exactly the ones the v1 loader applies, so the upgraded
-// preset renders identically to the original.
+// preset renders identically to the original. A v2 document needs nothing made
+// explicit: v3 adds a field whose zero value is unity, so restamping it is
+// enough.
 func Upgrade(preset *Preset) (*Preset, error) {
 	if err := Validate(preset); err != nil {
 		return nil, err
@@ -293,8 +309,11 @@ func validateSchema(preset *Preset) error {
 		return validateV1(&preset.Parameters)
 	case VersionV2:
 		return validateV2(&preset.Parameters)
+	case VersionV3:
+		return validateV3(&preset.Parameters)
 	default:
-		return fmt.Errorf("unsupported version %q, want %q or %q", preset.Version, VersionV1, VersionV2)
+		return fmt.Errorf("unsupported version %q, want %q, %q or %q",
+			preset.Version, VersionV1, VersionV2, VersionV3)
 	}
 }
 
@@ -315,13 +334,28 @@ func validateV1(params *model.BarParams) error {
 	}
 
 	if params.OutputGainDB != 0 {
-		return fmt.Errorf("output_gain_db needs version %s", VersionV2)
+		return fmt.Errorf("output_gain_db needs version %s", VersionV3)
 	}
 
 	return nil
 }
 
 func validateV2(params *model.BarParams) error {
+	if len(params.Modes) == 0 {
+		return errors.New("at least one mode is required")
+	}
+
+	if params.OutputGainDB != 0 {
+		return fmt.Errorf("output_gain_db needs version %s", VersionV3)
+	}
+
+	return nil
+}
+
+// validateV3 holds a v3 document to the v2 rules; the only thing v3 adds is
+// output_gain_db, which every version validates for range in
+// model.ValidateBarParams.
+func validateV3(params *model.BarParams) error {
 	if len(params.Modes) == 0 {
 		return errors.New("at least one mode is required")
 	}
