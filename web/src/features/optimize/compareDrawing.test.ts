@@ -65,12 +65,10 @@ describe("sharedAmplitudeRange", () => {
 
 describe("waveformPoints", () => {
   it("centres each column and maps the shared range to the full height", () => {
-    const points = waveformPoints(
-      waveform([-1, 0], [1, 0]),
-      100,
-      50,
-      { min: -1, max: 1 },
-    );
+    const points = waveformPoints(waveform([-1, 0], [1, 0]), 100, 50, {
+      min: -1,
+      max: 1,
+    });
 
     expect(points).toHaveLength(2);
     // Column 0 spans [0, 50), centred at x = 25; column 1 at x = 75.
@@ -113,20 +111,20 @@ describe("waveformPoints", () => {
   });
 
   it("answers no points for an empty waveform rather than dividing by zero", () => {
-    expect(waveformPoints(waveform([], []), 100, 50, { min: -1, max: 1 })).toEqual(
-      [],
-    );
+    expect(
+      waveformPoints(waveform([], []), 100, 50, { min: -1, max: 1 }),
+    ).toEqual([]);
   });
 });
 
 describe("sharedSpectrogramPeakDb", () => {
   it("takes the louder of the two sides' peaks", () => {
-    expect(sharedSpectrogramPeakDb(-60, spectrogram(-10), spectrogram(-25))).toBe(
-      -10,
-    );
-    expect(sharedSpectrogramPeakDb(-60, spectrogram(-25), spectrogram(-10))).toBe(
-      -10,
-    );
+    expect(
+      sharedSpectrogramPeakDb(-60, spectrogram(-10), spectrogram(-25)),
+    ).toBe(-10);
+    expect(
+      sharedSpectrogramPeakDb(-60, spectrogram(-25), spectrogram(-10)),
+    ).toBe(-10);
   });
 
   it("falls back to the floor when neither side has a spectrogram", () => {
@@ -197,13 +195,7 @@ describe("waveformSummary and spectrogramSummary", () => {
   });
 
   it("reports the shared dB range alongside this side's own peak", () => {
-    const text = spectrogramSummary(
-      "Render",
-      2.5,
-      spectrogram(-18),
-      -60,
-      -10,
-    );
+    const text = spectrogramSummary("Render", 2.5, spectrogram(-18), -60, -10);
 
     expect(text).toContain("-60.0 to -10.0 dB");
     expect(text).toContain("-18.0 dB");

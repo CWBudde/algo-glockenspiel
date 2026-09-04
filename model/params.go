@@ -102,6 +102,20 @@ const (
 	DecayMsSearchMin = 0.5
 	DecayMsSearchMax = 2000.0
 
+	// OutputGainDBMin and OutputGainDBMax bound BarParams.OutputGainDB, the
+	// level the finished bar is rendered at. Enforced by ValidateBarParams.
+	//
+	// The range is wide because it is the one parameter that has to absorb an
+	// arbitrary mismatch rather than describe a physical property. A fit scores
+	// its candidates with the level solved in closed form and divided out, so
+	// the search is free to drift in level and does: the best fit of the
+	// Morphagene c6 recording landed 37.11 dB below its reference. Sixty dB
+	// each way covers that with room to spare while still being a bound, so a
+	// fit that has gone somewhere strange reports the clamp instead of
+	// silently asking for a factor of a million.
+	OutputGainDBMin = -60.0
+	OutputGainDBMax = 60.0
+
 	// HarmonicGainMin and HarmonicGainMax bound both sets of harmonic gains --
 	// ModeParams.Harmonics, the partials riding on one mode, and
 	// ChebyshevParams.HarmonicGains, the waveshaper's terms. Enforced by
@@ -206,6 +220,22 @@ type BarParams struct {
 	BaseFrequency   float64         `json:"base_frequency"`
 	Modes           []ModeParams    `json:"modes"`
 	Chebyshev       ChebyshevParams `json:"chebyshev"`
+
+	// OutputGainDB is the level the finished bar renders at, in dB. Zero is
+	// unity, which is why it is omitempty: every preset written before this
+	// field existed renders exactly as it did.
+	//
+	// It is the one parameter a fit does not search. The objective solves the
+	// level in closed form and subtracts it from every spectral, envelope and
+	// onset term, so level is a flat ridge in the search -- the same shape as
+	// BaseFrequency, and excluded for the same reason. Searching it would buy
+	// a dimension with no gradient. The fit measures it instead, once, from
+	// the render it already performs.
+	//
+	// Transposition leaves it alone. A bar an octave down rings longer and
+	// lower, which is why DecayMs and Frequency scale, but it does not get
+	// louder for being transposed.
+	OutputGainDB float64 `json:"output_gain_db,omitempty"`
 }
 
 // Clone returns a deep copy, safe to mutate independently of the original.
@@ -255,6 +285,7 @@ func (p *BarParams) CopyInto(dst *BarParams) {
 	dst.InputMix = p.InputMix
 	dst.FilterFrequency = p.FilterFrequency
 	dst.BaseFrequency = p.BaseFrequency
+	dst.OutputGainDB = p.OutputGainDB
 
 	if p.Modes == nil {
 		dst.Modes = nil
@@ -329,6 +360,10 @@ func ValidateBarParams(params *BarParams) error {
 	}
 
 	if err := validateFiniteRange("base_frequency", params.BaseFrequency, FrequencyMinHz, FrequencyMaxHz); err != nil {
+		return err
+	}
+
+	if err := validateFiniteRange("output_gain_db", params.OutputGainDB, OutputGainDBMin, OutputGainDBMax); err != nil {
 		return err
 	}
 

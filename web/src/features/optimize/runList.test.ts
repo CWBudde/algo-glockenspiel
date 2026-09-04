@@ -104,7 +104,10 @@ describe("runElapsedMs", () => {
   });
 
   it("measures a run still going against the supplied now", () => {
-    const running = job({ state: "running", startedAt: "2026-09-04T10:00:00Z" });
+    const running = job({
+      state: "running",
+      startedAt: "2026-09-04T10:00:00Z",
+    });
     const now = Date.parse("2026-09-04T10:00:07Z");
 
     expect(runElapsedMs(running, now)).toBe(7000);

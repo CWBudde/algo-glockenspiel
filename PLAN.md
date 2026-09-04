@@ -26,7 +26,7 @@ A small, fast, SIMD-friendly oscillator bank and the tooling around it:
 | 5     | Web app                      | open — 5.1–5.6 done; payload size remains |
 | 6     | Split out VST3               | done                                      |
 | 7     | Documentation                | open — 7.1 and 7.2 done                   |
-| 8     | Training                     | open — 8.0 to 8.7 done, 8.8 open          |
+| 8     | Training                     | open — 8.0–8.7 and 8.9 done, 8.8 open     |
 
 Closed phases are summarised here and documented in full under [docs/](docs/); the detail that
 was in this file has moved there rather than been dropped.
@@ -1265,17 +1265,94 @@ and the reference's provenance all change, and it would still leave campaign run
       the freshness window is the fallback for when they do anyway. Following a directory makes
       the shared case work rather than merely survive, so the warning is rewritten, not deleted.
 
+### Phase 8.9: An output gain, so a fit can be shipped
+
+**Done.** A preset carries the level it renders at, and a fit writes it.
+
+`BarParams.OutputGainDB` (`output_gain_db`, ±60 dB, omitted at zero) is a **v3** field. Every
+preset written before it existed renders bit-identically.
+
+It started a schema version rather than extending v2, which is where review put it and where the
+first draft had it. Rejecting it in a v1 document protects this repository's own loader and
+nothing else: a v2 reader built before the field existed accepts the document, ignores the key it
+does not know, validates the resulting zero, and renders at unity — up to 60 dB from the level
+the preset was calibrated to, silently. `model/` is tagged `v0.1.0` and a second module builds
+against it, so such readers are not hypothetical. The rule the ladder follows from here: a field
+a reader can ignore without changing the sound may extend a version, and a field it cannot must
+start a new one.
+
+- [x] The gain is solved, not searched. The objective already computes the level in closed form
+      and subtracts it from every term, so a searched gain would have no gradient — it is a gauge
+      dimension of exactly the kind `base_frequency` is excluded for (`params.go:11-19`). Nothing
+      entered the search space: `codec.Dimension()` is unchanged.
+- [x] It costs nothing per sample. `model.Bar` folds it into coefficients it already computes
+      once per retune — the mode amplitudes where the chain after the bank is linear, the
+      shaper's own gains where the shaper sits after the bank, the dry mix either way. The three
+      cases are needed because the shaper is a nonlinearity in the middle of the chain, and
+      `TestOutputGainIsExactlyAScalarOnTheOutput` pins the property the fold rests on: a bar at
+      gain G renders G times what the same bar renders at unity, in every configuration.
+- [x] The codec carries it (`ParamCodec.outputGainDB`). It is not searched, but a decoded
+      candidate has to describe the same sound as its template; while it did not,
+      `glockenspiel distance` reported a fitted preset's render peak 28 dB below where the preset
+      actually plays, and said nothing, because the objective divides the level out again.
+- [x] Both fit write paths measure and write it, at −3 dBFS. The target is not a new number: it
+      is the rule the shipped presets already follow, asserted by
+      `TestBuiltinPresetsRenderNearMinusThreeDBFS`, and the constant now has one home in
+      `internal/synth/level.go` that both the fit and that assertion read. The calibration
+      conditions are fixed at 44.1 kHz and velocity 100 rather than taken from the fit, because
+      the peak is rate-dependent — 48 kHz runs about 0.7 dB hotter, three times the tolerance —
+      so solving at the fit's own rate would have produced presets that failed the promotion rule
+      for a reason that has nothing to do with the preset.
+- [x] The version ladder carries it. `VersionV3` is the version new presets are written in;
+      `rejectNewerFields` reads the raw JSON so that an explicit `"output_gain_db": 0` in a v2
+      document is caught too, which the decoded value cannot distinguish from an omitted field;
+      and `Upgrade` restamps a v1 or v2 document without changing what it renders.
+      `TestV2RejectsTheOutputGain` pins the reason the version exists. A preset that needs no
+      gain is left at whatever version it arrived in, so nothing that could be read before
+      becomes unreadable.
+- [x] Every path that hands a preset to a listener calibrates it, the browser included. The
+      browser fitter decodes an optimizer point straight into a downloadable and auditionable
+      preset, so for a while it was the one path that shipped the drifted level — the exact
+      failure the phase exists to fix. `browserfit.Calibrate` sits at the single choke point both
+      the download and the audition pass through, rather than on the progress path, which decodes
+      a preset on every optimizer report.
+- [x] The blocked artifact is unblocked. `out/morphagene/seed-4/c6.json` carries
+      `output_gain_db +30.25` and renders at exactly −3.000 dBFS at its own note; its `gain_db`
+      against the Morphagene c6 reference falls from +37.10 to +6.85 and its render peak from
+      −36.07 to −5.82 dBFS.
+
+Two things this pass found that were not what the phase set out to fix, both recorded rather than
+patched:
+
+- The waveform term cannot see a polarity flip: `cross` enters the residual squared, so negating
+  a candidate leaves the score exactly where it was. The projection is now clamped at zero, but
+  measured against every fixture the clamp moves no number — `BestLag` maximises the _signed_
+  correlation and so never hands the residual a negative `cross`. It is a guard against a latent
+  trap, not a live fix, and what actually punishes a flip is the alignment: above about 340 Hz the
+  aligner slides the inversion away and it costs 0.28, below that it cannot and it costs 0.99.
+  Making the first case expensive means scoring the lag itself, which is a different change.
+- The spectral term's absolute magnitude floor rewards a quiet render. See Deferred; it is the
+  reason the level ridge slopes rather than lies flat, and it is the larger of the two.
+
+---
+
 ## Deferred
 
-- **An output gain the model can express** (review finding 6, promoted to a blocker on
-  2026-09-03). `BarParams` has no output gain, mode amplitudes are bounded at ±2 and `input_mix`
-  at 2, so a preset cannot be made louder than the modes reach. The reference loader
-  peak-normalises, the objective divides out a least-squares gain before scoring, and the two
-  together mean every fit against `glockenspiel_c5.wav` lands about 25 dB below the shipped
-  presets with nothing in its score saying so. This now blocks a shipped artifact: Phase 8.6's
-  `recorded-bar` refit beats the shipped preset by 62% on `balanced` and cannot replace it. The
-  fix is algo-piano's — solve the gain in closed form and store it — and it changes what a preset
-  means, so it does not belong inside 8.6.
+- **The spectral term's magnitude floor is absolute, so a quiet render is flattered.**
+  `linToDB` (`internal/optimizer/spectral.go:226`) clamps magnitude at `1e-5`, −100 dBFS, in the
+  candidate's own scale, and `errorDB` adds the solved gain only afterwards. A render far below
+  the reference therefore has its low bins flattened to a constant and then lifted back into a
+  plateau near the reference's floor, which scores better than its true spectrum would. Measured
+  on the seed-4 Morphagene fit: `spectral_fine_db` reads 0.506 at the level it was fitted at and
+  5.160 once the same preset carries an output gain — a factor of ten, from the floor alone. The
+  level ridge the search wanders along is therefore not flat but sloped, and it slopes toward
+  quiet, which is a large part of why that fit came out 37.11 dB down. The output gain written in
+  Phase 8.9 pins the level of what ships, so the artifact is out of the finished preset, but it
+  does not reach the search: candidates are still rendered at whatever level their amplitudes
+  give, and going quiet still buys a flattered spectral score. Fixing it means folding the gain
+  in before the floor, or making the floor relative to the candidate's own peak, and either
+  changes every score this repository has recorded — so it is a deliberate comparability break to
+  take on its own, not a patch to slip into another phase.
 
 - **A two-sample step through the squared rotation matrix** (Phase 2.4). The recursion costs
   eight cycles per sample per block pair and this halves it, at the cost of a second
@@ -1316,7 +1393,7 @@ and the reference's provenance all change, and it would still leave campaign run
 ## Resume Point
 
 Phases 0-4 and 6 are closed and summarised above; their detail is in [docs/](docs/). **Phases
-5, 7 and 8 are open.** Phase 8 is the one to work on, at 8.8.
+5, 7 and 8 are open.** Phase 8 is the one to work on, at 8.8; 8.9 is done.
 
 **Phase 8, training.** Reviewed on 2026-09-02; 8.0 is done the same day. `glockenspiel distance`
 prints every objective term for a written preset and `docs/training.md` holds the baseline for
@@ -1396,8 +1473,8 @@ machine lacks the faces the baselines assume, so they need regenerating where th
 installed. And the debt 8.6 named still stands: the CLI defaults to `mayfly` while the browser fit
 still chooses its own backend. Item 4 unified the tables and the names, not the choice, because
 `internal/browserfit` cannot import `internal/fitrun` without pulling the filesystem into WASM.
-Separately, an output gain remains the one thing standing between a measured refit and a shipped
-preset.
+The output gain that used to stand between a measured refit and a shipped preset is done — see
+8.9 below.
 
 **8.8 is open.** A fit started from the terminal still leaves nothing the server can show. The
 cause is the last of the three parallel pipelines: `glockenspiel fit` never moved onto

@@ -75,7 +75,9 @@ export interface ScalarRow {
  * `base_frequency` is never a search dimension -- it is fixed by the note the
  * fit ran against, not fitted -- so it never carries a pin; it is included
  * here anyway because it is part of the preset a reader wants beside the
- * modes it seeded.
+ * modes it seeded. `output_gain_db` is the same shape for the same reason: the
+ * objective solves the level and subtracts it, so it is measured after the
+ * search rather than found by it, and it never carries a pin either.
  */
 export function scalarRows(
   parameters: BarParams,
@@ -101,6 +103,13 @@ export function scalarRows(
       label: "Base frequency",
       value: parameters.base_frequency,
       unit: "Hz",
+      pin: null,
+    },
+    {
+      key: "output_gain_db",
+      label: "Output gain",
+      value: parameters.output_gain_db ?? 0,
+      unit: "dB",
       pin: null,
     },
   ];

@@ -1,8 +1,10 @@
 package browserfit_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -330,4 +332,63 @@ func testReference(t *testing.T) (templateData, referenceData []byte) {
 	}
 
 	return templateData, referenceData
+}
+
+// TestCalibrateGivesABrowserFitTheHouseLevel pins the browser path to the same
+// level rule the CLI and the campaign harness follow. It is the path that was
+// missed when the gain was introduced: the browser decodes an optimizer point
+// straight into a downloadable preset, so without this the level a search drifts
+// to is the level a listener gets.
+func TestCalibrateGivesABrowserFitTheHouseLevel(t *testing.T) {
+	t.Parallel()
+
+	fitted, err := preset.Load(filepath.FromSlash("../../assets/presets/default.json"))
+	if err != nil {
+		t.Fatalf("load default: %v", err)
+	}
+
+	// A hundredfold down, which is the shape of the drift this guards against.
+	// The dry mix carries no mode amplitudes, so it has to come down with them.
+	fitted.Parameters.InputMix /= 100
+	for i := range fitted.Parameters.Modes {
+		fitted.Parameters.Modes[i].Amplitude /= 100
+	}
+
+	if err := browserfit.Calibrate(fitted); err != nil {
+		t.Fatalf("calibrate: %v", err)
+	}
+
+	if fitted.Version != preset.VersionV3 {
+		t.Fatalf("calibrated preset is version %q, want %q", fitted.Version, preset.VersionV3)
+	}
+
+	if fitted.Parameters.OutputGainDB == 0 {
+		t.Fatal("a preset a hundredfold down was left at unity gain")
+	}
+
+	// The gain is only worth writing if it lands: render the calibrated preset
+	// the way the browser auditions it and measure what comes out.
+	data, err := browserfit.Render(fitted, 44100, fitted.Note, 100, 2*time.Second)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	samples, _, err := wavio.DecodeMono(bytes.NewReader(data), "render")
+	if err != nil {
+		t.Fatalf("decode render: %v", err)
+	}
+
+	var peak float64
+
+	for _, sample := range samples {
+		if magnitude := math.Abs(float64(sample)); magnitude > peak {
+			peak = magnitude
+		}
+	}
+
+	peakDBFS := 20 * math.Log10(peak)
+	if math.Abs(peakDBFS-synth.PresetPeakTargetDBFS) > synth.PresetPeakToleranceDB {
+		t.Fatalf("calibrated render peaks at %.3f dBFS, want %.1f +/- %.2f",
+			peakDBFS, synth.PresetPeakTargetDBFS, synth.PresetPeakToleranceDB)
+	}
 }

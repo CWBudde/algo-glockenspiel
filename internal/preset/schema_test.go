@@ -70,13 +70,13 @@ func TestShippedPresetsMatchTheirDeclaredSchema(t *testing.T) {
 				t.Fatalf("%s: stage = %q, want the v1 excitation placement",
 					path, loaded.Parameters.Chebyshev.ResolvedStage())
 			}
-		case preset.VersionV2:
+		case preset.VersionV2, preset.VersionV3:
 			if len(loaded.Parameters.Modes) == 0 {
 				t.Fatalf("%s: no modes", path)
 			}
 		default:
-			t.Fatalf("%s: version = %q, want %q or %q",
-				path, loaded.Version, preset.VersionV1, preset.VersionV2)
+			t.Fatalf("%s: version = %q, want %q, %q or %q",
+				path, loaded.Version, preset.VersionV1, preset.VersionV2, preset.VersionV3)
 		}
 	}
 }
@@ -114,8 +114,8 @@ func TestUpgradePreservesParameters(t *testing.T) {
 			t.Fatalf("upgrade %s: %v", path, err)
 		}
 
-		if upgraded.Version != preset.VersionV2 {
-			t.Fatalf("%s: upgraded version = %q, want %q", path, upgraded.Version, preset.VersionV2)
+		if upgraded.Version != preset.CurrentVersion {
+			t.Fatalf("%s: upgraded version = %q, want %q", path, upgraded.Version, preset.CurrentVersion)
 		}
 
 		// The upgrade fills in the stage the v1 loader implies; everything else
@@ -154,6 +154,9 @@ func TestV1RejectsV2OnlyFields(t *testing.T) {
 		"extra mode": func(p *preset.Preset) {
 			p.Parameters.Modes = append(p.Parameters.Modes, p.Parameters.Modes[0])
 		},
+		"output gain": func(p *preset.Preset) {
+			p.Parameters.OutputGainDB = 6
+		},
 	}
 
 	for name, mutate := range cases {
@@ -173,14 +176,53 @@ func TestV1RejectsV2OnlyFields(t *testing.T) {
 			mutate(upgraded)
 
 			if err := preset.Validate(upgraded); err != nil {
-				t.Fatalf("v2 should accept this: %v", err)
+				t.Fatalf("the current version should accept this: %v", err)
 			}
 		})
 	}
 }
 
+// TestV2RejectsTheOutputGain pins the reason output_gain_db started a version
+// rather than extending v2: a v2 reader that met the field would ignore it and
+// render at unity, so a document carrying it must not call itself v2.
+func TestV2RejectsTheOutputGain(t *testing.T) {
+	base, err := preset.Load(filepath.FromSlash("../../assets/presets/default.json"))
+	if err != nil {
+		t.Fatalf("load default: %v", err)
+	}
+
+	upgraded, err := preset.Upgrade(base)
+	if err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+
+	candidate := upgraded.Clone()
+	candidate.Version = preset.VersionV2
+	candidate.Parameters.OutputGainDB = 6
+
+	if err := preset.Validate(candidate); err == nil {
+		t.Fatal("expected a v2 schema error for output_gain_db")
+	} else if !strings.Contains(err.Error(), preset.VersionV3) {
+		t.Fatalf("the error should name version %s: %v", preset.VersionV3, err)
+	}
+
+	// An explicit zero is indistinguishable from an omitted field once decoded,
+	// so the presence check has to read the raw JSON. Decode is the only place
+	// that can catch it.
+	data := []byte(`{"version":"2.0","name":"x","note":69,"parameters":{` +
+		`"input_mix":0.1,"filter_frequency":1000,"base_frequency":440,` +
+		`"output_gain_db":0,` +
+		`"modes":[{"amplitude":0.5,"frequency":440,"decay_ms":50}]}}`)
+
+	if _, err := preset.Decode(data, "test"); err == nil {
+		t.Fatal("expected an explicit zero output_gain_db to be rejected in a v2 document")
+	} else if !strings.Contains(err.Error(), "output_gain_db") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestUnsupportedVersionIsRejected(t *testing.T) {
-	data := []byte(`{"version":"3.0","name":"x","note":69,"parameters":{}}`)
+	data := []byte(`{"version":"9.0","name":"x","note":69,"parameters":{}}`)
 
 	if _, err := preset.Decode(data, "test"); err == nil {
 		t.Fatal("expected an unsupported-version error")
@@ -278,6 +320,9 @@ func TestV1RejectsV2FieldsPresentButEmpty(t *testing.T) {
 			modes, _ := params["modes"].([]any)
 			mode, _ := modes[0].(map[string]any)
 			mode["harmonics"] = []any{}
+		},
+		"zero output gain": func() {
+			params["output_gain_db"] = 0
 		},
 	}
 

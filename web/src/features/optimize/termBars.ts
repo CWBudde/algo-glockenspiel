@@ -90,7 +90,8 @@ export function termContributions(
   const raw = profile.terms.map((term) => {
     const wire = metrics[term.term];
     const value = isMeasured(wire) ? wire : null;
-    const scaled = value !== null && term.norm > 0 ? saturate(value / term.norm) : 0;
+    const scaled =
+      value !== null && term.norm > 0 ? saturate(value / term.norm) : 0;
 
     return {
       term: term.term,

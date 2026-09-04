@@ -1311,8 +1311,8 @@ func TestRunFitSeedsTheModesFromTheReference(t *testing.T) {
 
 	// The minimal preset sounds one mode, so the analysis lists one partial
 	// and the fit searches one mode -- in a v2 preset, since v1 holds four.
-	if len(fitted.Parameters.Modes) != 1 || fitted.Version != preset.VersionV2 {
-		t.Fatalf("fitted preset has %d modes in version %q, want 1 in %q", len(fitted.Parameters.Modes), fitted.Version, preset.VersionV2)
+	if len(fitted.Parameters.Modes) != 1 || fitted.Version != preset.CurrentVersion {
+		t.Fatalf("fitted preset has %d modes in version %q, want 1 in %q", len(fitted.Parameters.Modes), fitted.Version, preset.CurrentVersion)
 	}
 
 	for _, want := range []string{"modes: 1 seeded from the reference's partials", "pinned: "} {
@@ -1350,7 +1350,11 @@ func TestRunFitSeedsTheModesFromTheReference(t *testing.T) {
 		t.Fatalf("the resumed run did not seed the checkpoint's one mode:\n%s", out.String())
 	}
 
-	// Keeping the template's modes is a choice, and it keeps the version.
+	// Keeping the template's modes is a choice, and the mode count is what it
+	// keeps. The version moves regardless, because every fit now writes the
+	// level it renders at and an output gain is a v2 field: a v1 loader that
+	// ignored it would play the preset at the wrong level rather than refuse
+	// it. See synth.ApplyOutputGain.
 	kept := baseFitOptions(referencePath, filepath.Join(dir, "kept.json"), filepath.Join(dir, "work-kept"))
 	kept.modes = optimizer.KeepTemplateModes
 
@@ -1365,8 +1369,16 @@ func TestRunFitSeedsTheModesFromTheReference(t *testing.T) {
 		t.Fatalf("load kept preset: %v", err)
 	}
 
-	if len(keptPreset.Parameters.Modes) != 4 || keptPreset.Version != preset.VersionV1 {
-		t.Fatalf("kept preset has %d modes in version %q, want the template's 4 in %q", len(keptPreset.Parameters.Modes), keptPreset.Version, preset.VersionV1)
+	if len(keptPreset.Parameters.Modes) != 4 {
+		t.Fatalf("kept preset has %d modes, want the template's 4", len(keptPreset.Parameters.Modes))
+	}
+
+	if keptPreset.Version != preset.CurrentVersion {
+		t.Fatalf("kept preset is version %q, want %q: it carries an output gain", keptPreset.Version, preset.CurrentVersion)
+	}
+
+	if keptPreset.Parameters.OutputGainDB == 0 {
+		t.Fatal("kept preset carries no output gain, so nothing set the level it renders at")
 	}
 
 	if !strings.Contains(out.String(), "modes: keeping the preset's 4") {

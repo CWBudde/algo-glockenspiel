@@ -18,8 +18,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/../.." && pwd)"
 
 fallback() {
-  echo "playwright-go-server: $1; the real-fit spec will skip itself" >&2
-  exec node -e '
+	echo "playwright-go-server: $1; the real-fit spec will skip itself" >&2
+	exec node -e '
     require("http")
       .createServer((_request, response) => {
         response.writeHead(200, { "content-type": "application/json" });
@@ -30,7 +30,7 @@ fallback() {
 }
 
 if ! command -v go >/dev/null 2>&1; then
-  fallback "no go toolchain on PATH"
+	fallback "no go toolchain on PATH"
 fi
 
 scratch="$(mktemp -d -t glockenspiel-playwright-fit.XXXXXX)"
@@ -40,7 +40,7 @@ bin="$scratch/glockenspiel-fit-server"
 # tracked build artifact (`glockenspiel-fit-wasm`) that a bare `go build`
 # would silently overwrite.
 if ! (cd "$repo_root" && go build -o "$bin" ./cmd/glockenspiel) 1>&2; then
-  fallback "go build ./cmd/glockenspiel failed"
+	fallback "go build ./cmd/glockenspiel failed"
 fi
 
 # --dist is not needed for anything this test exercises -- the app itself is

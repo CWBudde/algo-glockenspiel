@@ -113,6 +113,10 @@ func finish(
 		fitted.Name = spec.Name
 	}
 
+	if err := setOutputGain(&fitted, out); err != nil {
+		return nil, err
+	}
+
 	fitted.Provenance, err = provenanceFor(spec, config.Identity, prepared.reference, summary, *chosen)
 	if err != nil {
 		return nil, err

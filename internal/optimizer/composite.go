@@ -278,8 +278,34 @@ func (r *compositeReference) measure(rendered, reference []float32, plan *Alignm
 
 	if refEnergy > 0 {
 		residual := refEnergy
+
 		if candEnergy > 0 {
-			residual = math.Max(0, refEnergy-cross*cross/candEnergy)
+			// The projection is clamped at zero so that a negative
+			// correlation cannot be squared back into a reward.
+			//
+			// cross enters the residual squared, so the formula on its own
+			// cannot tell an inverted candidate from a correct one: negating
+			// the render negates cross and leaves refEnergy -
+			// cross^2/candEnergy exactly where it was. The term that exists to
+			// be the phase-sensitive one is the one term whose arithmetic
+			// cannot see a phase flip.
+			//
+			// This is a guard, not a fix for a live defect, and it is worth
+			// being precise about which. In practice the flip is caught one
+			// stage earlier: BestLag maximises the *signed* correlation, so it
+			// lands on a positively correlated lag whenever one exists within
+			// its search range, and cross arrives here positive. On every
+			// fixture in composite_test.go it does, and the clamp changes no
+			// number. What it removes is the trap: the alignment is what makes
+			// the sign safe, so any change to how a lag is chosen -- a
+			// different mode, a narrower range, a caller passing lag zero --
+			// silently hands this expression a negative cross, and squaring it
+			// would score an upside-down render as a good one.
+			//
+			// TestWaveformTermCostsAPhaseFlip pins what a flip actually costs,
+			// which depends on whether the aligner can slide it away.
+			projection := math.Max(0, cross)
+			residual = math.Max(0, refEnergy-projection*projection/candEnergy)
 		}
 
 		metrics.Waveform = math.Sqrt(residual / refEnergy)

@@ -57,9 +57,7 @@ export function runStateLabel(state: FitState): string {
  * terminal rows has nothing to refresh for.
  */
 export function hasActiveRun(jobs: readonly FitJobListEntry[]): boolean {
-  return jobs.some(
-    (job) => job.state === "queued" || job.state === "running",
-  );
+  return jobs.some((job) => job.state === "queued" || job.state === "running");
 }
 
 /**
@@ -72,8 +70,7 @@ export function hasActiveRun(jobs: readonly FitJobListEntry[]): boolean {
  */
 export function runElapsedMs(job: FitJobListEntry, now: number): number {
   const started = Date.parse(job.startedAt);
-  const ended =
-    job.finishedAt === undefined ? now : Date.parse(job.finishedAt);
+  const ended = job.finishedAt === undefined ? now : Date.parse(job.finishedAt);
 
   return Math.max(0, ended - started);
 }

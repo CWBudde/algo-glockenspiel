@@ -49,7 +49,11 @@ function ParamCell({
   pin: PinInfo | null;
 }) {
   return (
-    <td className="param-cell" data-pinned={pin !== null} data-bound={pin?.bound}>
+    <td
+      className="param-cell"
+      data-pinned={pin !== null}
+      data-bound={pin?.bound}
+    >
       {formatParamNumber(value)}
       {unit !== undefined && unit !== "" ? ` ${unit}` : ""}
       {pin !== null && (
@@ -137,7 +141,10 @@ export function ParameterTable({
 
   if (jobId === null || !hasPreset) {
     return (
-      <section className="fit-parameters" aria-labelledby="parameter-table-heading">
+      <section
+        className="fit-parameters"
+        aria-labelledby="parameter-table-heading"
+      >
         <h3 id="parameter-table-heading">Parameters</h3>
         <p className="optimize-note">
           There is nothing to show yet. The fitted parameters become available
@@ -149,7 +156,10 @@ export function ParameterTable({
 
   if (read === null || read.jobId !== jobId) {
     return (
-      <section className="fit-parameters" aria-labelledby="parameter-table-heading">
+      <section
+        className="fit-parameters"
+        aria-labelledby="parameter-table-heading"
+      >
         <h3 id="parameter-table-heading">Parameters</h3>
         <p className="optimize-note">Loading the fitted parameters…</p>
       </section>
@@ -158,7 +168,10 @@ export function ParameterTable({
 
   if (read.error !== null || read.parameters === null) {
     return (
-      <section className="fit-parameters" aria-labelledby="parameter-table-heading">
+      <section
+        className="fit-parameters"
+        aria-labelledby="parameter-table-heading"
+      >
         <h3 id="parameter-table-heading">Parameters</h3>
         <p className="fit-status-error">
           {read.error ?? "the parameters could not be read"}
@@ -174,7 +187,10 @@ export function ParameterTable({
   const gains = harmonicGainRows(parameters, pinnedByName);
 
   return (
-    <section className="fit-parameters" aria-labelledby="parameter-table-heading">
+    <section
+      className="fit-parameters"
+      aria-labelledby="parameter-table-heading"
+    >
       <h3 id="parameter-table-heading">Parameters</h3>
 
       <p className="optimize-note">
@@ -225,7 +241,9 @@ export function ParameterTable({
 
       {gains.length > 0 && (
         <table className="param-table">
-          <caption className="visually-hidden">Chebyshev harmonic gains</caption>
+          <caption className="visually-hidden">
+            Chebyshev harmonic gains
+          </caption>
           <thead>
             <tr>
               <th scope="col">Harmonic</th>

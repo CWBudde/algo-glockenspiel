@@ -774,14 +774,30 @@ export interface BarParams {
   base_frequency: number;
   modes: ModeParams[];
   chebyshev: ChebyshevParams;
+
+  /**
+   * `output_gain_db`: the level the bar renders at, in dB. Zero is unity and
+   * the field is omitted when it is zero, so every document written before it
+   * existed decodes without it.
+   *
+   * A fit does not search this: the objective solves the level in closed form
+   * and subtracts it from every term, so level is a flat ridge with no gradient
+   * to follow. It is measured once from the finished render instead, which is
+   * why it is a v2-only field -- a loader that ignored it would play the preset
+   * at the wrong level rather than refuse it.
+   */
+  output_gain_db?: number;
 }
 
 /**
  * `preset.Preset`, the body of `GET api/fit/preset` and the document the
  * optional `preset` multipart field carries.
  *
- * `version` is "1.0" or "2.0"; v2 adds the variable-length mode array,
- * per-mode harmonics and the explicit Chebyshev stage.
+ * `version` is "1.0", "2.0" or "3.0"; v2 adds the variable-length mode array,
+ * per-mode harmonics and the explicit Chebyshev stage, and v3 adds
+ * `output_gain_db`. A document is held to its own version's rules, so a
+ * calibrated preset is v3 rather than a v2 one an older reader would play at
+ * the wrong level.
  */
 export interface Preset {
   version: string;

@@ -56,7 +56,11 @@ function ContributionBar({ contribution }: { contribution: TermContribution }) {
 }
 
 /** One raw term, with no scaling: the profile-less fallback. */
-function RawTermRow({ term }: { term: { label: string; value: number | null } }) {
+function RawTermRow({
+  term,
+}: {
+  term: { label: string; value: number | null };
+}) {
   return (
     <li className="term-bar-row term-bar-row-raw">
       <span className="term-bar-label">{term.label}</span>
@@ -117,7 +121,10 @@ export function TermBars({ metrics, profile }: TermBarsProps) {
       </p>
       <ul className="term-bar-list">
         {contributions.map((contribution) => (
-          <ContributionBar key={contribution.term} contribution={contribution} />
+          <ContributionBar
+            key={contribution.term}
+            contribution={contribution}
+          />
         ))}
       </ul>
     </section>
