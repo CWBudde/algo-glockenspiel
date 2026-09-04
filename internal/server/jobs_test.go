@@ -30,6 +30,7 @@ type fitJobListing struct {
 	Velocity   int        `json:"velocity"`
 	Optimizer  string     `json:"optimizer"`
 	Metric     string     `json:"metric"`
+	Followed   bool       `json:"followed"`
 }
 
 type fitJobList struct {
@@ -42,6 +43,16 @@ func getFit(t *testing.T, handler http.Handler, target string) *httptest.Respons
 
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+
+	return recorder
+}
+
+// postFit performs one POST against the fit API and returns the recorder.
+func postFit(t *testing.T, handler http.Handler, target string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, target, nil))
 
 	return recorder
 }
@@ -343,11 +354,20 @@ func TestASecondServerSeesTheFirstOnesJobs(t *testing.T) {
 	}
 }
 
-// A directory holding a config.json and no result.json is a fit that died with
-// the process running it. It comes back as failed, never as running: a job
-// with no goroutine behind it that claimed to be running would be a spinner
-// that never stops.
-func TestAHalfWrittenRunDirectoryComesBackAsFailed(t *testing.T) {
+// A directory holding a config.json and no result.json is a fit that has not
+// finished. It comes back as running, and as a run this server did not start,
+// which is what the periodic scan buys: the server keeps looking, so it does
+// not have to decide from one glance whether the run is alive.
+//
+// This test used to assert the opposite -- that such a directory came back as
+// failed once its config.json was old enough -- and it used to have a sibling,
+// TestARecentlyStartedRunIsNotYetRestoredAsFailed, asserting that a young one
+// was left out of the history entirely. Both premises are retired with
+// restoreFreshnessWindow, and they were two halves of the same guess: the age
+// of config.json is not evidence about a process. A run that really did die
+// with its process now stays running here until somebody removes its
+// directory, which is the trade Phase 8.8 makes deliberately.
+func TestAHalfWrittenRunDirectoryComesBackAsFollowed(t *testing.T) {
 	workDir := t.TempDir()
 
 	const jobID = "fit-20240102T030405-0001"
@@ -359,7 +379,7 @@ func TestAHalfWrittenRunDirectoryComesBackAsFailed(t *testing.T) {
 
 	// The fields a rebuilt job reads, in the shape fitrun writes them. The
 	// file is written by hand because the state under test is one a finished
-	// run cannot produce: config.json exists and result.json never arrived.
+	// run cannot produce: config.json exists and result.json has not arrived.
 	config := `{
 	  "note": 72,
 	  "velocity": 90,
@@ -375,11 +395,9 @@ func TestAHalfWrittenRunDirectoryComesBackAsFailed(t *testing.T) {
 		t.Fatalf("write config.json: %v", err)
 	}
 
-	// Backdated well past restoreFreshnessWindow: a config.json this old with
-	// no result.json is what a run that died with its process looks like, as
-	// opposed to one still being written by whatever process owns the
-	// directory right now. TestARecentlyStartedRunIsNotYetRestoredAsFailed
-	// covers the other half.
+	// Backdated by an hour, which used to be the whole question and is now
+	// beside the point: how long ago a run started says nothing about whether
+	// it is still going, and a long fit is exactly the one worth watching.
 	stale := time.Now().Add(-time.Hour)
 	if err := os.Chtimes(configPath, stale, stale); err != nil {
 		t.Fatalf("backdate config.json: %v", err)
@@ -397,23 +415,30 @@ func TestAHalfWrittenRunDirectoryComesBackAsFailed(t *testing.T) {
 		t.Fatalf("the history is %+v, want just %s", list.Jobs, jobID)
 	}
 
+	if !list.Jobs[0].Followed {
+		t.Error("a run this server did not start is not marked as followed in the history")
+	}
+
 	snapshot := jobSnapshot(t, handler, jobID)
-	if snapshot.State != "failed" {
-		t.Fatalf("the half-written run is %q, want failed", snapshot.State)
+	if snapshot.State != "running" {
+		t.Fatalf("the half-written run is %q, want running", snapshot.State)
 	}
 
-	if snapshot.Error == "" {
-		t.Error("the half-written run gives no reason for its failure")
-	}
-
-	if snapshot.StopReason != "interrupted" {
-		t.Errorf("stop reason = %q, want interrupted", snapshot.StopReason)
+	if !snapshot.Followed {
+		t.Error("the half-written run is not marked as followed")
 	}
 
 	// It echoes the request it was started with, which is the point of reading
 	// config.json rather than merely noticing the directory.
 	if snapshot.Note != 72 || snapshot.Velocity != 90 || snapshot.Optimizer != "mayfly" {
 		t.Errorf("the rebuilt job does not echo its config: %+v", snapshot)
+	}
+
+	// Nothing in this process owns the search, so the stop control refuses it
+	// rather than marking a run cancelled that will go on writing.
+	stop := postFit(t, handler, "/api/fit/cancel?job="+jobID)
+	if stop.Code != http.StatusConflict {
+		t.Errorf("POST cancel of a followed run = %d, want 409: %s", stop.Code, stop.Body.String())
 	}
 
 	// There is no preset, so the endpoints that would serve one say so rather
@@ -424,46 +449,5 @@ func TestAHalfWrittenRunDirectoryComesBackAsFailed(t *testing.T) {
 
 	if response := getFit(t, handler, "/api/fit/jobs/"+jobID+"/trace"); response.Code != http.StatusNotFound {
 		t.Errorf("GET the trace of an unfinished run = %d, want 404: %s", response.Code, response.Body.String())
-	}
-}
-
-// TestARecentlyStartedRunIsNotYetRestoredAsFailed pins Finding 5 of the
-// whole-phase review: a config.json with no result.json is exactly what two
-// servers pointed at the same --work-dir, or a server started against a
-// directory a live campaign is still writing into, both leave behind for a
-// run that has not finished yet. A config.json written moments ago is read as
-// "still going" rather than "died with its process", and the directory is
-// left out of the restored history rather than shown as a false failure.
-func TestARecentlyStartedRunIsNotYetRestoredAsFailed(t *testing.T) {
-	workDir := t.TempDir()
-
-	const jobID = "fit-20240102T030405-0001"
-
-	dir := filepath.Join(workDir, jobID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("make the run directory: %v", err)
-	}
-
-	config := `{
-	  "note": 72,
-	  "velocity": 90,
-	  "sample_rate": 8000,
-	  "metric": "rms",
-	  "engine": {"name": "mayfly"},
-	  "reference": {"seconds": 0.2},
-	  "started": "2024-01-02T03:04:05Z"
-	}`
-
-	// Written just now, with no backdating: this is what an in-progress run
-	// looks like at the instant a second server reads the directory.
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(config), 0o600); err != nil {
-		t.Fatalf("write config.json: %v", err)
-	}
-
-	handler := newFitServerIn(t, workDir).Handler()
-
-	list := jobList(t, handler)
-	if len(list.Jobs) != 0 {
-		t.Fatalf("the history is %+v, want the recently started run left out of it", list.Jobs)
 	}
 }

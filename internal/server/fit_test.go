@@ -43,6 +43,7 @@ type fitSnapshot struct {
 	Optimizer           string  `json:"optimizer"`
 	Metric              string  `json:"metric"`
 	HasPreset           bool    `json:"hasPreset"`
+	Followed            bool    `json:"followed"`
 	SeededModes         int     `json:"seededModes"`
 
 	StartedAt  time.Time  `json:"startedAt"`
@@ -214,12 +215,27 @@ func newFitServerIn(t *testing.T, workDir string) *server.Server {
 		// queue the newest job is often not the one still writing into the
 		// directory, and waiting on the wrong one would let the temporary
 		// directory be removed under a search that is still going.
+		//
+		// A followed run is skipped. It is a directory this server read rather
+		// than a search it owns, it stays running until a result.json lands
+		// that no test is going to write, and nothing in this process is
+		// writing into it -- so waiting for it would be waiting out the whole
+		// deadline for nothing.
 		deadline := time.Now().Add(30 * time.Second)
 		for time.Now().Before(deadline) {
 			status := httptest.NewRecorder()
 			handler.ServeHTTP(status, httptest.NewRequest(http.MethodGet, "/api/fit/jobs", nil))
 
-			if status.Code != http.StatusOK || !bytes.Contains(status.Body.Bytes(), []byte(`"state":"running"`)) {
+			if status.Code != http.StatusOK {
+				return
+			}
+
+			var list fitJobList
+			if err := json.Unmarshal(status.Body.Bytes(), &list); err != nil {
+				return
+			}
+
+			if !anyOwnedRunning(list) {
 				return
 			}
 
@@ -228,6 +244,18 @@ func newFitServerIn(t *testing.T, workDir string) *server.Server {
 	})
 
 	return srv
+}
+
+// anyOwnedRunning reports whether the history still holds a running fit this
+// server started, which is the only kind whose files it is still writing.
+func anyOwnedRunning(list fitJobList) bool {
+	for _, row := range list.Jobs {
+		if row.State == "running" && !row.Followed {
+			return true
+		}
+	}
+
+	return false
 }
 
 // referenceWAV builds a plausible struck-bar reference: two decaying partials,

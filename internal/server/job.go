@@ -93,6 +93,18 @@ type fitJob struct {
 	// that started the job could never be read again.
 	bounds *optimizer.ParamBounds
 
+	// followed says this job is a run directory the server read rather than a
+	// fit it started. Nothing in this process owns the search: it may be a
+	// `glockenspiel fit` in another terminal, a campaign job, another server
+	// on the same work directory, or a run whose process is long gone. The
+	// server watches such a run by tailing its trace and has no way to stop
+	// it, which is why the stop control refuses it and the wire form says so.
+	//
+	// It is set when the job is built, before anything else can see the job,
+	// and never changes; readers take the job's lock anyway because everything
+	// that reads it is already holding it.
+	followed bool
+
 	// presetOnDisk says that preset.json is in the run directory even though
 	// no result is held in memory. It is how a job rebuilt at startup can
 	// answer the preset and audio endpoints: the fitted preset outlived the
@@ -200,6 +212,14 @@ type fitSnapshot struct {
 	// It is not simply state == succeeded: a run cancelled after its first
 	// report still leaves the best parameters found so far.
 	HasPreset bool `json:"hasPreset"`
+
+	// Followed says the server did not start this run: it read it out of the
+	// work directory and watches it by tailing its trace. Such a run cannot be
+	// stopped from here, and a client that offers a stop control has to say so
+	// rather than let it fail. It is always present rather than omitted when
+	// false, because "this fit is the server's own" is a fact about every
+	// job, not an occasional extra.
+	Followed bool `json:"followed"`
 
 	// MayflyVariant is the dialect the run actually uses, which is not always
 	// the one that was asked for: a preset selects one of its own. Without this
@@ -409,6 +429,7 @@ func (j *fitJob) snapshot() fitSnapshot {
 		Metric:              j.request.Metric,
 		StartedAt:           j.startedAt,
 		HasPreset:           j.result != nil || j.presetOnDisk,
+		Followed:            j.followed,
 		SeededModes:         j.seededModes,
 		Converged:           j.converged,
 		Request:             j.requestEchoLocked(),
