@@ -550,3 +550,90 @@ func TestDistanceCarriesTheCompositeMetrics(t *testing.T) {
 		}
 	}
 }
+
+// TestWaveformTermCostsAPhaseFlip pins what inverting a candidate costs, in
+// both of the two regimes the aligner creates.
+//
+// The residual at the least-squares gain is refEnergy - cross^2/candEnergy, and
+// cross enters it squared, so on its own the formula cannot tell an inverted
+// candidate from a correct one: negating the render negates cross and leaves
+// the residual exactly where it was. measure clamps the projection at zero so
+// that a negative cross cannot be squared back into a reward.
+//
+// The clamp is a guard rather than a behaviour change, and this test says so by
+// pinning the numbers it does not move. BestLag maximises the *signed*
+// correlation over the onset window, so it lands on a positively correlated lag
+// whenever one exists in range -- which, on every fixture here, it does. What
+// actually punishes a flip is therefore the alignment, and how heavily depends
+// on whether the aligner can slide the inversion away:
+//
+//   - Above about sampleRate/(2*alignFineRange) -- a little over 340 Hz at
+//     44.1 kHz -- half a period fits inside the +/-64-sample fine search, so the
+//     flip is slid away and what is left is the cost of being half a period out.
+//   - Below it the slide does not reach, and the candidate is scored against a
+//     reference it opposes, which costs nearly the whole term.
+//
+// The gap between those two numbers is the honest state of this term: a flip is
+// always expensive, but four times more expensive when it cannot be realigned.
+func TestWaveformTermCostsAPhaseFlip(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		modes     []model.ModeParams
+		wantAtMin float64
+	}{
+		{
+			name: "partials the aligner can slide by half a period",
+			modes: []model.ModeParams{
+				{Amplitude: 1, Frequency: 1000, DecayMs: 300},
+				{Amplitude: 0.5, Frequency: 2700, DecayMs: 120},
+				{Amplitude: 0.25, Frequency: 5400, DecayMs: 60},
+			},
+			wantAtMin: 0.2,
+		},
+		{
+			name: "partials too low for the fine search to reach",
+			modes: []model.ModeParams{
+				{Amplitude: 1, Frequency: 180, DecayMs: 300},
+				{Amplitude: 0.5, Frequency: 250, DecayMs: 120},
+				{Amplitude: 0.25, Frequency: 310, DecayMs: 60},
+			},
+			wantAtMin: 0.9,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			template := threeModePreset()
+			template.Parameters.Modes = testCase.modes
+
+			reference := renderReference(t, template, 44100, 69, 100, 1.0)
+
+			objective, err := NewObjectiveFunction(reference, template, 44100, 69, 100, MetricBalanced)
+			if err != nil {
+				t.Fatalf("NewObjectiveFunction failed: %v", err)
+			}
+
+			inPhase := metricsOf(t, objective, template)
+			if inPhase.Waveform > 1e-6 {
+				t.Fatalf("the reference against itself scored waveform %g, want ~0", inPhase.Waveform)
+			}
+
+			// The bank is linear in the mode amplitudes and this fixture has no
+			// dry mix and no shaper, so negating every amplitude negates the
+			// render exactly.
+			inverted := template.Clone()
+			for i := range inverted.Parameters.Modes {
+				inverted.Parameters.Modes[i].Amplitude = -inverted.Parameters.Modes[i].Amplitude
+			}
+
+			flipped := metricsOf(t, objective, inverted)
+
+			if flipped.Waveform < testCase.wantAtMin {
+				t.Fatalf("an inverted candidate scored waveform %g, want at least %g",
+					flipped.Waveform, testCase.wantAtMin)
+			}
+
+			if flipped.Waveform > 1+1e-9 {
+				t.Fatalf("waveform %g exceeds the term's maximum of 1", flipped.Waveform)
+			}
+		})
+	}
+}
