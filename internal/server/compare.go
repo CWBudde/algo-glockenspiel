@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 
 	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
+	"github.com/cwbudde/algo-glockenspiel/internal/fitschema"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/synth"
 	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
@@ -187,7 +188,7 @@ func (s *Server) handleFitJobCompare(writer http.ResponseWriter, request *http.R
 	// at two different moments on the two sides. Cutting it here is also what
 	// bounds the transform below, which runs at full resolution before
 	// anything is reduced.
-	seconds := math.Min(float64(len(reference))/float64(job.sampleRate), maxRenderSeconds)
+	seconds := math.Min(float64(len(reference))/float64(job.sampleRate), fitschema.MaxRenderSeconds)
 	reference = reference[:int(seconds*float64(job.sampleRate))]
 
 	engine, err := synth.NewSynthesizer(fitted, job.sampleRate)

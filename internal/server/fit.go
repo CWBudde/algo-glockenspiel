@@ -13,72 +13,25 @@ import (
 
 	"github.com/cwbudde/algo-glockenspiel/assets"
 	"github.com/cwbudde/algo-glockenspiel/internal/analysis"
+	"github.com/cwbudde/algo-glockenspiel/internal/fitschema"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/cwbudde/algo-glockenspiel/internal/synth"
 	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
 )
 
+// The scalar limits a start request is held to -- iteration and population
+// caps, the mayfly and CMA-ES ceilings, the reference's byte and sample-rate
+// bounds -- live once, in internal/fitschema, rather than as a constant block
+// here and a second, less complete one in internal/browserfit. See that
+// package's doc comment for why: the two had already drifted apart before it
+// existed.
 const (
-	// defaultMaxReferenceBytes bounds an uploaded reference recording.
-	//
-	// 16 MiB is about three minutes of 16-bit mono at 44.1 kHz, which is an
-	// order of magnitude more than a fit ever wants: the objective renders and
-	// scores the whole reference once per candidate evaluation, so a
-	// three-minute reference makes a hundred-iteration run take hours. The
-	// limit is therefore generous for the intended use and still small enough
-	// that the decoded form -- go-audio hands back []int, eight bytes per
-	// sample, before it is narrowed to float32 -- stays bounded at roughly
-	// 64 MB for a maximal upload.
-	defaultMaxReferenceBytes = 16 << 20
-
 	// formOverheadBytes is the slack added on top of the reference limit for
 	// the multipart envelope and the scalar fields. The fields are a few
 	// hundred bytes of numbers; 64 KiB is room to spare without being a second
 	// upload channel.
 	formOverheadBytes = 64 << 10
-
-	// maxFitTimeBudget and maxFitIterations bound what one request can book.
-	// There is a single fit slot, so an unbounded budget is not merely a long
-	// wait for one client: it parks the slot against everyone.
-	maxFitTimeBudget = time.Hour
-	maxFitIterations = 100_000
-
-	// maxRenderSeconds bounds the audition render. Rendering is linear in
-	// duration and the result is held whole in memory before it is sent.
-	maxRenderSeconds = 60.0
-
-	// minReferenceSampleRate and maxReferenceSampleRate bound the rate an
-	// uploaded WAV may declare. The rate is attacker-controlled -- it is a
-	// uint32 in the header that nothing else checks -- and it multiplies every
-	// later allocation, so it is bounded at the door rather than at each of the
-	// places it is later used. The range covers every rate audio equipment
-	// actually produces, from telephony upwards.
-	minReferenceSampleRate = 4000
-	maxReferenceSampleRate = 192000
-
-	// maxMayflyPopulation caps the population and everything derived from it.
-	// Mating pairs the k-th best male with the k-th best female, so the
-	// population also caps the usable offspring count -- which is why the
-	// offspring knobs are held to the same number rather than to one of their
-	// own that could drift away from it.
-	maxMayflyPopulation = 4096
-
-	// maxCMAESLambda caps the CMA-ES population. It is the mayfly cap for the
-	// same reason: one generation evaluates the whole population, so a
-	// population above it is a request to spend an entire fit on a single
-	// generation.
-	maxCMAESLambda = 4096
-
-	// maxCMAESRestarts caps the restart count, mirroring the bound the mayfly
-	// schedule is held to: every run costs at least one iteration, so an
-	// unbounded count is a request to slice the budget too thin to search.
-	maxCMAESRestarts = 1000
-
-	// maxFitTargetCost bounds the convergence target. A cost is whatever the
-	// metric produces, so there is no meaningful ceiling; the bound exists only
-	// to keep the value finite and inside a range the engine can validate.
-	maxFitTargetCost = 1e12
 
 	// fitEventHeartbeat is how often an idle SSE stream emits a comment. It
 	// keeps an intermediary from reaping a quiet connection, and it is also
@@ -173,34 +126,33 @@ const mayflyOptimizerName = "mayfly"
 // once for the same reason mayflyOptimizerName is.
 const cmaesOptimizerName = "cmaes"
 
-// defaultMayflyReportEvery is the progress cadence a mayfly run gets when the
-// client names no cadence of its own: every generation, which is what
-// internal/browserfit already asks the optimizer for. See parseFitRequest for
-// why it is not the ten the simple backend defaults to.
-const defaultMayflyReportEvery = 1
-
 // defaultFitRequest carries the same defaults as the fit command, so a preset
 // fitted from the browser and one fitted from the terminal are the same fit.
+//
+// Every value comes from internal/fitschema.Fields rather than being written
+// here a second time: it is the same table cmd/gen-fit-schema reads to write
+// web/src/api/fitSchema.generated.ts's DEFAULT_FIT_REQUEST, so the two cannot
+// name a different default for the same field.
 func defaultFitRequest() fitRequest {
 	return fitRequest{
-		Note:             69,
-		Velocity:         100,
-		Optimizer:        "simple",
-		Metric:           string(optimizer.MetricBalanced),
-		MaxIterations:    100,
-		TimeBudgetMS:     (30 * time.Second).Milliseconds(),
-		ReportEvery:      10,
-		Align:            true,
-		NormalizeGain:    false,
+		Note:             fitschema.DefaultInt("note"),
+		Velocity:         fitschema.DefaultInt("velocity"),
+		Optimizer:        fitschema.DefaultString("optimizer"),
+		Metric:           fitschema.DefaultString("metric"),
+		MaxIterations:    fitschema.DefaultInt("maxIterations"),
+		TimeBudgetMS:     fitschema.DefaultDuration("timeBudget").Milliseconds(),
+		ReportEvery:      fitschema.DefaultInt("reportEvery"),
+		Align:            fitschema.DefaultBool("align"),
+		NormalizeGain:    fitschema.DefaultBool("normalizeGain"),
 		Downmix:          string(analysis.DownmixFirst),
-		MayflyVariant:    "desma",
-		MayflyPopulation: 10,
-		MayflySeed:       1,
-		MayflyEpochs:     1,
-		MayflyRestarts:   0,
-		MayflyStagnation: 0,
-		CmaesCovariance:  "separable",
-		CmaesSigma:       0.3,
+		MayflyVariant:    fitschema.DefaultString("mayflyVariant"),
+		MayflyPopulation: fitschema.DefaultInt("mayflyPopulation"),
+		MayflySeed:       fitschema.DefaultInt64("mayflySeed"),
+		MayflyEpochs:     fitschema.DefaultInt("mayflyEpochs"),
+		MayflyRestarts:   fitschema.DefaultInt("mayflyRestarts"),
+		MayflyStagnation: fitschema.DefaultInt("mayflyStagnation"),
+		CmaesCovariance:  fitschema.DefaultString("cmaesCovariance"),
+		CmaesSigma:       fitschema.DefaultFloat("cmaesSigma"),
 	}
 }
 
@@ -210,7 +162,7 @@ func (s *Server) maxReferenceBytes() int64 {
 		return s.config.MaxReferenceBytes
 	}
 
-	return defaultMaxReferenceBytes
+	return fitschema.DefaultMaxReferenceBytes
 }
 
 // handleFitStart accepts a reference recording and starts a fit.
@@ -469,11 +421,11 @@ func (s *Server) writeFitAudio(
 
 	// The reference may be longer than the render cap -- the upload limit
 	// allows several minutes of audio -- so the fallback is clamped rather than
-	// passed through. A default that ignored maxRenderSeconds would book
+	// passed through. A default that ignored fitschema.MaxRenderSeconds would book
 	// exactly the render the cap exists to refuse.
-	fallback := math.Min(job.referenceSeconds, maxRenderSeconds)
+	fallback := math.Min(job.referenceSeconds, fitschema.MaxRenderSeconds)
 
-	duration, err := queryFloat(query, "duration", fallback, 0, maxRenderSeconds)
+	duration, err := queryFloat(query, "duration", fallback, 0, fitschema.MaxRenderSeconds)
 	if err != nil {
 		writeJSONError(writer, http.StatusBadRequest, err.Error())
 
@@ -604,9 +556,9 @@ func readReferencePart(request *http.Request, limit int64, options analysis.Load
 	// upload claiming two gigahertz therefore asks RenderNote for 1.2e11
 	// samples, which is a 480 GB allocation and an unrecoverable
 	// "fatal error: out of memory" rather than a failed request.
-	if sampleRate < minReferenceSampleRate || sampleRate > maxReferenceSampleRate {
+	if sampleRate < fitschema.MinReferenceSampleRate || sampleRate > fitschema.MaxReferenceSampleRate {
 		return nil, nil, fmt.Errorf("the reference declares a sample rate of %d Hz, outside the supported [%d,%d] range",
-			sampleRate, minReferenceSampleRate, maxReferenceSampleRate)
+			sampleRate, fitschema.MinReferenceSampleRate, fitschema.MaxReferenceSampleRate)
 	}
 
 	return reference, data, nil

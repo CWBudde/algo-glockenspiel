@@ -12,7 +12,56 @@
  * the single description of the contract for every module under src/, and it
  * lists every field the server sends, including the ones no component reads
  * yet.
+ *
+ * The field limits, the default request and the name lists (metrics,
+ * optimizers, CMA-ES covariances, mayfly dialects, presets and selections,
+ * and the model bounds vocabulary) are not declared here by hand: they are
+ * generated from internal/fitschema, the one Go table internal/server and
+ * internal/browserfit both validate a request against, and re-exported below
+ * under the same names they always had. See ./fitSchema.generated.ts.
  */
+import {
+  BOUNDS_KEYS as FIT_SCHEMA_BOUNDS_KEYS,
+  CMAES_COVARIANCES,
+  DEFAULT_FIT_REQUEST as FIT_SCHEMA_DEFAULT_FIT_REQUEST,
+  DEFAULT_PARAM_BOUNDS as FIT_SCHEMA_DEFAULT_PARAM_BOUNDS,
+  FIT_LIMITS,
+  LOG_ENCODED_BOUNDS_KEYS as FIT_SCHEMA_LOG_ENCODED_BOUNDS_KEYS,
+  MAYFLY_DEFAULT_REPORT_EVERY,
+  MAYFLY_PRESETS,
+  MAYFLY_SELECTIONS,
+  MAYFLY_VARIANTS,
+  METRIC_NAMES,
+  MODEL_BOUNDS_LIMITS as FIT_SCHEMA_MODEL_BOUNDS_LIMITS,
+  OPTIMIZER_NAMES,
+  type CmaesCovariance,
+  type MayflyPreset,
+  type MayflySelection,
+  type MayflyVariant,
+  type MetricName,
+  type OptimizerName,
+} from "./fitSchema.generated";
+
+// Re-exported under the same names imported above, so every import site in
+// web/src keeps reading them from "./types" unchanged.
+export {
+  CMAES_COVARIANCES,
+  FIT_LIMITS,
+  MAYFLY_DEFAULT_REPORT_EVERY,
+  MAYFLY_PRESETS,
+  MAYFLY_SELECTIONS,
+  MAYFLY_VARIANTS,
+  METRIC_NAMES,
+  OPTIMIZER_NAMES,
+};
+export type {
+  CmaesCovariance,
+  MayflyPreset,
+  MayflySelection,
+  MayflyVariant,
+  MetricName,
+  OptimizerName,
+};
 
 /** The error body every non-2xx JSON answer carries. */
 export interface ApiError {
@@ -415,82 +464,9 @@ export interface FitMetrics {
 /* The request                                                         */
 /* ------------------------------------------------------------------ */
 
-/**
- * `optimizer.ParseMetric`'s vocabulary: the three composite profiles, then
- * the single-term legacy metrics.
- */
-export type MetricName =
-  "balanced" | "placement" | "polish" | "rms" | "log" | "spectral";
-
-/** `selectOptimizer`'s vocabulary. */
-export type OptimizerName = "simple" | "mayfly" | "cmaes";
-
-/** `CMAESOptimizer.resolve`'s vocabulary: the covariance it learns. */
-export const CMAES_COVARIANCES = ["separable", "block"] as const;
-
-/** Derived from the list, for the reason MayflyVariant is. */
-export type CmaesCovariance = (typeof CMAES_COVARIANCES)[number];
-
-/** `MayflyOptimizer.Validate`'s vocabulary. */
-export const MAYFLY_VARIANTS = [
-  "ma",
-  "desma",
-  "olce",
-  "eobbma",
-  "gsasma",
-  "hmma",
-  "mpma",
-  "aoblmoa",
-] as const;
-
-/**
- * Derived from the list rather than spelled out a second time. A union this
- * long also formats differently under prettier 3.8 and 3.9 -- the CI check
- * installs whatever 3.x is current -- and deriving it sidesteps that for good.
- */
-export type MayflyVariant = (typeof MAYFLY_VARIANTS)[number];
-
-/**
- * `mayfly.ConfigPreset`'s vocabulary, from config_loader.go upstream.
- *
- * A preset already chooses a dialect, so the engine refuses a preset and an
- * explicit variant together; the form sends one or the other, never both.
- */
-export const MAYFLY_PRESETS = [
-  "unimodal",
-  "multimodal",
-  "highly_multimodal",
-  "deceptive",
-  "narrow_valley",
-  "high_dimensional",
-  "fast_convergence",
-  "stable_convergence",
-  "multi_objective",
-] as const;
-
-/** Derived from the list, for the reason MayflyVariant is. */
-export type MayflyPreset = (typeof MAYFLY_PRESETS)[number];
-
-/** The `selection` knob's vocabulary: how crossover pairs its parents. */
-export const MAYFLY_SELECTIONS = ["rank", "tournament"] as const;
-
-/** Derived from the list, for the reason MayflyVariant is. */
-export type MayflySelection = (typeof MAYFLY_SELECTIONS)[number];
-
-export const METRIC_NAMES: readonly MetricName[] = [
-  "balanced",
-  "placement",
-  "polish",
-  "rms",
-  "log",
-  "spectral",
-] as const;
-
-export const OPTIMIZER_NAMES: readonly OptimizerName[] = [
-  "simple",
-  "mayfly",
-  "cmaes",
-] as const;
+// MetricName, OptimizerName, CmaesCovariance, MayflyVariant, MayflyPreset,
+// MayflySelection and the const array each is derived from are re-exported
+// from ./fitSchema.generated near the top of this file.
 
 /**
  * The scalar fields of `POST api/fit/start`, as they are spelled in the
@@ -583,44 +559,14 @@ export interface FitRequestFields {
  * `defaultFitRequest()` in internal/server/fit.go, which in turn carries the
  * `fit` command's defaults, so a preset fitted from the browser and one fitted
  * from the terminal are the same fit.
- */
-export const DEFAULT_FIT_REQUEST: FitRequestFields = {
-  note: 69,
-  velocity: 100,
-  optimizer: "simple",
-  metric: "balanced",
-  maxIterations: 100,
-  timeBudget: "30s",
-  reportEvery: 10,
-  align: true,
-  normalizeGain: false,
-  mayflyVariant: "desma",
-  mayflyPopulation: 10,
-  mayflySeed: "1",
-  mayflyPreset: "",
-  mayflyEpochs: 1,
-  mayflyRestarts: 0,
-  mayflyStagnation: 0,
-  mayflySelection: "",
-  cmaesCovariance: "separable",
-  cmaesLambda: 0,
-  cmaesSigma: 0.3,
-  cmaesSeed: 0,
-  cmaesRestarts: 0,
-};
-
-/**
- * The progress cadence a Mayfly fit gets when nobody chooses one, mirroring
- * `defaultMayflyReportEvery` in internal/server/fit.go.
  *
- * A Mayfly iteration is a whole generation -- population, offspring, mutants
- * and elites, measured at roughly 47.7 objective evaluations at a population of
- * ten -- while a simple iteration is about one evaluation. `reportEvery: 10`
- * therefore means "after ten renders" for the simple backend and "after some
- * five hundred" for Mayfly, which is longer than the default time budget: the
- * run ends before it has reported once and the cost curve stays empty.
+ * The values themselves are ./fitSchema.generated's; this assignment exists
+ * so the export carries the FitRequestFields type its every reader expects,
+ * which the generated file cannot itself declare without importing this one
+ * and creating a cycle.
  */
-export const MAYFLY_DEFAULT_REPORT_EVERY = 1;
+export const DEFAULT_FIT_REQUEST: FitRequestFields =
+  FIT_SCHEMA_DEFAULT_FIT_REQUEST;
 
 /**
  * The default cadence for a backend, so the form can follow the optimizer the
@@ -631,51 +577,6 @@ export function defaultReportEvery(optimizer: OptimizerName): number {
     ? MAYFLY_DEFAULT_REPORT_EVERY
     : DEFAULT_FIT_REQUEST.reportEvery;
 }
-
-/**
- * The server's own limits, from internal/server/fit.go and
- * internal/server/params.go. They are mirrored here so a value that cannot be
- * accepted is refused before it is uploaded, not after.
- */
-export const FIT_LIMITS = {
-  /** `defaultMaxReferenceBytes`: 16 MiB. */
-  maxReferenceBytes: 16 << 20,
-  note: { min: 0, max: 127 },
-  velocity: { min: 0, max: 127 },
-  /** `maxFitIterations`. */
-  maxIterations: { min: 1, max: 100_000 },
-  reportEvery: { min: 0, max: 100_000 },
-  mayflyPopulation: { min: 2, max: 4096 },
-  /** `parseFitRequest`'s own bounds on the wrapper schedule. */
-  mayflyEpochs: { min: 1, max: 1000 },
-  mayflyRestarts: { min: 0, max: 1000 },
-  /** Bounded by `maxFitIterations`, as the iteration limit is. */
-  mayflyStagnation: { min: 0, max: 100_000 },
-  /** `maxFitTargetCost`; a cost is whatever the metric produces. */
-  mayflyTargetCost: { min: -1e12, max: 1e12 },
-  /**
-   * mayfly.NCAuto is -1, so -1 is the floor rather than zero, and the ceiling
-   * is the population cap: offspring are produced by pairing the population.
-   */
-  mayflyNc: { min: -1, max: 4096 },
-  mayflyNcRatio: { min: 0, max: 4096 },
-  /** `maxCMAESLambda`; zero is "take Hansen's default" rather than a population. */
-  cmaesLambda: { min: 0, max: 4096 },
-  /** The step size is a fraction of the normalized box, so it cannot leave it. */
-  cmaesSigma: { min: 0, max: 1 },
-  /** `maxCMAESRestarts`; zero restarts until the budget is spent. */
-  cmaesRestarts: { min: 0, max: 1000 },
-  /**
-   * A seed is otherwise unbounded, but it travels as a JS number here, and a
-   * number stops representing every integer past 2^53: a value outside the safe
-   * range would reach the backend as a different seed than the one typed.
-   */
-  cmaesSeed: { min: Number.MIN_SAFE_INTEGER, max: Number.MAX_SAFE_INTEGER },
-  /** `maxFitTimeBudget`, in seconds; the lower bound is exclusive. */
-  timeBudgetSeconds: { min: 0, max: 3600 },
-  /** `maxRenderSeconds`; the lower bound is exclusive. */
-  renderSeconds: { min: 0, max: 60 },
-} as const;
 
 /* ------------------------------------------------------------------ */
 /* Bounds                                                              */
@@ -707,25 +608,20 @@ export interface BoundsDocument {
 /** The keys a bounds document may carry, in the order the docs list them. */
 export type BoundsKey = keyof BoundsDocument;
 
-export const BOUNDS_KEYS: readonly BoundsKey[] = [
-  "input_mix",
-  "filter_freq",
-  "amplitude",
-  "frequency",
-  "decay_ms",
-  "harmonic_gain",
-] as const;
+/**
+ * `optimizer.BoundsKeys`, from ./fitSchema.generated. Cast to `BoundsKey[]`
+ * for the reason DEFAULT_FIT_REQUEST is: the generated file cannot import
+ * BoundsDocument back from here.
+ */
+export const BOUNDS_KEYS = FIT_SCHEMA_BOUNDS_KEYS as readonly BoundsKey[];
 
 /**
  * The dimensions the codec log-encodes. Their bounds must stay strictly above
  * zero: log(0) is not a number the unit-cube encoding can take, and the server
  * answers a non-positive one with a 400.
  */
-export const LOG_ENCODED_BOUNDS_KEYS: readonly BoundsKey[] = [
-  "filter_freq",
-  "frequency",
-  "decay_ms",
-] as const;
+export const LOG_ENCODED_BOUNDS_KEYS =
+  FIT_SCHEMA_LOG_ENCODED_BOUNDS_KEYS as readonly BoundsKey[];
 
 /**
  * The range `model.ValidateBarParams` holds each dimension to, transcribed from
@@ -736,14 +632,8 @@ export const LOG_ENCODED_BOUNDS_KEYS: readonly BoundsKey[] = [
  * nothing. Mirroring the check here reports it before the reference is
  * uploaded rather than after.
  */
-export const MODEL_BOUNDS_LIMITS: Partial<Record<BoundsKey, BoundsRange>> = {
-  input_mix: [0, 2],
-  filter_freq: [20, 20000],
-  amplitude: [-2, 2],
-  frequency: [0.01, 50000],
-  decay_ms: [0.1, 5000],
-  harmonic_gain: [0, 2],
-};
+export const MODEL_BOUNDS_LIMITS: Partial<Record<BoundsKey, BoundsRange>> =
+  FIT_SCHEMA_MODEL_BOUNDS_LIMITS as Partial<Record<BoundsKey, BoundsRange>>;
 
 /**
  * `optimizer.DefaultParamBounds`, shown as the placeholder for each field.
@@ -754,14 +644,8 @@ export const MODEL_BOUNDS_LIMITS: Partial<Record<BoundsKey, BoundsRange>> = {
  * note may carry. A document replaces the whole box, so a `frequency` key
  * in one is the box that runs.
  */
-export const DEFAULT_PARAM_BOUNDS: Required<BoundsDocument> = {
-  input_mix: [0, 2],
-  filter_freq: [20, 20000],
-  amplitude: [-2, 2],
-  frequency: [20, 20000],
-  decay_ms: [0.5, 2000],
-  harmonic_gain: [0, 2],
-};
+export const DEFAULT_PARAM_BOUNDS: Required<BoundsDocument> =
+  FIT_SCHEMA_DEFAULT_PARAM_BOUNDS as Required<BoundsDocument>;
 
 /* ------------------------------------------------------------------ */
 /* Mayfly tuning                                                       */

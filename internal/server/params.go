@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cwbudde/algo-glockenspiel/internal/analysis"
+	"github.com/cwbudde/algo-glockenspiel/internal/fitschema"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/model"
 )
@@ -29,19 +30,23 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 
 	var err error
 
-	if settings.Note, err = formInt(request, "note", settings.Note, 0, 127); err != nil {
+	noteMin, noteMax := fitschema.IntLimit("note")
+	if settings.Note, err = formInt(request, "note", settings.Note, noteMin, noteMax); err != nil {
 		return settings, err
 	}
 
-	if settings.Velocity, err = formInt(request, "velocity", settings.Velocity, 0, 127); err != nil {
+	velocityMin, velocityMax := fitschema.IntLimit("velocity")
+	if settings.Velocity, err = formInt(request, "velocity", settings.Velocity, velocityMin, velocityMax); err != nil {
 		return settings, err
 	}
 
-	if settings.MaxIterations, err = formInt(request, "maxIterations", settings.MaxIterations, 1, maxFitIterations); err != nil {
+	maxIterMin, maxIterMax := fitschema.IntLimit("maxIterations")
+	if settings.MaxIterations, err = formInt(request, "maxIterations", settings.MaxIterations, maxIterMin, maxIterMax); err != nil {
 		return settings, err
 	}
 
-	if settings.ReportEvery, err = formInt(request, "reportEvery", settings.ReportEvery, 0, maxFitIterations); err != nil {
+	_, reportEveryMax := fitschema.IntLimit("reportEvery")
+	if settings.ReportEvery, err = formInt(request, "reportEvery", settings.ReportEvery, 0, reportEveryMax); err != nil {
 		return settings, err
 	}
 
@@ -49,7 +54,8 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 		return settings, err
 	}
 
-	if settings.MayflyPopulation, err = formInt(request, "mayflyPopulation", settings.MayflyPopulation, 2, maxMayflyPopulation); err != nil {
+	popMin, popMax := fitschema.IntLimit("mayflyPopulation")
+	if settings.MayflyPopulation, err = formInt(request, "mayflyPopulation", settings.MayflyPopulation, popMin, popMax); err != nil {
 		return settings, err
 	}
 
@@ -57,37 +63,45 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 		return settings, err
 	}
 
-	if settings.MayflyEpochs, err = formInt(request, "mayflyEpochs", settings.MayflyEpochs, 1, 1000); err != nil {
+	epochsMin, epochsMax := fitschema.IntLimit("mayflyEpochs")
+	if settings.MayflyEpochs, err = formInt(request, "mayflyEpochs", settings.MayflyEpochs, epochsMin, epochsMax); err != nil {
 		return settings, err
 	}
 
-	if settings.MayflyRestarts, err = formInt(request, "mayflyRestarts", settings.MayflyRestarts, 0, 1000); err != nil {
+	_, restartsMax := fitschema.IntLimit("mayflyRestarts")
+	if settings.MayflyRestarts, err = formInt(request, "mayflyRestarts", settings.MayflyRestarts, 0, restartsMax); err != nil {
 		return settings, err
 	}
 
-	settings.MayflyStagnation, err = formInt(request, "mayflyStagnation", settings.MayflyStagnation, 0, maxFitIterations)
+	_, stagnationMax := fitschema.IntLimit("mayflyStagnation")
+
+	settings.MayflyStagnation, err = formInt(request, "mayflyStagnation", settings.MayflyStagnation, 0, stagnationMax)
 	if err != nil {
 		return settings, err
 	}
 
 	// A cost is whatever the metric produces, so the only thing worth refusing
 	// here is a value that is not a number at all; the engine owns the rest.
-	if settings.MayflyTargetCost, err = formFloat64Ptr(request, "mayflyTargetCost", -maxFitTargetCost, maxFitTargetCost); err != nil {
+	targetCostMin, targetCostMax := fitschema.FloatLimit("mayflyTargetCost")
+	if settings.MayflyTargetCost, err = formFloat64Ptr(request, "mayflyTargetCost", targetCostMin, targetCostMax); err != nil {
 		return settings, err
 	}
 
 	// mayfly.NCAuto is -1, so -1 is the floor rather than zero, and the upper
 	// bound is the population cap: offspring are produced by pairing the
 	// population, so a count above it can never be reached.
-	if settings.MayflyNC, err = formIntPtr(request, "mayflyNc", -1, maxMayflyPopulation); err != nil {
+	ncMin, ncMax := fitschema.IntLimit("mayflyNc")
+	if settings.MayflyNC, err = formIntPtr(request, "mayflyNc", ncMin, ncMax); err != nil {
 		return settings, err
 	}
 
-	if settings.MayflyNCRatio, err = formFloat64Ptr(request, "mayflyNcRatio", 0, maxMayflyPopulation); err != nil {
+	ncRatioMin, ncRatioMax := fitschema.FloatLimit("mayflyNcRatio")
+	if settings.MayflyNCRatio, err = formFloat64Ptr(request, "mayflyNcRatio", ncRatioMin, ncRatioMax); err != nil {
 		return settings, err
 	}
 
-	if settings.CmaesLambda, err = formInt(request, "cmaesLambda", settings.CmaesLambda, 0, maxCMAESLambda); err != nil {
+	lambdaMin, lambdaMax := fitschema.IntLimit("cmaesLambda")
+	if settings.CmaesLambda, err = formInt(request, "cmaesLambda", settings.CmaesLambda, lambdaMin, lambdaMax); err != nil {
 		return settings, err
 	}
 
@@ -95,7 +109,8 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 		return settings, err
 	}
 
-	if settings.CmaesRestarts, err = formInt(request, "cmaesRestarts", settings.CmaesRestarts, 0, maxCMAESRestarts); err != nil {
+	_, cmaesRestartsMax := fitschema.IntLimit("cmaesRestarts")
+	if settings.CmaesRestarts, err = formInt(request, "cmaesRestarts", settings.CmaesRestarts, 0, cmaesRestartsMax); err != nil {
 		return settings, err
 	}
 
@@ -104,7 +119,9 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 	// A submitted zero is not refused: it means the same thing as a zero
 	// population or a zero seed, which is "take the backend's default", 0.3
 	// here.
-	sigma, err := formFloat64Ptr(request, "cmaesSigma", 0, 1)
+	sigmaMin, sigmaMax := fitschema.FloatLimit("cmaesSigma")
+
+	sigma, err := formFloat64Ptr(request, "cmaesSigma", sigmaMin, sigmaMax)
 	if err != nil {
 		return settings, err
 	}
@@ -118,8 +135,8 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 		return settings, err
 	}
 
-	if budget <= 0 || budget > maxFitTimeBudget {
-		return settings, fmt.Errorf("timeBudget must be above zero and at most %s, got %s", maxFitTimeBudget, budget)
+	if budget <= 0 || budget > fitschema.MaxFitTimeBudget {
+		return settings, fmt.Errorf("timeBudget must be above zero and at most %s, got %s", fitschema.MaxFitTimeBudget, budget)
 	}
 
 	settings.TimeBudgetMS = budget.Milliseconds()
@@ -141,8 +158,8 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 		return settings, err
 	}
 
-	if window < 0 || window > maxReferenceWindow {
-		return settings, fmt.Errorf("window must be between 0 and %s, got %s", maxReferenceWindow, window)
+	if window < 0 || window > fitschema.MaxReferenceWindow {
+		return settings, fmt.Errorf("window must be between 0 and %s, got %s", fitschema.MaxReferenceWindow, window)
 	}
 
 	settings.WindowMS = window.Milliseconds()
@@ -196,7 +213,7 @@ func parseFitRequest(request *http.Request, tuning *optimizer.MayflyTuning) (fit
 	// stays empty for the whole run. The default follows the backend; a cadence
 	// the client actually asked for is left exactly as it asked for it.
 	if settings.Optimizer == mayflyOptimizerName && strings.TrimSpace(request.FormValue("reportEvery")) == "" {
-		settings.ReportEvery = defaultMayflyReportEvery
+		settings.ReportEvery = fitschema.DefaultMayflyReportEvery
 	}
 
 	// The metric and the optimizer name are validated by the packages that own
@@ -316,10 +333,6 @@ func formBool(request *http.Request, name string, fallback bool) (bool, error) {
 // formDuration reads an optional Go duration, and -- exactly as the fit
 // command's --time-budget flag does -- reads a bare number as seconds, so the
 // two front ends accept the same spellings.
-// maxReferenceWindow bounds the fixed cut a request may ask for. The loader
-// clamps the window to the file, so the bound only keeps the value finite
-// and sane; an hour is far past what the upload limit can hold.
-const maxReferenceWindow = time.Hour
 
 // formDownmix reads the reference downmix policy, which the analysis package
 // validates because it owns the vocabulary.
@@ -343,23 +356,12 @@ func formDuration(request *http.Request, name string, fallback time.Duration) (t
 		return fallback, nil
 	}
 
-	if parsed, err := time.ParseDuration(raw); err == nil {
-		return parsed, nil
-	}
-
-	seconds, err := strconv.ParseFloat(raw, 64)
+	parsed, err := fitschema.ParseDuration(raw)
 	if err != nil {
-		return fallback, fmt.Errorf("%s must be a duration such as 30s or 10m, got %q", name, raw)
+		return fallback, fmt.Errorf("%s %w", name, err)
 	}
 
-	// ParseFloat accepts "NaN" and "Inf", and converting either to a Duration
-	// is undefined in the language spec -- so the bounds check that follows
-	// would be deciding on whatever the hardware happened to produce.
-	if math.IsNaN(seconds) || math.IsInf(seconds, 0) {
-		return fallback, fmt.Errorf("%s must be a finite duration, got %q", name, raw)
-	}
-
-	return time.Duration(seconds * float64(time.Second)), nil
+	return parsed, nil
 }
 
 // queryInt reads an optional query parameter and holds it to an inclusive range.

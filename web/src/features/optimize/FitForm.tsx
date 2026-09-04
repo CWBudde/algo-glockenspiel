@@ -1,5 +1,6 @@
 import { useId, useMemo, useRef, useState } from "react";
 
+import { parseDuration } from "../../api/duration";
 import {
   cancelFit as cancelServerFit,
   FitApiError,
@@ -226,57 +227,6 @@ function parseSeed(raw: string): { value: string } | { error: string } {
   return { value: value.toString() };
 }
 
-/**
- * Parses a duration the way formDuration does: a Go duration string, or a bare
- * number read as seconds. The result is returned unchanged for the wire and in
- * seconds for the range check.
- */
-function parseDuration(raw: string): { seconds: number } | { error: string } {
-  const trimmed = raw.trim();
-
-  if (trimmed === "") {
-    return { error: "The time budget is required." };
-  }
-
-  // strconv.ParseFloat's decimal grammar, exponent included, so "1e3" is read
-  // as 1000 seconds here exactly as the server reads it. Number() alone is more
-  // permissive than ParseFloat -- it also takes "0x10" and "Infinity" -- so the
-  // pattern, not Number(), decides what counts as a bare number.
-  const bareSeconds = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
-  const bare = Number(trimmed);
-
-  if (bareSeconds.test(trimmed) && Number.isFinite(bare)) {
-    return { seconds: bare };
-  }
-
-  // time.ParseDuration's grammar, restricted to the units a person types here.
-  const pattern = /^[+-]?(\d+(\.\d*)?(ns|us|µs|ms|s|m|h))+$/;
-
-  if (!pattern.test(trimmed)) {
-    return {
-      error: "The time budget must be a duration such as 30s, 2m or 1h.",
-    };
-  }
-
-  const unitSeconds: Record<string, number> = {
-    ns: 1e-9,
-    us: 1e-6,
-    µs: 1e-6,
-    ms: 1e-3,
-    s: 1,
-    m: 60,
-    h: 3600,
-  };
-
-  let total = 0;
-
-  for (const part of trimmed.matchAll(/(\d+(?:\.\d*)?)(ns|us|µs|ms|s|m|h)/g)) {
-    total += Number(part[1]) * unitSeconds[part[2]];
-  }
-
-  return { seconds: trimmed.startsWith("-") ? -total : total };
-}
-
 /** Validates one bounds row, returning nothing for an untouched one. */
 function parseBoundsRow(
   key: BoundsKey,
@@ -442,7 +392,9 @@ function tuningRangeError(
 
 /** What one knob contributes: a value, nothing at all, or a reason it cannot. */
 type ParsedKnob =
-  { value: MayflyTuningValue } | { omitted: true } | { error: string };
+  | { value: MayflyTuningValue }
+  | { omitted: true }
+  | { error: string };
 
 /** Reads one knob according to its kind. An empty field is omitted, never zero. */
 function parseTuningField(field: MayflyTuningField, raw: string): ParsedKnob {
@@ -488,7 +440,8 @@ function parseTuningField(field: MayflyTuningField, raw: string): ParsedKnob {
 
 /** What buildMayflyTuningDocument answers with. */
 type BuiltTuning =
-  { document: MayflyTuningDocument; count: number } | { errors: FieldErrors };
+  | { document: MayflyTuningDocument; count: number }
+  | { errors: FieldErrors };
 
 /**
  * Builds the `mayflyTuning` document from the knob editor.

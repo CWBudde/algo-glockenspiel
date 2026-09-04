@@ -222,8 +222,16 @@ gen-presets:
 check-presets:
     go run ./cmd/gen-presets --check
 
+# Regenerate the TypeScript mirror of the fit request schema (limits, defaults, name lists)
+gen-fit-schema:
+    go run ./cmd/gen-fit-schema
+
+# Verify the generated fit schema matches internal/fitschema
+check-fit-schema:
+    go run ./cmd/gen-fit-schema --check
+
 # Run all checks (formatting, linting, tests, tidiness, generated files)
-ci: check-formatted test lint check-tidy check-mayfly-tuning check-presets
+ci: check-formatted test lint check-tidy check-mayfly-tuning check-presets check-fit-schema
 
 # Clean build artifacts
 clean:

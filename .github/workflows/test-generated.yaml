@@ -34,3 +34,10 @@ jobs:
       # paint.
       - name: Verify the generated sound list
         run: go run ./cmd/gen-presets --check
+
+      # The fit request schema -- field limits, defaults and name lists -- is
+      # generated from internal/fitschema for the same reason: it used to be
+      # transcribed by hand into web/src/api/types.ts from two Go copies that
+      # had already drifted apart, one accepting requests the other refused.
+      - name: Verify the generated fit schema
+        run: go run ./cmd/gen-fit-schema --check

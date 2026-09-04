@@ -1171,8 +1171,18 @@ Goal: the UI a campaign needs — history, provenance, comparison.
 - [ ] A results view with the reference beside the fit — waveform and spectrogram from the same
       STFT code — A/B audition of both, a parameter table with bound-pinned values highlighted,
       per-term bars, and a run list with a compare picker for cost curves.
-- [ ] Collapse the three limit tables and three optimizer selectors into one generated source,
-      and keep one duration parser per language.
+- [x] Collapse the three limit tables and three optimizer selectors into one generated source,
+      and keep one duration parser per language. Done 2026-09-04. `internal/fitschema` holds the
+      one table and `cmd/gen-fit-schema` writes `web/src/api/fitSchema.generated.ts`, with a
+      `--check` mode in CI and the justfile beside the other generators; `types.ts` re-exports it
+      so no import site moved. Collapsing the copies is what found the divergence it exists to
+      prevent: the browser fit accepted five requests the server refuses, because it never
+      checked the upper bounds on `cmaes-lambda`, `cmaes-restarts`, `mayfly-nc` and
+      `mayfly-nc-ratio`, and never bounded `mayfly-target-cost` at all. Those are now one table's
+      job. Only **two** optimizer selectors were ever left to collapse, not three: the server's
+      became dead weight when item 1 moved it onto `fitrun`, and `internal/browserfit` cannot
+      import `internal/fitrun` without pulling the filesystem into WASM, so the second copy
+      stays and is recorded here rather than abstracted away.
 - [ ] Playwright runs one real short fit through `serve` and asserts that the cost curve falls
       and the comparison view shows both signals.
 - [ ] The browser fit keeps its contract and is documented as the single-threaded demonstration
@@ -1282,7 +1292,7 @@ the schema to fix it, which promoted "gain is searched, not solved" from a revie
 blocker in `## Deferred`; `default.json`'s reference holds one partial, so fitting it writes a
 one-mode preset. [docs/training.md](docs/training.md) holds all of it.
 
-**8.7 is under way, and its first two items are done 2026-09-04.** The Go half is built: the
+**8.7 is under way, and three of its six items are done 2026-09-04.** The Go half is built: the
 server delegates to `internal/fitrun`, every job leaves a run directory under `--work-dir`, the
 409 is replaced by a queue, jobs survive a restart, and the snapshot and the new `/compare`
 payload carry the provenance and the pictures a comparison view needs. Two defects worth carrying
@@ -1290,9 +1300,10 @@ forward, both of the same shape, both caught in review rather than by a gate: th
 first clamped only the render to sixty seconds and left the reference at full length, and it
 first painted each spectrogram against its own noise floor where the objective clamps both to the
 reference's. Either would have drawn a picture that disagreed with the score while looking
-entirely plausible. What remains is the UI itself, the three-way limit-table and optimizer-list
-duplication 8.7 collapses, and the Playwright fit through `serve`. The debt 8.6 named still
-stands until then: the CLI default is `mayfly` while the browser fit still chooses its own.
+entirely plausible. The limit tables and name lists are now one generated source, which is what
+found the browser fit accepting five requests the server refuses. What remains is the UI itself
+and the Playwright fit through `serve`. The debt 8.6 named still stands until then: the CLI
+default is `mayfly` while the browser fit still chooses its own.
 Separately, an output gain is the one thing standing between a measured refit and a shipped
 preset.
 

@@ -18,6 +18,7 @@ import (
 
 	embeddedassets "github.com/cwbudde/algo-glockenspiel/assets"
 	"github.com/cwbudde/algo-glockenspiel/internal/analysis"
+	"github.com/cwbudde/algo-glockenspiel/internal/fitschema"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/cwbudde/algo-glockenspiel/internal/synth"
@@ -25,26 +26,17 @@ import (
 	"github.com/cwbudde/algo-glockenspiel/model"
 )
 
-const (
-	// MaxReferenceBytes matches the HTTP fit service's upload limit.
-	MaxReferenceBytes = 16 << 20
+// MaxReferenceBytes matches the HTTP fit service's upload limit.
+//
+// Every other limit validateRequest holds a field to comes from
+// internal/fitschema directly at the call site, the same table
+// internal/server/params.go reads; this one is kept as a named export
+// because cmd/glockenspiel-fit-wasm reads it to size its own copy.
+const MaxReferenceBytes = fitschema.DefaultMaxReferenceBytes
 
-	maxIterations = 100_000
-	maxTimeBudget = time.Hour
-
-	// maxMayflyRounds bounds the schedule the same way the fit service does:
-	// every round costs at least one iteration, so an unbounded count is a
-	// request to split the budget into slices too thin to search.
-	maxMayflyRounds = 1000
-
-	minSampleRate = 4000
-	maxSampleRate = 192000
-	maxRenderTime = 60 * time.Second
-
-	// yieldInterval bounds how long objective evaluation may run before the
-	// fit hands control back to its caller.
-	yieldInterval = 25 * time.Millisecond
-)
+// yieldInterval bounds how long objective evaluation may run before the fit
+// hands control back to its caller.
+const yieldInterval = 25 * time.Millisecond
 
 // Request is the browser worker's JSON description of one fit.
 type Request struct {
@@ -183,9 +175,9 @@ func New(request Request, referenceWAV, presetJSON, boundsJSON []byte) (*Prepare
 
 	reference, sampleRate := loaded.Samples, loaded.SampleRate
 
-	if sampleRate < minSampleRate || sampleRate > maxSampleRate {
+	if sampleRate < fitschema.MinReferenceSampleRate || sampleRate > fitschema.MaxReferenceSampleRate {
 		return nil, fmt.Errorf("the reference declares a sample rate of %d Hz, outside the supported [%d,%d] range",
-			sampleRate, minSampleRate, maxSampleRate)
+			sampleRate, fitschema.MinReferenceSampleRate, fitschema.MaxReferenceSampleRate)
 	}
 
 	template, err := decodePreset(presetJSON)
@@ -397,6 +389,7 @@ func Render(fitted *preset.Preset, sampleRate, note, velocity int, duration time
 		return nil, fmt.Errorf("velocity must be in [0,127], got %d", velocity)
 	}
 
+	maxRenderTime := time.Duration(fitschema.MaxRenderSeconds * float64(time.Second))
 	if duration <= 0 || duration > maxRenderTime {
 		return nil, fmt.Errorf("duration must be above zero and at most %s", maxRenderTime)
 	}
@@ -419,29 +412,33 @@ func decodePreset(data []byte) (*preset.Preset, error) {
 }
 
 func validateRequest(request Request) (time.Duration, int64, error) {
-	if request.Note < 0 || request.Note > 127 {
-		return 0, 0, fmt.Errorf("note must be in [0,127], got %d", request.Note)
+	noteMin, noteMax := fitschema.IntLimit("note")
+	if request.Note < noteMin || request.Note > noteMax {
+		return 0, 0, fmt.Errorf("note must be in [%d,%d], got %d", noteMin, noteMax, request.Note)
 	}
 
-	if request.Velocity < 0 || request.Velocity > 127 {
-		return 0, 0, fmt.Errorf("velocity must be in [0,127], got %d", request.Velocity)
+	velocityMin, velocityMax := fitschema.IntLimit("velocity")
+	if request.Velocity < velocityMin || request.Velocity > velocityMax {
+		return 0, 0, fmt.Errorf("velocity must be in [%d,%d], got %d", velocityMin, velocityMax, request.Velocity)
 	}
 
+	_, maxIterations := fitschema.IntLimit("maxIterations")
 	if request.MaxIterations < 1 || request.MaxIterations > maxIterations {
 		return 0, 0, fmt.Errorf("maxIterations must be in [1,%d], got %d", maxIterations, request.MaxIterations)
 	}
 
-	if request.ReportEvery < 0 || request.ReportEvery > maxIterations {
-		return 0, 0, fmt.Errorf("reportEvery must be in [0,%d], got %d", maxIterations, request.ReportEvery)
+	_, reportEveryMax := fitschema.IntLimit("reportEvery")
+	if request.ReportEvery < 0 || request.ReportEvery > reportEveryMax {
+		return 0, 0, fmt.Errorf("reportEvery must be in [0,%d], got %d", reportEveryMax, request.ReportEvery)
 	}
 
-	budget, err := parseDuration(request.TimeBudget)
+	budget, err := fitschema.ParseDuration(request.TimeBudget)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, fmt.Errorf("timeBudget %w", err)
 	}
 
-	if budget <= 0 || budget > maxTimeBudget {
-		return 0, 0, fmt.Errorf("timeBudget must be above zero and at most %s, got %s", maxTimeBudget, budget)
+	if budget <= 0 || budget > fitschema.MaxFitTimeBudget {
+		return 0, 0, fmt.Errorf("timeBudget must be above zero and at most %s, got %s", fitschema.MaxFitTimeBudget, budget)
 	}
 
 	seed, err := strconv.ParseInt(strings.TrimSpace(request.MayflySeed), 10, 64)
@@ -449,49 +446,101 @@ func validateRequest(request Request) (time.Duration, int64, error) {
 		return 0, 0, fmt.Errorf("mayflySeed must be a 64-bit whole number, got %q", request.MayflySeed)
 	}
 
-	if request.Optimizer == "mayfly" && (request.MayflyPopulation < 2 || request.MayflyPopulation > 4096) {
-		return 0, 0, fmt.Errorf("mayflyPopulation must be in [2,4096], got %d", request.MayflyPopulation)
+	popMin, popMax := fitschema.IntLimit("mayflyPopulation")
+	if request.Optimizer == "mayfly" && (request.MayflyPopulation < popMin || request.MayflyPopulation > popMax) {
+		return 0, 0, fmt.Errorf("mayflyPopulation must be in [%d,%d], got %d", popMin, popMax, request.MayflyPopulation)
 	}
 
 	if err := validateMayflyTuningScalars(request); err != nil {
 		return 0, 0, err
 	}
 
+	if err := validateCmaesScalars(request); err != nil {
+		return 0, 0, err
+	}
+
 	return budget, seed, nil
 }
 
-// validateMayflyTuningScalars checks the scalar tuning settings against the
-// same ranges the fit service applies, so a browser fit and a server fit reject
-// the same request. The values are checked before they reach a tuning document
-// because mayfly reports an unusable configuration only once the run starts,
-// and by then the caller has already waited for the WASM module and the fit.
+// validateMayflyTuningScalars checks the scalar tuning settings against
+// internal/fitschema, the same table the fit service validates a request
+// against, so a browser fit and a server fit reject the same request. The
+// values are checked before they reach a tuning document because mayfly
+// reports an unusable configuration only once the run starts, and by then
+// the caller has already waited for the WASM module and the fit.
 //
 // A zero epoch or restart count is the omitted key, not a request for zero
 // rounds: both fields are omitempty on the wire and the schedule already
 // defaults to one warm round and no cold ones.
 func validateMayflyTuningScalars(request Request) error {
-	if request.MayflyEpochs != 0 && (request.MayflyEpochs < 1 || request.MayflyEpochs > maxMayflyRounds) {
-		return fmt.Errorf("mayflyEpochs must be in [1,%d], got %d", maxMayflyRounds, request.MayflyEpochs)
+	epochsMin, epochsMax := fitschema.IntLimit("mayflyEpochs")
+	if request.MayflyEpochs != 0 && (request.MayflyEpochs < epochsMin || request.MayflyEpochs > epochsMax) {
+		return fmt.Errorf("mayflyEpochs must be in [%d,%d], got %d", epochsMin, epochsMax, request.MayflyEpochs)
 	}
 
-	if request.MayflyRestarts < 0 || request.MayflyRestarts > maxMayflyRounds {
-		return fmt.Errorf("mayflyRestarts must be in [0,%d], got %d", maxMayflyRounds, request.MayflyRestarts)
+	_, restartsMax := fitschema.IntLimit("mayflyRestarts")
+	if request.MayflyRestarts < 0 || request.MayflyRestarts > restartsMax {
+		return fmt.Errorf("mayflyRestarts must be in [0,%d], got %d", restartsMax, request.MayflyRestarts)
 	}
 
-	if request.MayflyStagnation < 0 || request.MayflyStagnation > maxIterations {
-		return fmt.Errorf("mayflyStagnation must be in [0,%d], got %d", maxIterations, request.MayflyStagnation)
+	_, stagnationMax := fitschema.IntLimit("mayflyStagnation")
+	if request.MayflyStagnation < 0 || request.MayflyStagnation > stagnationMax {
+		return fmt.Errorf("mayflyStagnation must be in [0,%d], got %d", stagnationMax, request.MayflyStagnation)
+	}
+
+	targetCostMin, targetCostMax := fitschema.FloatLimit("mayflyTargetCost")
+
+	if request.MayflyTargetCost != nil {
+		cost := *request.MayflyTargetCost
+		if math.IsNaN(cost) || cost < targetCostMin || cost > targetCostMax {
+			return fmt.Errorf("mayflyTargetCost must be in [%g,%g], got %g", targetCostMin, targetCostMax, cost)
+		}
 	}
 
 	// -1 is mayfly.NCAuto, which derives the offspring count from the ratio, so
 	// it is the floor rather than an error.
-	if request.MayflyNC != nil && *request.MayflyNC < -1 {
-		return fmt.Errorf("mayflyNc must be at least -1, got %d", *request.MayflyNC)
+	ncMin, ncMax := fitschema.IntLimit("mayflyNc")
+	if request.MayflyNC != nil && (*request.MayflyNC < ncMin || *request.MayflyNC > ncMax) {
+		return fmt.Errorf("mayflyNc must be in [%d,%d], got %d", ncMin, ncMax, *request.MayflyNC)
 	}
 
 	// NaN is rejected explicitly because mayfly sanitises a non-finite knob
 	// mid-run: it would not fail, it would quietly become something else.
-	if request.MayflyNCRatio != nil && (*request.MayflyNCRatio < 0 || math.IsNaN(*request.MayflyNCRatio)) {
-		return fmt.Errorf("mayflyNcRatio must be at least 0, got %g", *request.MayflyNCRatio)
+	_, ncRatioMax := fitschema.FloatLimit("mayflyNcRatio")
+
+	if request.MayflyNCRatio != nil {
+		ratio := *request.MayflyNCRatio
+		if math.IsNaN(ratio) || ratio < 0 || ratio > ncRatioMax {
+			return fmt.Errorf("mayflyNcRatio must be in [0,%g], got %g", ncRatioMax, ratio)
+		}
+	}
+
+	return nil
+}
+
+// validateCmaesScalars checks the CMA-ES scalar settings against
+// internal/fitschema. Before this, browserfit left CmaesLambda and
+// CmaesRestarts entirely unchecked -- CMAESOptimizer.Validate only rejects a
+// lambda below 2, never an upper bound, and never looks at RestartLimit at
+// all -- so a browser fit could book a population or a restart count the fit
+// service would have refused as a 400.
+func validateCmaesScalars(request Request) error {
+	// Zero is in every one of these ranges already -- it is the shared
+	// "take the backend's default" spelling for lambda, sigma and the
+	// restart count -- so the range check alone is the whole rule.
+	lambdaMin, lambdaMax := fitschema.IntLimit("cmaesLambda")
+	if request.CmaesLambda < lambdaMin || request.CmaesLambda > lambdaMax {
+		return fmt.Errorf("cmaesLambda must be in [%d,%d], got %d", lambdaMin, lambdaMax, request.CmaesLambda)
+	}
+
+	_, restartsMax := fitschema.IntLimit("cmaesRestarts")
+	if request.CmaesRestarts < 0 || request.CmaesRestarts > restartsMax {
+		return fmt.Errorf("cmaesRestarts must be in [0,%d], got %d", restartsMax, request.CmaesRestarts)
+	}
+
+	sigmaMin, sigmaMax := fitschema.FloatLimit("cmaesSigma")
+	if request.CmaesSigma < sigmaMin || request.CmaesSigma > sigmaMax {
+		return fmt.Errorf("cmaesSigma must be in [%g,%g], got %g", sigmaMin, sigmaMax, request.CmaesSigma)
 	}
 
 	return nil
@@ -546,20 +595,6 @@ func mayflyTuning(request Request) *optimizer.MayflyTuning {
 	}
 
 	return scalars.Overlay(request.MayflyTuning)
-}
-
-func parseDuration(raw string) (time.Duration, error) {
-	trimmed := strings.TrimSpace(raw)
-	if parsed, err := time.ParseDuration(trimmed); err == nil {
-		return parsed, nil
-	}
-
-	seconds, err := strconv.ParseFloat(trimmed, 64)
-	if err != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
-		return 0, fmt.Errorf("timeBudget must be a duration such as 30s or 10m, got %q", raw)
-	}
-
-	return time.Duration(seconds * float64(time.Second)), nil
 }
 
 // selectOptimizer maps the request's backend name onto an implementation. The

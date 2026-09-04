@@ -11,11 +11,11 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 	"slices"
-	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
+	"github.com/cwbudde/algo-glockenspiel/internal/fitschema"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/cwbudde/algo-glockenspiel/internal/synth"
@@ -919,18 +919,12 @@ func (d durationFlag) String() string {
 }
 
 func (d durationFlag) Set(raw string) error {
-	if parsed, err := time.ParseDuration(raw); err == nil {
-		*d.value = parsed
-
-		return nil
-	}
-
-	seconds, err := strconv.ParseFloat(raw, 64)
+	parsed, err := fitschema.ParseDuration(raw)
 	if err != nil {
 		return fmt.Errorf("invalid duration %q: use a Go duration such as 30s or 10m", raw)
 	}
 
-	*d.value = time.Duration(seconds * float64(time.Second))
+	*d.value = parsed
 
 	return nil
 }

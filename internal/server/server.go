@@ -92,7 +92,7 @@ type Config struct {
 	ShutdownTimeout time.Duration
 
 	// MaxReferenceBytes caps an uploaded reference recording. Zero means
-	// defaultMaxReferenceBytes; see there for why that number.
+	// fitschema.DefaultMaxReferenceBytes; see there for why that number.
 	MaxReferenceBytes int64
 
 	// WorkDir is where every served fit writes its run directory, one
