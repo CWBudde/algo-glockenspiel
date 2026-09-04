@@ -54,56 +54,7 @@ Reviewed against the goal above. What exists and works:
 
 What does not match the goal:
 
-- AVX-512 is deferred rather than written, with the reason in `### Phase 8.9: An output gain, so a fit can be shipped
-
-**Done.** A preset carries the level it renders at, and a fit writes it.
-
-`BarParams.OutputGainDB` (`output_gain_db`, ±60 dB, omitted at zero) is a v2 field: it changes
-how a preset renders, so a v1 loader rejects it rather than ignoring it and playing the preset at
-the wrong level. Every preset written before it existed renders bit-identically.
-
-- [x] The gain is solved, not searched. The objective already computes the level in closed form
-      and subtracts it from every term, so a searched gain would have no gradient — it is a gauge
-      dimension of exactly the kind `base_frequency` is excluded for (`params.go:11-19`). Nothing
-      entered the search space: `codec.Dimension()` is unchanged.
-- [x] It costs nothing per sample. `model.Bar` folds it into coefficients it already computes
-      once per retune — the mode amplitudes where the chain after the bank is linear, the
-      shaper's own gains where the shaper sits after the bank, the dry mix either way. The three
-      cases are needed because the shaper is a nonlinearity in the middle of the chain, and
-      `TestOutputGainIsExactlyAScalarOnTheOutput` pins the property the fold rests on: a bar at
-      gain G renders G times what the same bar renders at unity, in every configuration.
-- [x] The codec carries it (`ParamCodec.outputGainDB`). It is not searched, but a decoded
-      candidate has to describe the same sound as its template; while it did not,
-      `glockenspiel distance` reported a fitted preset's render peak 28 dB below where the preset
-      actually plays, and said nothing, because the objective divides the level out again.
-- [x] Both fit write paths measure and write it, at −3 dBFS. The target is not a new number: it
-      is the rule the shipped presets already follow, asserted by
-      `TestBuiltinPresetsRenderNearMinusThreeDBFS`, and the constant now has one home in
-      `internal/synth/level.go` that both the fit and that assertion read. The calibration
-      conditions are fixed at 44.1 kHz and velocity 100 rather than taken from the fit, because
-      the peak is rate-dependent — 48 kHz runs about 0.7 dB hotter, three times the tolerance —
-      so solving at the fit's own rate would have produced presets that failed the promotion rule
-      for a reason that has nothing to do with the preset.
-- [x] The blocked artifact is unblocked. `out/morphagene/seed-4/c6.json` carries
-      `output_gain_db +30.25` and renders at exactly −3.000 dBFS at its own note; its `gain_db`
-      against the Morphagene c6 reference falls from +37.10 to +6.85 and its render peak from
-      −36.07 to −5.82 dBFS.
-
-Two things this pass found that were not what the phase set out to fix, both recorded rather than
-patched:
-
-- The waveform term cannot see a polarity flip: `cross` enters the residual squared, so negating
-  a candidate leaves the score exactly where it was. The projection is now clamped at zero, but
-  measured against every fixture the clamp moves no number — `BestLag` maximises the _signed_
-  correlation and so never hands the residual a negative `cross`. It is a guard against a latent
-  trap, not a live fix, and what actually punishes a flip is the alignment: above about 340 Hz the
-  aligner slides the inversion away and it costs 0.28, below that it cannot and it costs 0.99.
-  Making the first case expensive means scoring the lag itself, which is a different change.
-- The spectral term's absolute magnitude floor rewards a quiet render. See Deferred; it is the
-  reason the level ridge slopes rather than lies flat, and it is the larger of the two.
-
-## Deferred`.
-
+- AVX-512 is deferred rather than written, with the reason in `## Deferred`.
 - The remaining Phase 5 item is payload size. Adding the optimizer makes the raw WASM larger,
   so splitting or lazy-loading the Go payload is the material follow-up rather than a cosmetic
   byte reduction. Two of Phase 5's acceptance criteria — first paint under a second, and
@@ -1313,6 +1264,77 @@ and the reference's provenance all change, and it would still leave campaign run
       servers or a live campaign at one `--work-dir` — today it tells the operator not to, and
       the freshness window is the fallback for when they do anyway. Following a directory makes
       the shared case work rather than merely survive, so the warning is rewritten, not deleted.
+
+### Phase 8.9: An output gain, so a fit can be shipped
+
+**Done.** A preset carries the level it renders at, and a fit writes it.
+
+`BarParams.OutputGainDB` (`output_gain_db`, ±60 dB, omitted at zero) is a **v3** field. Every
+preset written before it existed renders bit-identically.
+
+It started a schema version rather than extending v2, which is where review put it and where the
+first draft had it. Rejecting it in a v1 document protects this repository's own loader and
+nothing else: a v2 reader built before the field existed accepts the document, ignores the key it
+does not know, validates the resulting zero, and renders at unity — up to 60 dB from the level
+the preset was calibrated to, silently. `model/` is tagged `v0.1.0` and a second module builds
+against it, so such readers are not hypothetical. The rule the ladder follows from here: a field
+a reader can ignore without changing the sound may extend a version, and a field it cannot must
+start a new one.
+
+- [x] The gain is solved, not searched. The objective already computes the level in closed form
+      and subtracts it from every term, so a searched gain would have no gradient — it is a gauge
+      dimension of exactly the kind `base_frequency` is excluded for (`params.go:11-19`). Nothing
+      entered the search space: `codec.Dimension()` is unchanged.
+- [x] It costs nothing per sample. `model.Bar` folds it into coefficients it already computes
+      once per retune — the mode amplitudes where the chain after the bank is linear, the
+      shaper's own gains where the shaper sits after the bank, the dry mix either way. The three
+      cases are needed because the shaper is a nonlinearity in the middle of the chain, and
+      `TestOutputGainIsExactlyAScalarOnTheOutput` pins the property the fold rests on: a bar at
+      gain G renders G times what the same bar renders at unity, in every configuration.
+- [x] The codec carries it (`ParamCodec.outputGainDB`). It is not searched, but a decoded
+      candidate has to describe the same sound as its template; while it did not,
+      `glockenspiel distance` reported a fitted preset's render peak 28 dB below where the preset
+      actually plays, and said nothing, because the objective divides the level out again.
+- [x] Both fit write paths measure and write it, at −3 dBFS. The target is not a new number: it
+      is the rule the shipped presets already follow, asserted by
+      `TestBuiltinPresetsRenderNearMinusThreeDBFS`, and the constant now has one home in
+      `internal/synth/level.go` that both the fit and that assertion read. The calibration
+      conditions are fixed at 44.1 kHz and velocity 100 rather than taken from the fit, because
+      the peak is rate-dependent — 48 kHz runs about 0.7 dB hotter, three times the tolerance —
+      so solving at the fit's own rate would have produced presets that failed the promotion rule
+      for a reason that has nothing to do with the preset.
+- [x] The version ladder carries it. `VersionV3` is the version new presets are written in;
+      `rejectNewerFields` reads the raw JSON so that an explicit `"output_gain_db": 0` in a v2
+      document is caught too, which the decoded value cannot distinguish from an omitted field;
+      and `Upgrade` restamps a v1 or v2 document without changing what it renders.
+      `TestV2RejectsTheOutputGain` pins the reason the version exists. A preset that needs no
+      gain is left at whatever version it arrived in, so nothing that could be read before
+      becomes unreadable.
+- [x] Every path that hands a preset to a listener calibrates it, the browser included. The
+      browser fitter decodes an optimizer point straight into a downloadable and auditionable
+      preset, so for a while it was the one path that shipped the drifted level — the exact
+      failure the phase exists to fix. `browserfit.Calibrate` sits at the single choke point both
+      the download and the audition pass through, rather than on the progress path, which decodes
+      a preset on every optimizer report.
+- [x] The blocked artifact is unblocked. `out/morphagene/seed-4/c6.json` carries
+      `output_gain_db +30.25` and renders at exactly −3.000 dBFS at its own note; its `gain_db`
+      against the Morphagene c6 reference falls from +37.10 to +6.85 and its render peak from
+      −36.07 to −5.82 dBFS.
+
+Two things this pass found that were not what the phase set out to fix, both recorded rather than
+patched:
+
+- The waveform term cannot see a polarity flip: `cross` enters the residual squared, so negating
+  a candidate leaves the score exactly where it was. The projection is now clamped at zero, but
+  measured against every fixture the clamp moves no number — `BestLag` maximises the _signed_
+  correlation and so never hands the residual a negative `cross`. It is a guard against a latent
+  trap, not a live fix, and what actually punishes a flip is the alignment: above about 340 Hz the
+  aligner slides the inversion away and it costs 0.28, below that it cannot and it costs 0.99.
+  Making the first case expensive means scoring the lag itself, which is a different change.
+- The spectral term's absolute magnitude floor rewards a quiet render. See Deferred; it is the
+  reason the level ridge slopes rather than lies flat, and it is the larger of the two.
+
+---
 
 ## Deferred
 
