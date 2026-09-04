@@ -345,6 +345,52 @@ export interface FitProfileTerm {
 }
 
 /* ------------------------------------------------------------------ */
+/* The job history                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `GET api/fit/jobs`: the run history. `jobManager.history` in
+ * internal/server/job.go already answers newest first; `sortRunsNewestFirst`
+ * in RunList.tsx re-sorts on the client anyway, so a caller's reading of this
+ * list does not depend on the server's ordering staying that way.
+ */
+export interface FitJobList {
+  jobs: FitJobListEntry[];
+}
+
+/**
+ * One row of the job history: `fitJobListing` in internal/server/jobs.go.
+ *
+ * It is deliberately not a `FitSnapshot`. A history is read whole, one row
+ * per fit, and a snapshot carries the metric breakdown and the pinned
+ * dimensions of every one of them; a client that wants those asks for the job
+ * itself with `getFitJob`.
+ */
+export interface FitJobListEntry {
+  jobId: string;
+  state: FitState;
+
+  startedAt: string;
+  finishedAt?: string;
+
+  /** The best cost the run has found; for a job still going, still moving. */
+  bestCost: number;
+
+  /**
+   * What the run recorded in result.json, absent until there is one. It is
+   * the same number as `bestCost` for a finished run, and that is the point:
+   * it says the run shipped that cost rather than merely having reached it,
+   * which is what makes a row comparable with a campaign's.
+   */
+  score?: number;
+
+  note: number;
+  velocity: number;
+  optimizer: OptimizerName;
+  metric: MetricName;
+}
+
+/* ------------------------------------------------------------------ */
 /* The comparison                                                      */
 /* ------------------------------------------------------------------ */
 

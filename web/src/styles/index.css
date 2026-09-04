@@ -1431,6 +1431,107 @@ h1 {
 }
 
 /* ------------------------------------------------------------------ */
+/* The run list                                                        */
+/* ------------------------------------------------------------------ */
+
+.run-list {
+  margin-top: var(--space-3xl);
+  padding: var(--space-2xl);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-group);
+  background: var(--panel-fill);
+}
+
+.run-list h3 {
+  margin: 0 0 var(--space-md);
+  color: var(--charcoal);
+  font-family: var(--font-display);
+  font-size: var(--type-title-sm);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.run-list-table {
+  overflow-x: auto;
+}
+
+.run-list-head,
+.run-list-row {
+  display: grid;
+  grid-template-columns:
+    minmax(90px, 0.9fr) minmax(90px, 0.9fr) minmax(90px, 0.9fr)
+    minmax(80px, 0.8fr) minmax(50px, 0.5fr) minmax(90px, 0.9fr);
+  gap: var(--space-sm) var(--space-lg);
+  align-items: center;
+  min-width: 520px;
+}
+
+.run-list-head {
+  padding: 0 var(--space-md) var(--space-2xs);
+  color: var(--charcoal-muted);
+  font-size: 0.76rem;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.run-list-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.run-list-row {
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid transparent;
+  border-radius: var(--radius-button);
+  background: none;
+  color: var(--charcoal);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.run-list-row:hover {
+  background: var(--panel-fill-soft);
+}
+
+.run-list-row[aria-pressed="true"] {
+  border-color: var(--copper-accent);
+  background: var(--panel-fill-strong);
+}
+
+.run-list-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-list-numeric {
+  font-variant-numeric: tabular-nums;
+}
+
+.run-list-state {
+  font-weight: 600;
+}
+
+.run-list-row[data-state="running"] .run-list-state {
+  color: var(--state-ready);
+}
+
+.run-list-row[data-state="queued"] .run-list-state {
+  color: var(--charcoal-muted);
+}
+
+.run-list-row[data-state="failed"] .run-list-state {
+  color: var(--error-strong);
+}
+
+.run-list-row[data-state="canceled"] .run-list-state {
+  color: var(--charcoal-muted);
+}
+
+/* ------------------------------------------------------------------ */
 /* The fit form                                                        */
 /* ------------------------------------------------------------------ */
 

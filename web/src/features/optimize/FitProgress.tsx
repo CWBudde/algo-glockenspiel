@@ -15,6 +15,15 @@ export interface FitProgressProps {
    */
   jobId: string | null;
   /**
+   * The job the server (or the browser worker) currently considers active --
+   * distinct from `jobId`, which is whatever is being *displayed* and may be
+   * a historical run picked from the run list. Audition needs to tell the two
+   * apart: its audio and preset endpoints always answer about the active job,
+   * never about an arbitrary id, so it must not offer them for a `jobId` that
+   * is not this one.
+   */
+  activeJobId: string | null;
+  /**
    * The `maxIterations` the fit was started with, for the "n of m" reading.
    * The snapshot does not carry it -- the server does not echo the request
    * back -- so the form that sent it supplies it. Null when it is not known.
@@ -51,6 +60,7 @@ export interface FitProgressProps {
  */
 export function FitProgress({
   jobId,
+  activeJobId,
   maxIterations,
   onSnapshot,
   events,
@@ -107,6 +117,7 @@ export function FitProgress({
 
       <Audition
         snapshot={snapshot}
+        activeJobId={activeJobId}
         artifacts={artifacts}
         onUseInPlay={onUseInPlay}
       />

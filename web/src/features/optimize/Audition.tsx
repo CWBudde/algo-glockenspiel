@@ -8,6 +8,14 @@ const maxRenderSeconds = 60;
 
 export interface AuditionProps {
   snapshot: FitSnapshot | null;
+  /**
+   * The job the server (or the browser worker) currently considers active.
+   * The audio and preset reads below are hardcoded to the current-job
+   * endpoints -- `api/fit/audio`, `getFitPreset()` -- which always answer
+   * about this job, never about `snapshot.jobId` if that names something
+   * else. See `auditionAppliesToActiveJob`.
+   */
+  activeJobId: string | null;
   artifacts?: FitArtifacts | undefined;
   /**
    * Makes the fitted preset choosable in the Play tab and returns the name it
@@ -43,6 +51,25 @@ function defaultDuration(referenceSeconds: number): number {
 }
 
 /**
+ * Whether the audition and download controls may act on the displayed
+ * snapshot.
+ *
+ * `api/fit/audio` and `getFitPreset()` (`api/fit/preset`) both always answer
+ * about whichever job the server currently considers active; there is no
+ * per-job URL wired in here yet. A snapshot picked from the run list can name
+ * a different, historical job, and offering the controls for it would play
+ * or download the active run's audio under the picked run's label -- wrong
+ * and silent about being wrong. `jobId === null` is refused too: it means
+ * nothing is displayed, which is never the active job either.
+ */
+export function auditionAppliesToActiveJob(
+  jobId: string | null,
+  activeJobId: string | null,
+): boolean {
+  return jobId !== null && jobId === activeJobId;
+}
+
+/**
  * Play the fitted preset, and download it.
  *
  * The gate is `hasPreset`, not `state === "succeeded"`. The Go comment on that
@@ -51,11 +78,17 @@ function defaultDuration(referenceSeconds: number): number {
  * long mayfly run wants to hear. Gating on the state instead would hide a
  * perfectly good preset behind a "canceled" label.
  */
-export function Audition({ snapshot, artifacts, onUseInPlay }: AuditionProps) {
+export function Audition({
+  snapshot,
+  activeJobId,
+  artifacts,
+  onUseInPlay,
+}: AuditionProps) {
   const hasPreset = snapshot?.hasPreset ?? false;
 
   const jobId = snapshot?.jobId ?? null;
   const referenceSeconds = snapshot?.referenceSeconds ?? 0;
+  const activeJobApplies = auditionAppliesToActiveJob(jobId, activeJobId);
 
   // Both pieces of state are stamped with the job they belong to and read only
   // when the stamp still matches. A new job therefore falls back to the new
@@ -131,6 +164,23 @@ export function Audition({ snapshot, artifacts, onUseInPlay }: AuditionProps) {
         <p className="optimize-note">
           There is nothing to play yet. A preset becomes available as soon as
           the fit has reported once, even if it is later cancelled.
+        </p>
+      </section>
+    );
+  }
+
+  if (!activeJobApplies) {
+    // The audio and preset reads below only ever answer about the active
+    // job, so they are withheld rather than pointed at the wrong run's
+    // sound: a picked historical run shows its own numbers and cost curve
+    // above, but audition and download stay tied to whatever is running now.
+    return (
+      <section className="optimize-audition" aria-labelledby="audition-heading">
+        <h3 id="audition-heading">Audition</h3>
+        <p className="optimize-note">
+          Audition and download follow the active run, not the one selected
+          above. Select the active run in the list, or start a new fit, to
+          hear or download it.
         </p>
       </section>
     );

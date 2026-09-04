@@ -8,11 +8,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { FitApiError, getFitStatus } from "../api/fit";
+import { FitApiError, getFitJob, getFitStatus } from "../api/fit";
 import type { FitSnapshot } from "../api/types";
 import { FitForm, type FitActions } from "../features/optimize/FitForm";
 import { FitProgress } from "../features/optimize/FitProgress";
+import { RunList } from "../features/optimize/RunList";
 import type { ApiProbe } from "../features/optimize/useApiAvailable";
+import type { FitEvents } from "../features/optimize/useFitEvents";
 import type { WasmFitWorker } from "../features/optimize/useWasmFitWorker";
 
 /** The command that makes the fit API reachable. */
@@ -53,6 +55,25 @@ export function OptimizePage({ api, wasm, onUseInPlay }: OptimizePageProps) {
   // iteration count rather than "n of m" against an m that is not this fit's.
   const [limit, setLimit] = useState<StartLimit | null>(null);
 
+  // The job the run list has picked, distinct from the one the form's Start
+  // and Cancel buttons act on: those always follow serverSnapshot, the most
+  // recent job this page is tracking, however the list is scrolled. Null
+  // means "no explicit pick", which reads as "follow the active job" -- the
+  // page's behaviour before the list existed, and what a client that never
+  // shows the list (the WASM path) always does.
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+
+  // The selected job's own snapshot, read once rather than streamed: SSE
+  // (api/fit/events) always answers about whichever job the server considers
+  // active, never about an id in the URL, so a history row that is not that
+  // job has to be read with getFitJob instead. `jobId` is stamped alongside
+  // the answer so a stale fetch for a row the user has since left never
+  // overwrites what is now selected.
+  const [selectedRead, setSelectedRead] = useState<{
+    jobId: string;
+    snapshot: FitSnapshot | null;
+  } | null>(null);
+
   const onSnapshot = useCallback((next: FitSnapshot, startedWith?: number) => {
     setServerSnapshot(next);
 
@@ -60,6 +81,13 @@ export function OptimizePage({ api, wasm, onUseInPlay }: OptimizePageProps) {
       setLimit({ jobId: next.jobId, maxIterations: startedWith });
     }
   }, []);
+
+  // FitProgress's onSnapshot prop is required, not optional, when a caller
+  // wants the "started with a limit" overload; a picked historical row is
+  // read once, has nothing to report back, and must not be allowed to feed
+  // its stale snapshot into the active job's state, so it gets this no-op
+  // instead of the real callback.
+  const ignoreSnapshot = useCallback(() => {}, []);
 
   const browserMode = availability === "unavailable";
   const snapshot = browserMode ? wasm.events.snapshot : serverSnapshot;
@@ -77,6 +105,38 @@ export function OptimizePage({ api, wasm, onUseInPlay }: OptimizePageProps) {
 
   const limitApplies = limit !== null && limit.jobId === snapshot?.jobId;
   const maxIterations = limitApplies ? limit.maxIterations : null;
+
+  // "Active" here means the job the page is already tracking through
+  // serverSnapshot -- the one the form and the SSE stream follow -- not
+  // whatever the server happens to be running: another client's queued job
+  // becoming the server's active one is not a reason to yank this page's
+  // results panel out from under whatever the user picked. Selecting the
+  // page's own active job (or never selecting at all) is the only way back
+  // to the live view.
+  const viewingActive =
+    browserMode || selectedJobId === null || selectedJobId === snapshot?.jobId;
+  const selectedSnapshot =
+    !viewingActive && selectedRead?.jobId === selectedJobId
+      ? selectedRead.snapshot
+      : null;
+  const progressJobId = viewingActive
+    ? (snapshot?.jobId ?? null)
+    : selectedJobId;
+
+  // A picked historical row is shown from one read, not a stream: passing a
+  // ready-made FitEvents through FitProgress's `events` prop is what lets it
+  // skip its own useFitEvents(jobId) call, which would otherwise open
+  // api/fit/events and draw whatever job the server currently considers
+  // active under the id of the one that was actually picked.
+  const historicalEvents: FitEvents | undefined = viewingActive
+    ? undefined
+    : {
+        snapshot: selectedSnapshot,
+        points: [],
+        revision: 0,
+        streaming: false,
+        streamError: null,
+      };
   const serviceStatus =
     availability === "probing"
       ? "Checking fit service"
@@ -121,6 +181,42 @@ export function OptimizePage({ api, wasm, onUseInPlay }: OptimizePageProps) {
       cancelled = true;
     };
   }, [availability]);
+
+  // Reads the row the run list picked, whenever it names a job other than the
+  // one already tracked live. Picking the active job itself needs no read --
+  // serverSnapshot already has it -- which is what keeps a click back onto the
+  // live row instant instead of round-tripping through the network.
+  useEffect(() => {
+    if (
+      availability !== "available" ||
+      selectedJobId === null ||
+      selectedJobId === serverSnapshot?.jobId
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    // No "loading" write here: selectedSnapshot below already reads as null
+    // for any jobId that does not match selectedRead's, so a newly picked
+    // row shows nothing until this read lands rather than briefly showing
+    // the row picked before it.
+    getFitJob(selectedJobId)
+      .then((job) => {
+        if (!cancelled) {
+          setSelectedRead({ jobId: selectedJobId, snapshot: job });
+        }
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) {
+          console.error(`Reading fit ${selectedJobId} failed`, cause);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [availability, selectedJobId, serverSnapshot?.jobId]);
 
   return (
     <section className="optimize-panel" aria-labelledby="optimize-heading">
@@ -178,22 +274,38 @@ export function OptimizePage({ api, wasm, onUseInPlay }: OptimizePageProps) {
       </div>
 
       {availability === "available" || wasmActions !== undefined ? (
-        <div className="optimize-workspace">
-          <FitForm
-            actions={browserMode ? wasmActions : undefined}
-            onSnapshot={onSnapshot}
-            snapshot={snapshot}
-          />
+        <>
+          {/*
+            The run list has no meaning in the WASM path: there is no
+            filesystem behind it, no history to page through, only the one
+            in-memory run the worker is doing right now. Rendering nothing
+            here, rather than an empty list, is item 6's contract -- the
+            existing Playwright snapshots of that path cover exactly this.
+          */}
+          {!browserMode && (
+            <RunList selectedJobId={selectedJobId} onSelect={setSelectedJobId} />
+          )}
 
-          <FitProgress
-            artifacts={browserMode ? (wasm.client ?? undefined) : undefined}
-            events={browserMode ? wasm.events : undefined}
-            jobId={snapshot?.jobId ?? null}
-            maxIterations={maxIterations}
-            onSnapshot={onSnapshot}
-            onUseInPlay={onUseInPlay}
-          />
-        </div>
+          <div className="optimize-workspace">
+            <FitForm
+              actions={browserMode ? wasmActions : undefined}
+              onSnapshot={onSnapshot}
+              snapshot={snapshot}
+            />
+
+            <FitProgress
+              activeJobId={snapshot?.jobId ?? null}
+              artifacts={browserMode ? (wasm.client ?? undefined) : undefined}
+              events={browserMode ? wasm.events : historicalEvents}
+              jobId={progressJobId}
+              maxIterations={maxIterations}
+              onSnapshot={
+                browserMode || viewingActive ? onSnapshot : ignoreSnapshot
+              }
+              onUseInPlay={onUseInPlay}
+            />
+          </div>
+        </>
       ) : null}
     </section>
   );

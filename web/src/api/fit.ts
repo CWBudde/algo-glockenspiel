@@ -8,7 +8,14 @@
  * 404 there.
  */
 
-import type { ApiError, FitSnapshot, Preset, VersionResponse } from "./types";
+import type {
+  ApiError,
+  FitCompare,
+  FitJobList,
+  FitSnapshot,
+  Preset,
+  VersionResponse,
+} from "./types";
 
 /** The base every request is resolved against. */
 const API_BASE = "api/";
@@ -200,4 +207,112 @@ export function fitEventsUrl(): string {
  */
 export function getVersion(): Promise<VersionResponse> {
   return requestJSON<VersionResponse>("version");
+}
+
+/* ------------------------------------------------------------------ */
+/* The job history                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Lists every job the run so far has kept, newest first.
+ *
+ * This is a history read, not a live one: a job still queued or running is
+ * included with whatever it has reported so far, but nothing here streams --
+ * a caller watching one run keeps using `fitEventsUrl`/`useFitEvents`, and
+ * calls this again to learn that the list itself has changed.
+ */
+export function listFitJobs(): Promise<FitJobList> {
+  return requestJSON<FitJobList>("fit/jobs");
+}
+
+/**
+ * Reads one job by id, in the same shape `getFitStatus` answers in.
+ *
+ * Unlike `getFitStatus`, which only ever answers about the most recent job,
+ * this reaches any job the history still holds -- including one from a
+ * previous server process, since a run directory survives a restart and the
+ * job is rebuilt from it the first time something asks.
+ */
+export function getFitJob(jobId: string): Promise<FitSnapshot> {
+  return requestJSON<FitSnapshot>(`fit/jobs/${encodeURIComponent(jobId)}`);
+}
+
+/**
+ * Reads one job's trace file as it is on disk: one JSON document per line,
+ * newline-delimited, not itself valid JSON. It is not decoded here -- a
+ * caller that wants the parsed records splits on "\n" and parses each line --
+ * because the file can be large and a caller that only wants its length, or
+ * to hand it to a download, has no reason to pay for a parse it does not use.
+ */
+export async function getFitJobTrace(jobId: string): Promise<string> {
+  const response = await fetch(
+    `${API_BASE}fit/jobs/${encodeURIComponent(jobId)}/trace`,
+  );
+
+  if (!response.ok) {
+    throw await toError(response);
+  }
+
+  return response.text();
+}
+
+/** The resolution `getFitJobCompare` asks the server to reduce the pictures to. */
+export interface FitJobCompareOptions {
+  /** Waveform envelope columns; the server clamps to [1, 4096]. */
+  columns?: number;
+  /** Spectrogram columns; the server clamps to [1, 256]. */
+  frames?: number;
+}
+
+/**
+ * Reads one job's comparison: the reference the objective actually scored,
+ * and a render of the fitted preset, both reduced to a drawable size by the
+ * server so the picture agrees with the score.
+ */
+export function getFitJobCompare(
+  jobId: string,
+  options?: FitJobCompareOptions,
+): Promise<FitCompare> {
+  const query = new URLSearchParams();
+
+  if (options?.columns !== undefined) {
+    query.set("columns", String(options.columns));
+  }
+
+  if (options?.frames !== undefined) {
+    query.set("frames", String(options.frames));
+  }
+
+  const suffix = query.size === 0 ? "" : `?${query.toString()}`;
+
+  return requestJSON<FitCompare>(
+    `fit/jobs/${encodeURIComponent(jobId)}/compare${suffix}`,
+  );
+}
+
+/** The URL one job's fitted preset downloads from. */
+export function fitJobPresetUrl(jobId: string): string {
+  return `${API_BASE}fit/jobs/${encodeURIComponent(jobId)}/preset`;
+}
+
+/**
+ * The URL of an audition render of one job's fitted preset.
+ *
+ * `seconds` follows `fitAudioUrl`'s `duration`: omitted, it falls back to the
+ * job's own reference length, capped the way the server caps it.
+ */
+export function fitJobAudioUrl(jobId: string, seconds?: number): string {
+  const suffix =
+    seconds === undefined ? "" : `?duration=${encodeURIComponent(String(seconds))}`;
+
+  return `${API_BASE}fit/jobs/${encodeURIComponent(jobId)}/audio${suffix}`;
+}
+
+/**
+ * The URL of the reference the job actually scored against: the cut,
+ * downmixed, peak-normalised mono `reference.wav` from the run directory, not
+ * the original upload.
+ */
+export function fitJobReferenceUrl(jobId: string): string {
+  return `${API_BASE}fit/jobs/${encodeURIComponent(jobId)}/reference`;
 }
