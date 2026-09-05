@@ -35,10 +35,22 @@ func newRunConfig(spec Spec, identity Identity, prepared *preparation, started t
 		GeneratedBy:      spec.GeneratedBy,
 		Name:             spec.Name,
 		Identity:         identity,
-		Reference:        prepared.reference,
 		Started:          started,
 		StrictBounds:     spec.StrictBounds,
 		Gain:             gainName(spec.Gain),
+
+		SearchDecayKeytrack: spec.SearchDecayKeytrack,
+	}
+
+	if len(spec.References) > 0 {
+		config.References = make([]noteReferenceRecord, 0, len(prepared.notes))
+		for _, note := range prepared.notes {
+			config.References = append(config.References,
+				noteReferenceRecord{referenceRecord: note.record, Note: note.note})
+		}
+	} else {
+		reference := prepared.reference
+		config.Reference = &reference
 	}
 
 	if spec.Bounds != nil {
@@ -73,9 +85,20 @@ func finish(
 		return nil, err
 	}
 
-	metrics, err := prepared.objective.EvaluateMetrics(bestEncoded)
+	perNote, err := prepared.objective.EvaluatePerNote(bestEncoded)
 	if err != nil {
 		return nil, err
+	}
+
+	// A joint fit has no single set of terms; see Summary.Terms. Matched and
+	// ReferencePartials go the same way, because they are counts of one note's
+	// partial list against one note's model partials.
+	metrics := optimizer.UnmeasuredMetrics()
+	noteTerms := perNote
+
+	if len(spec.References) == 0 {
+		metrics = perNote[0].Metrics
+		noteTerms = nil
 	}
 
 	pinned, err := prepared.objective.Codec().Pinned(bestEncoded)
@@ -87,6 +110,7 @@ func finish(
 		Score:             bestCost,
 		Profile:           prepared.profile.Name,
 		Terms:             metrics,
+		NoteTerms:         noteTerms,
 		Evaluations:       result.Evaluations,
 		Iterations:        result.Iterations,
 		Restarts:          result.Restarts,
@@ -109,6 +133,12 @@ func finish(
 	fitted := *prepared.template
 	fitted.Parameters = *bestParams
 
+	// The search may have given the preset a field its template's version does
+	// not cover -- a keytrack, above all, which only a joint fit can produce.
+	// Stamping here rather than at save time is deliberate: setOutputGain builds
+	// a synthesizer to measure the level, and that validates.
+	preset.Stamp(&fitted)
+
 	if spec.Name != "" {
 		fitted.Name = spec.Name
 	}
@@ -117,7 +147,7 @@ func finish(
 		return nil, err
 	}
 
-	fitted.Provenance, err = provenanceFor(spec, config.Identity, prepared.reference, summary, *chosen)
+	fitted.Provenance, err = provenanceFor(spec, config.Identity, prepared, summary, *chosen)
 	if err != nil {
 		return nil, err
 	}
@@ -144,10 +174,17 @@ func finish(
 		return nil, err
 	}
 
-	err = renderPreset(filepath.Join(spec.Dir, FileRender), &fitted,
-		spec.SampleRate, spec.Note, spec.Velocity, len(prepared.samples))
-	if err != nil {
-		return nil, err
+	// One render per reference, beside the recording it should be compared
+	// against. For a single reference that is the top-level render.wav it has
+	// always been; for several it is notes/<nnn>/render.wav, and there is no
+	// top-level one, so nothing can compare a twenty-note fit against one
+	// note's recording by reading two files with promising names.
+	for _, note := range prepared.notes {
+		err = renderPreset(filepath.Join(spec.Dir, note.dir, FileRender), &fitted,
+			spec.SampleRate, note.note, spec.Velocity, len(note.samples))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if err := writeJSONFile(filepath.Join(spec.Dir, FileResult), summary); err != nil {

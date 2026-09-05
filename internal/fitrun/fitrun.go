@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,6 +16,7 @@ import (
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/cwbudde/algo-glockenspiel/internal/wavio"
+	"github.com/cwbudde/algo-glockenspiel/model"
 )
 
 // analysisMinFrameSize is the smallest window the reference's partials are
@@ -23,14 +25,29 @@ import (
 const analysisMinFrameSize = 256
 
 // preparation is everything the search needs, built once before it starts.
+//
+// notes holds one entry per reference and is never empty. reference and samples
+// are its first entry, kept as fields because every single-note path -- the
+// config record, the provenance block, the render length -- reads them and a
+// multi-reference run has no single answer for them.
 type preparation struct {
 	reference   referenceRecord
 	samples     []float32
+	notes       []notePreparation
 	template    *preset.Preset
 	seededModes int
 	objective   *optimizer.ObjectiveFunction
 	initial     []float64
 	profile     optimizer.Profile
+}
+
+// notePreparation is one loaded, measured recording.
+type notePreparation struct {
+	record      referenceRecord
+	samples     []float32
+	note        int
+	measurement *analysis.Measurement
+	dir         string
 }
 
 // Run performs one fit and writes the run directory for it.
@@ -80,57 +97,27 @@ func Run(ctx context.Context, spec Spec, log io.Writer) (*Outcome, error) {
 	return search(ctx, spec, prepared, out)
 }
 
-// prepare loads and measures the reference and builds the objective around it.
+// prepare loads and measures every reference and builds the objective around
+// them.
 func prepare(spec Spec, out io.Writer) (*preparation, error) {
-	loaded, err := analysis.LoadReference(spec.ReferencePath, spec.Reference)
+	notes, err := loadReferences(spec, out)
 	if err != nil {
 		return nil, err
 	}
 
-	if loaded.SampleRate != spec.SampleRate {
-		return nil, fmt.Errorf("reference sample rate %d does not match requested sample rate %d",
-			loaded.SampleRate, spec.SampleRate)
-	}
+	// The seed, the frequency box and the partial term all read one
+	// measurement. For a multi-reference fit that is the authored note's, which
+	// is the only one whose partials are already in the preset's own frame: a
+	// mode seeded from another note would have to be transposed here, and the
+	// seed does that transposition once rather than twice.
+	seedNote := notes[0]
 
-	sum, err := FileSHA256(spec.ReferencePath)
-	if err != nil {
-		return nil, err
-	}
+	for _, note := range notes {
+		if note.note == spec.Note {
+			seedNote = note
 
-	_, _ = fmt.Fprintf(out, "reference %s: channel %s of %d, cut %d..%d (%.3f s, %s)\n",
-		spec.ReferencePath, loaded.Downmix, loaded.Channels, loaded.Onset, loaded.End, loaded.Seconds, loaded.EndRule)
-
-	// The analysis document is written from the same cut the objective scores,
-	// so the partials in it are the ones the fit was actually shaped by rather
-	// than a second measurement of the same file under other options.
-	document, err := analysis.AnalyzeReference(spec.ReferencePath, loaded,
-		analysis.PartialOptions{FrameSize: analysisFrameSize(len(loaded.Samples))})
-	if err != nil {
-		return nil, err
-	}
-
-	if err := document.WriteFile(filepath.Join(spec.Dir, FileAnalysis)); err != nil {
-		return nil, err
-	}
-
-	// Written next to analysis.json rather than derived later from
-	// reference_options, because this is the signal the objective actually
-	// scored: loaded, cut, downmixed and peak-normalised. A caller comparing
-	// it against render.wav is comparing what the fit saw, not a fresh reload
-	// of the original file under whatever policy it can reconstruct.
-	if err := wavio.WriteMono(filepath.Join(spec.Dir, FileReference), spec.SampleRate, loaded.Samples); err != nil {
-		return nil, err
-	}
-
-	// Measured through the optimizer's own entry point rather than reused from
-	// the document above: the seed, the frequency box and the partial term all
-	// have to read one measurement, and that is the one they read in the fit
-	// command too. A caller that brought its own document is fitting against
-	// that document, so it replaces the measurement everywhere at once rather
-	// than in the objective alone.
-	measurement := spec.Analysis
-	if measurement == nil {
-		measurement = optimizer.MeasureReference(loaded.Samples, spec.SampleRate)
+			break
+		}
 	}
 
 	template, err := templateFor(spec)
@@ -138,7 +125,21 @@ func prepare(spec Spec, out io.Writer) (*preparation, error) {
 		return nil, err
 	}
 
-	seeded, seededModes, err := optimizer.SeedPreset(template, measurement, spec.Note, spec.Modes)
+	// Authoring the preset where the caller asked rather than wherever the
+	// template happened to sit. The transposition is the model's own, so the
+	// template still describes the same sound; what changes is the frame its
+	// numbers are written in, and therefore whether a fitted mode frequency can
+	// be read as a partial of the recording.
+	if spec.AuthoredNote != 0 && spec.AuthoredNote != template.Note {
+		model.TransposeToNote(&template.Parameters, template.Note, spec.AuthoredNote)
+		template.Note = spec.AuthoredNote
+
+		if err := preset.Validate(template); err != nil {
+			return nil, fmt.Errorf("the template cannot be authored at note %d: %w", spec.AuthoredNote, err)
+		}
+	}
+
+	seeded, seededModes, err := optimizer.SeedPreset(template, seedNote.measurement, seedNote.note, spec.Modes)
 	if err != nil {
 		return nil, err
 	}
@@ -147,9 +148,9 @@ func prepare(spec Spec, out io.Writer) (*preparation, error) {
 
 	config := optimizer.DefaultObjectiveConfig(spec.Metric)
 	config.Bounds = optimizer.DefaultParamBounds
-	config.Bounds.Frequency = optimizer.FrequencyBoundsFor(measurement, spec.SampleRate, seeded.Note, spec.Note)
+	config.Bounds.Frequency = frequencyBounds(notes, spec, seeded.Note)
 	config.StrictBounds = false
-	config.Analysis = measurement
+	config.Analysis = seedNote.measurement
 
 	if spec.Bounds != nil {
 		// A caller's own box replaces the whole thing, frequency included: it
@@ -163,10 +164,24 @@ func prepare(spec Spec, out io.Writer) (*preparation, error) {
 	}
 
 	config.Gain = spec.Gain
+	config.SearchDecayKeytrack = spec.SearchDecayKeytrack
 
-	objective, err := optimizer.NewObjectiveFunctionWithConfig(
-		loaded.Samples, seeded, spec.SampleRate, spec.Note, spec.Velocity, config,
-	)
+	inputs := make([]optimizer.ReferenceInput, 0, len(notes))
+	for _, note := range notes {
+		inputs = append(inputs, optimizer.ReferenceInput{
+			Samples: note.samples, Note: note.note, Analysis: note.measurement,
+		})
+	}
+
+	var objective *optimizer.ObjectiveFunction
+
+	if len(spec.References) > 0 {
+		objective, err = optimizer.NewMultiNoteObjective(inputs, seeded, spec.SampleRate, spec.Velocity, config)
+	} else {
+		objective, err = optimizer.NewObjectiveFunctionWithConfig(
+			notes[0].samples, seeded, spec.SampleRate, spec.Note, spec.Velocity, config)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -217,8 +232,9 @@ func prepare(spec Spec, out io.Writer) (*preparation, error) {
 	}
 
 	return &preparation{
-		reference:   referenceRecord{Path: spec.ReferencePath, SHA256: sum, Reference: *loaded},
-		samples:     loaded.Samples,
+		reference:   notes[0].record,
+		samples:     notes[0].samples,
+		notes:       notes,
 		template:    seeded,
 		seededModes: seededModes,
 		objective:   objective,
@@ -413,4 +429,128 @@ func shouldCheckpoint(optimizerIterations, lastCheckpointed, checkpointEvery int
 	}
 
 	return optimizerIterations-lastCheckpointed >= checkpointEvery
+}
+
+// loadReferences loads, measures and records every recording the spec names,
+// writing each one's analysis.json and reference.wav where a reader will look
+// for it.
+//
+// A single-reference run writes them at the top of the run directory, exactly
+// where they have always been; a multi-reference run writes them under
+// notes/<nnn>/ and writes nothing at the top at all. The asymmetry is
+// deliberate: a top-level reference.wav beside a twenty-note fit would be one
+// note's recording under a name that promises the fit's, and every consumer
+// reading it by name -- the server's comparison, a campaign collect -- would
+// draw a picture that disagreed with the score for a reason nothing said.
+func loadReferences(spec Spec, out io.Writer) ([]notePreparation, error) {
+	type source struct {
+		path string
+		note int
+		dir  string
+	}
+
+	sources := make([]source, 0, max(1, len(spec.References)))
+
+	if len(spec.References) == 0 {
+		sources = append(sources, source{path: spec.ReferencePath, note: spec.Note})
+	} else {
+		for _, ref := range spec.References {
+			sources = append(sources, source{
+				path: ref.Path,
+				note: ref.Note,
+				dir:  filepath.Join(NotesDir, fmt.Sprintf("%03d", ref.Note)),
+			})
+		}
+	}
+
+	notes := make([]notePreparation, 0, len(sources))
+
+	for _, src := range sources {
+		loaded, err := analysis.LoadReference(src.path, spec.Reference)
+		if err != nil {
+			return nil, err
+		}
+
+		if loaded.SampleRate != spec.SampleRate {
+			return nil, fmt.Errorf("reference %s has sample rate %d, which does not match the requested %d",
+				src.path, loaded.SampleRate, spec.SampleRate)
+		}
+
+		sum, err := FileSHA256(src.path)
+		if err != nil {
+			return nil, err
+		}
+
+		_, _ = fmt.Fprintf(out, "reference %s at note %d: channel %s of %d, cut %d..%d (%.3f s, %s)\n",
+			src.path, src.note, loaded.Downmix, loaded.Channels, loaded.Onset, loaded.End,
+			loaded.Seconds, loaded.EndRule)
+
+		dir := filepath.Join(spec.Dir, src.dir)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create %q: %w", dir, err)
+		}
+
+		// The analysis document is written from the same cut the objective
+		// scores, so the partials in it are the ones the fit was actually
+		// shaped by rather than a second measurement under other options.
+		document, err := analysis.AnalyzeReference(src.path, loaded,
+			analysis.PartialOptions{FrameSize: analysisFrameSize(len(loaded.Samples))})
+		if err != nil {
+			return nil, err
+		}
+
+		if err := document.WriteFile(filepath.Join(dir, FileAnalysis)); err != nil {
+			return nil, err
+		}
+
+		// Written next to analysis.json rather than derived later from
+		// reference_options, because this is the signal the objective actually
+		// scored: loaded, cut, downmixed and peak-normalised.
+		if err := wavio.WriteMono(filepath.Join(dir, FileReference), spec.SampleRate, loaded.Samples); err != nil {
+			return nil, err
+		}
+
+		// Measured through the optimizer's own entry point rather than reused
+		// from the document above, because the seed, the frequency box and the
+		// partial term all have to read one measurement. A caller that brought
+		// its own document is fitting against that document, so it replaces the
+		// measurement everywhere at once -- which is why it applies only to a
+		// single reference, there being no way to name one of twenty.
+		measurement := spec.Analysis
+		if measurement == nil || len(spec.References) > 0 {
+			measurement = optimizer.MeasureReference(loaded.Samples, spec.SampleRate)
+		}
+
+		notes = append(notes, notePreparation{
+			record:      referenceRecord{Path: src.path, SHA256: sum, Reference: *loaded},
+			samples:     loaded.Samples,
+			note:        src.note,
+			measurement: measurement,
+			dir:         src.dir,
+		})
+	}
+
+	return notes, nil
+}
+
+// frequencyBounds draws the mode-frequency box the search runs in.
+//
+// For one reference it is optimizer.FrequencyBoundsFor unchanged. For several
+// it is their intersection, and the two ends bind at opposite notes: the
+// ceiling at the highest, because a mode legal at the authored note can still
+// land past Nyquist once transposed up, and the floor at whichever note is most
+// permissive, because the floor is an octave of slack against the analysis
+// having placed the fundamental on a higher partial and one note's mistake must
+// not cut the box for the rest.
+func frequencyBounds(notes []notePreparation, spec Spec, authoredNote int) optimizer.Range {
+	box := optimizer.FrequencyBoundsFor(notes[0].measurement, spec.SampleRate, authoredNote, notes[0].note)
+
+	for _, note := range notes[1:] {
+		other := optimizer.FrequencyBoundsFor(note.measurement, spec.SampleRate, authoredNote, note.note)
+
+		box.Max = math.Min(box.Max, other.Max)
+		box.Min = math.Min(box.Min, other.Min)
+	}
+
+	return box
 }

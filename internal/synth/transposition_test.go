@@ -198,13 +198,13 @@ func TestValidationCeilingAdmitsTheWorstCaseTransposition(t *testing.T) {
 	// The transposition in scaledParamsForNote, restated here so the test
 	// fails if either side of the relationship moves.
 	ratio := math.Pow(2, float64(KeyboardFirstNote-defaultPresetNote)/12)
-	worstCase := model.AuthoredDecayMsMax(defaultPresetNote) / ratio
+	worstCase := model.AuthoredDecayMsMax(defaultPresetNote, model.DecayKeytrackDefault) / ratio
 
 	// A round trip through the ratio lands within an ulp of the ceiling.
 	if worstCase > model.DecayMsValidationMax*(1+1e-12) {
 		t.Fatalf("a preset at the authored ceiling (%g ms) transposed to note %d needs %.1f ms, "+
 			"past the validation ceiling of %g ms",
-			model.AuthoredDecayMsMax(defaultPresetNote), KeyboardFirstNote, worstCase, model.DecayMsValidationMax)
+			model.AuthoredDecayMsMax(defaultPresetNote, model.DecayKeytrackDefault), KeyboardFirstNote, worstCase, model.DecayMsValidationMax)
 	}
 
 	worstCase = math.Min(worstCase, model.DecayMsValidationMax)
@@ -280,7 +280,7 @@ var sweptBaseNotes = []int{36, 48, 60, 69, 75, 76, 84, 96, 100}
 // the dead low register all over again.
 func TestValidPresetsPlayEveryKeyboardNoteAtEveryBaseNote(t *testing.T) {
 	for _, baseNote := range sweptBaseNotes {
-		p := presetAtBaseNote(baseNote, model.AuthoredDecayMsMax(baseNote))
+		p := presetAtBaseNote(baseNote, model.AuthoredDecayMsMax(baseNote, model.DecayKeytrackDefault))
 
 		if err := preset.Validate(p); err != nil {
 			t.Errorf("base note %d: a preset at its own ceiling was rejected: %v", baseNote, err)
@@ -320,7 +320,7 @@ func TestValidPresetsPlayEveryKeyboardNoteAtEveryBaseNote(t *testing.T) {
 // the author wrote is legal for a preset positioned lower.
 func TestPresetsPastTheirBaseNoteCeilingAreRefusedAtLoad(t *testing.T) {
 	for _, baseNote := range sweptBaseNotes {
-		ceiling := model.AuthoredDecayMsMax(baseNote)
+		ceiling := model.AuthoredDecayMsMax(baseNote, model.DecayKeytrackDefault)
 		p := presetAtBaseNote(baseNote, ceiling*1.01)
 
 		err := preset.Validate(p)
@@ -353,12 +353,12 @@ func TestPresetsPastTheirBaseNoteCeilingAreRefusedAtLoad(t *testing.T) {
 const searchBoundCrossoverNote = 94
 
 func TestSearchBoundIsAuthorableOnlyUpToNote94(t *testing.T) {
-	if got := model.AuthoredDecayMsMax(searchBoundCrossoverNote); got < model.DecayMsSearchMax {
+	if got := model.AuthoredDecayMsMax(searchBoundCrossoverNote, model.DecayKeytrackDefault); got < model.DecayMsSearchMax {
 		t.Errorf("at base note %d the ceiling is %g ms, below the search bound %g",
 			searchBoundCrossoverNote, got, model.DecayMsSearchMax)
 	}
 
-	if got := model.AuthoredDecayMsMax(searchBoundCrossoverNote + 1); got >= model.DecayMsSearchMax {
+	if got := model.AuthoredDecayMsMax(searchBoundCrossoverNote+1, model.DecayKeytrackDefault); got >= model.DecayMsSearchMax {
 		t.Errorf("at base note %d the ceiling is %g ms, still at or above the search bound %g",
 			searchBoundCrossoverNote+1, got, model.DecayMsSearchMax)
 	}
@@ -366,10 +366,10 @@ func TestSearchBoundIsAuthorableOnlyUpToNote94(t *testing.T) {
 	// And the crossover really is where the constant says, rather than the
 	// constant merely being consistent with two lucky notes.
 	for note := model.KeyboardFirstNote; note <= model.KeyboardLastNote; note++ {
-		wide := model.AuthoredDecayMsMax(note) >= model.DecayMsSearchMax
+		wide := model.AuthoredDecayMsMax(note, model.DecayKeytrackDefault) >= model.DecayMsSearchMax
 		if want := note <= searchBoundCrossoverNote; wide != want {
 			t.Fatalf("note %d: ceiling %g ms is wider-than-search=%v, want %v -- the crossover is not %d",
-				note, model.AuthoredDecayMsMax(note), wide, want, searchBoundCrossoverNote)
+				note, model.AuthoredDecayMsMax(note, model.DecayKeytrackDefault), wide, want, searchBoundCrossoverNote)
 		}
 	}
 }

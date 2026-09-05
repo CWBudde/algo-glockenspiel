@@ -98,8 +98,13 @@ func SeedPreset(template *preset.Preset, measurement *analysis.Measurement, note
 // note may carry, so that the search cannot write a decay the preset file
 // then refuses. A box that lies entirely above that ceiling is an error
 // rather than a silently empty search.
-func narrowDecayBounds(bounds ParamBounds, note int) (ParamBounds, error) {
-	ceiling := model.AuthoredDecayMsMax(note)
+//
+// decayKeytrack is the exponent the ceiling is computed under. When the search
+// can move it, the caller passes the exponent that makes the ceiling tightest,
+// so the box stays rectangular and every point in it is authorable whatever the
+// search does with the exponent.
+func narrowDecayBounds(bounds ParamBounds, note int, decayKeytrack float64) (ParamBounds, error) {
+	ceiling := model.AuthoredDecayMsMax(note, decayKeytrack)
 
 	if bounds.DecayMs.Min > ceiling {
 		return bounds, fmt.Errorf(

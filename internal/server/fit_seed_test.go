@@ -40,8 +40,8 @@ func TestFitSeedsTheModesFromTheReferenceAndReportsIt(t *testing.T) {
 		t.Fatalf("the fitted preset does not validate: %v", err)
 	}
 
-	if len(fitted.Parameters.Modes) != 2 || fitted.Version != preset.CurrentVersion {
-		t.Fatalf("fitted preset has %d modes in version %q, want 2 in %q", len(fitted.Parameters.Modes), fitted.Version, preset.CurrentVersion)
+	if want := preset.MinimumVersion(&fitted.Parameters); len(fitted.Parameters.Modes) != 2 || fitted.Version != want {
+		t.Fatalf("fitted preset has %d modes in version %q, want 2 in %q", len(fitted.Parameters.Modes), fitted.Version, want)
 	}
 
 	for _, pinned := range final.Pinned {

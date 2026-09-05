@@ -33,8 +33,27 @@ const (
 	// start a new one.
 	VersionV3 = "3.0"
 
-	// CurrentVersion is the schema new presets are written in.
-	CurrentVersion = VersionV3
+	// VersionV4 adds decay_keytrack, the exponent transposition raises the
+	// frequency ratio to before dividing a decay by it.
+	//
+	// It starts a version by the rule VersionV3 states, and the harm is the same
+	// shape. A v3 reader accepts the document, ignores the key, and divides
+	// every decay by the full ratio. It renders correctly at exactly one note --
+	// the one the preset was authored at -- and diverges monotonically from
+	// there: at the -0.24 a metallophone measures, a preset authored at note 93
+	// wants 1.58 times its written decay at the bottom key and a v3 reader gives
+	// it 2.65 times, with no error anywhere.
+	VersionV4 = "4.0"
+
+	// CurrentVersion is the newest version on the ladder: the most a reader in
+	// this repo is expected to understand.
+	//
+	// It is deliberately not "the version new presets are written in". A writer
+	// asks MinimumVersion what its document needs, so a preset carrying no v4
+	// field is not a v4 document however new v4 is. Stamping this constant on
+	// everything is what closed every calibrated preset to older readers the
+	// moment v4 landed.
+	CurrentVersion = VersionV4
 
 	// v1ModeCount is the fixed mode count a v1 document carries. It belongs to
 	// this compatibility layer, not to the model: the bank sizes itself at
@@ -76,7 +95,24 @@ type Provenance struct {
 	// Reference identifies the recording the fit was scored against. The hash
 	// is what makes two presets comparable: the path alone is a name someone
 	// can reuse for a different recording.
+	//
+	// A joint fit scored against several recordings fills References instead
+	// and leaves this at the lowest of them, so a reader that knows only about
+	// this field still names a real recording the fit used rather than a file
+	// that was never opened.
 	Reference ReferenceProvenance `json:"reference"`
+
+	// References are every recording a joint fit was scored against, with the
+	// note each one sounds and the score the shipped preset reached on it.
+	// Empty for a fit of a single recording, which is what Reference alone
+	// already describes.
+	//
+	// The per-note scores are here rather than only in the run directory
+	// because they are the thing a single transposed preset cannot make
+	// uniform: a preset whose mean score is good because it fits three notes
+	// and abandons seventeen is a different object from one that fits all
+	// twenty adequately, and nothing else the preset carries tells them apart.
+	References []NoteReferenceProvenance `json:"references,omitempty"`
 
 	Note    int    `json:"note"`
 	Profile string `json:"profile"`
@@ -102,6 +138,15 @@ type Provenance struct {
 type ReferenceProvenance struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
+}
+
+// NoteReferenceProvenance is one recording of a joint fit: the file, the note
+// it sounds, and what the shipped preset scored against it.
+type NoteReferenceProvenance struct {
+	Path   string  `json:"path"`
+	SHA256 string  `json:"sha256"`
+	Note   int     `json:"note"`
+	Score  float64 `json:"score"`
 }
 
 // EngineProvenance is the search that produced the preset, in the fields that
@@ -146,6 +191,13 @@ func (p *Provenance) Clone() *Provenance {
 		for name, version := range p.Libraries {
 			clone.Libraries[name] = version
 		}
+	}
+
+	// References is a slice, so `clone := *p` copied only its header. Every
+	// element is a value with no pointers of its own, so one copy of the
+	// backing array is the whole of the deep copy.
+	if p.References != nil {
+		clone.References = append([]NoteReferenceProvenance(nil), p.References...)
 	}
 
 	return &clone
@@ -197,7 +249,14 @@ func rejectNewerFields(data []byte, version string) error {
 			Chebyshev struct {
 				Stage *json.RawMessage `json:"stage"`
 			} `json:"chebyshev"`
-			OutputGainDB *json.RawMessage `json:"output_gain_db"`
+			// Not *json.RawMessage: the decoder resolves a JSON null to a
+			// nil pointer before RawMessage's own Unmarshaler ever runs, so
+			// the pointer form cannot tell `"x":null` from an absent key.
+			// A bare RawMessage is left empty when the key is absent and
+			// holds the four bytes of "null" when it is present, which is
+			// the distinction this whole function exists to make.
+			OutputGainDB  json.RawMessage `json:"output_gain_db"`
+			DecayKeytrack json.RawMessage `json:"decay_keytrack"`
 		} `json:"parameters"`
 	}
 
@@ -217,26 +276,83 @@ func rejectNewerFields(data []byte, version string) error {
 		}
 	}
 
-	if version != VersionV3 && raw.Parameters.OutputGainDB != nil {
+	// Written as "older than the version that introduced it" rather than as
+	// "not exactly that version". The latter is what stood here, and it was
+	// correct only while v3 was the newest version: the moment v4 existed it
+	// would have refused every calibrated preset a fit writes, since those
+	// carry an output gain and are written in the current version.
+	if OlderThan(version, VersionV3) && len(raw.Parameters.OutputGainDB) > 0 {
 		return fmt.Errorf("output_gain_db needs version %s", VersionV3)
+	}
+
+	// The raw probe is needed even though BarParams.DecayKeytrack is a pointer,
+	// because an explicit null decodes to a nil pointer there too and the
+	// decoded value cannot tell that from an absent key.
+	if OlderThan(version, VersionV4) && len(raw.Parameters.DecayKeytrack) > 0 {
+		return fmt.Errorf("decay_keytrack needs version %s", VersionV4)
 	}
 
 	return nil
 }
 
-// Upgrade returns an equivalent preset in the current schema version. The v1
-// defaults it makes explicit -- the excitation-stage shaper, no per-mode
-// harmonics -- are exactly the ones the v1 loader applies, so the upgraded
-// preset renders identically to the original. A v2 document needs nothing made
-// explicit: v3 adds a field whose zero value is unity, so restamping it is
-// enough.
+// MinimumVersion is the oldest schema version whose field set can carry these
+// parameters: v4 once a keytrack is present, v3 once an output gain is, and v2
+// otherwise.
+//
+// It is deliberately never v1. v1 is a shape, not just a field set -- exactly
+// four modes, no per-mode harmonics, an implicit shaper stage -- and a writer
+// choosing a version for a document it is about to save should not be able to
+// pick a version that constrains the document's structure.
+//
+// The point of the function is that a document is stamped for what it holds
+// rather than for whenever it was written. A preset carrying no keytrack
+// renders identically under every reader from v3 onwards, so stamping it v4
+// would lock out a v3 reader -- the external module that hand-rolls its own
+// decode among them -- and buy nothing. The schema version a file claims is a
+// statement about what a reader must understand, not a timestamp.
+func MinimumVersion(params *model.BarParams) string {
+	switch {
+	case params.DecayKeytrack != nil:
+		return VersionV4
+	case params.OutputGainDB != 0:
+		return VersionV3
+	default:
+		return VersionV2
+	}
+}
+
+// Stamp sets a preset's version to the oldest one that can carry the fields it
+// now holds, never lowering a version it already claims.
+//
+// It is what a writer calls after mutating a document, and the ordering is the
+// point: Upgrade cannot know about a field set after it ran, so a caller that
+// upgrades and then writes a field has produced a document whose version does
+// not cover it. That sequence is exactly how "output_gain_db needs version 3.0"
+// gets raised about a preset the caller had just upgraded.
+func Stamp(p *Preset) {
+	if minimum := MinimumVersion(&p.Parameters); OlderThan(p.Version, minimum) {
+		p.Version = minimum
+	}
+}
+
+// Upgrade returns an equivalent preset in the oldest schema version that can
+// carry it, never below the version it already claims. The v1 defaults it makes
+// explicit -- the excitation-stage shaper, no per-mode harmonics -- are exactly
+// the ones the v1 loader applies, so the upgraded preset renders identically to
+// the original.
+//
+// It does not stamp CurrentVersion. Restamping a document with a version whose
+// fields it does not use costs it every older reader and gains it nothing, and
+// the cost is real: model/ is imported by an external module that hand-rolls
+// its own decode and cannot follow the ladder. So a v3 preset with no keytrack
+// stays v3, and only a preset that actually carries a keytrack becomes v4.
 func Upgrade(preset *Preset) (*Preset, error) {
 	if err := Validate(preset); err != nil {
 		return nil, err
 	}
 
 	upgraded := preset.Clone()
-	upgraded.Version = CurrentVersion
+	Stamp(upgraded)
 
 	if upgraded.Parameters.Chebyshev.Stage == "" {
 		upgraded.Parameters.Chebyshev.Stage = model.ChebyshevStageExcitation
@@ -311,10 +427,46 @@ func validateSchema(preset *Preset) error {
 		return validateV2(&preset.Parameters)
 	case VersionV3:
 		return validateV3(&preset.Parameters)
+	case VersionV4:
+		return validateV4(&preset.Parameters)
 	default:
-		return fmt.Errorf("unsupported version %q, want %q, %q or %q",
-			preset.Version, VersionV1, VersionV2, VersionV3)
+		return fmt.Errorf("unsupported version %q, want %q, %q, %q or %q",
+			preset.Version, VersionV1, VersionV2, VersionV3, VersionV4)
 	}
+}
+
+// versionRank orders the ladder, so a "needs version X" gate can be written as
+// "this document is older than X" rather than as a chain of inequalities
+// against each individual version.
+//
+// It exists because the ad-hoc form had already gone wrong once. The
+// output_gain_db gate read `version != VersionV3`, which was correct while v3
+// was the newest version and became a bug the moment v4 existed: every
+// calibrated preset a fit writes carries an output gain, so a v4 document would
+// have been refused for holding a field v3 introduced.
+func versionRank(version string) int {
+	switch version {
+	case VersionV1:
+		return 1
+	case VersionV2:
+		return 2
+	case VersionV3:
+		return 3
+	case VersionV4:
+		return 4
+	default:
+		return 0
+	}
+}
+
+// OlderThan reports whether a document's version predates the version a field
+// was introduced in. It is the one place the ladder's order is expressed, so a
+// caller asking "can this document carry that field" never spells it as a
+// string comparison against whichever version happened to be current when the
+// caller was written -- the mistake that made every v4 preset unreadable the
+// moment v4 existed.
+func OlderThan(version, introducedIn string) bool {
+	return versionRank(version) < versionRank(introducedIn)
 }
 
 func validateV1(params *model.BarParams) error {
@@ -337,6 +489,10 @@ func validateV1(params *model.BarParams) error {
 		return fmt.Errorf("output_gain_db needs version %s", VersionV3)
 	}
 
+	if params.DecayKeytrack != nil {
+		return fmt.Errorf("decay_keytrack needs version %s", VersionV4)
+	}
+
 	return nil
 }
 
@@ -349,6 +505,10 @@ func validateV2(params *model.BarParams) error {
 		return fmt.Errorf("output_gain_db needs version %s", VersionV3)
 	}
 
+	if params.DecayKeytrack != nil {
+		return fmt.Errorf("decay_keytrack needs version %s", VersionV4)
+	}
+
 	return nil
 }
 
@@ -356,6 +516,24 @@ func validateV2(params *model.BarParams) error {
 // output_gain_db, which every version validates for range in
 // model.ValidateBarParams.
 func validateV3(params *model.BarParams) error {
+	if len(params.Modes) == 0 {
+		return errors.New("at least one mode is required")
+	}
+
+	// Exact, unlike the output_gain_db gates above: the field is a pointer, so
+	// absence is distinguishable from an explicit value and this check needs no
+	// help from rejectNewerFields to tell "no keytrack" from "a keytrack of
+	// exactly the default".
+	if params.DecayKeytrack != nil {
+		return fmt.Errorf("decay_keytrack needs version %s", VersionV4)
+	}
+
+	return nil
+}
+
+// validateV4 holds a v4 document to the v2 rules; the only thing v4 adds is
+// decay_keytrack, whose range model.ValidateBarParams checks for every version.
+func validateV4(params *model.BarParams) error {
 	if len(params.Modes) == 0 {
 		return errors.New("at least one mode is required")
 	}

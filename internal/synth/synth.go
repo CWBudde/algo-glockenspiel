@@ -82,6 +82,13 @@ func NewSynthesizer(presetConfig *preset.Preset, sampleRate int) (*Synthesizer, 
 	}, nil
 }
 
+// BlockSize is the number of frames a voice renders per RenderInto call. A
+// caller that supplies its own buffer rather than letting RenderNote allocate
+// one needs it to size that buffer.
+func (s *Synthesizer) BlockSize() int {
+	return s.blockSize
+}
+
 // RenderNote renders a note for the requested duration.
 func (s *Synthesizer) RenderNote(note, velocity int, duration float64) []float32 {
 	return s.RenderNoteWithOptions(note, velocity, duration, RenderOptions{})

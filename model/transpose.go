@@ -58,13 +58,45 @@ func TransposeToNote(params *BarParams, fromNote, toNote int) {
 
 	params.BaseFrequency *= ratio
 
+	// The decay divides by the ratio raised to the key-tracking exponent, which
+	// is 1 -- the plain ratio -- for every preset that does not carry one. The
+	// branch is spelled out rather than left to math.Pow(x, 1): with a nil
+	// exponent decayRatio is literally the same float as ratio and the division
+	// is the same instruction, which is what makes "every existing preset
+	// renders bit-identically" a property of this code rather than of the
+	// runtime's special cases. TestDefaultKeytrackReproducesTheOldLaw pins it.
+	//
+	// One Pow per call rather than one per mode: the exponent is a property of
+	// the bar, and this runs on every note-on.
+	decayRatio := ratio
+	if params.DecayKeytrack != nil {
+		decayRatio = math.Pow(ratio, *params.DecayKeytrack)
+	}
+
 	for i := range params.Modes {
 		params.Modes[i].Frequency *= ratio
 
-		if ratio > 0 {
-			params.Modes[i].DecayMs /= ratio
+		if decayRatio > 0 {
+			params.Modes[i].DecayMs /= decayRatio
 		}
 	}
+}
+
+// WorstDecayNote returns the playable note at which transposition stretches a
+// decay furthest, which is the only note the authoring ceiling has to be
+// checked at.
+//
+// D(n) = D * 2^(-beta*(n-base)/12) is monotone in n whatever the base note is,
+// so its maximum over the keyboard sits at an endpoint: the bottom key while
+// decay tracks pitch the usual way, and the top key once the exponent goes
+// negative and transposing *up* is what lengthens the ring.
+// TestWorstDecayNoteIsTheArgmax is what makes checking one end legitimate.
+func WorstDecayNote(decayKeytrack float64) int {
+	if decayKeytrack >= 0 {
+		return KeyboardFirstNote
+	}
+
+	return KeyboardLastNote
 }
 
 // AuthoredDecayMsMax returns the widest decay a mode may carry in a preset
@@ -83,13 +115,16 @@ func TransposeToNote(params *BarParams, fromNote, toNote int) {
 // It does not decide anything: that decision is made by transposing the preset
 // for real and reading the decay off the result, so validation and the
 // synthesizer can never disagree about where the boundary sits.
-func AuthoredDecayMsMax(baseNote int) float64 {
-	// Below KeyboardFirstNote nothing is transposed down at all -- the bottom
-	// key transposes such a preset *up*, which shortens its decays -- so the
-	// bound there is the plain ceiling the params must clear as written. Without
-	// the min, a preset at note 0 would be told it may carry 40 s of decay, a
-	// figure ValidateBarParams rejects on sight.
-	return math.Min(DecayMsValidationMax, DecayMsValidationMax*math.Pow(2, float64(KeyboardFirstNote-baseNote)/12))
+func AuthoredDecayMsMax(baseNote int, decayKeytrack float64) float64 {
+	// Beyond the worst note nothing is transposed further at all -- a preset
+	// below the bottom key is transposed *up* to reach it, which shortens its
+	// decays -- so the bound there is the plain ceiling the params must clear as
+	// written. Without the min, a preset at note 0 would be told it may carry
+	// 40 s of decay, a figure ValidateBarParams rejects on sight.
+	worst := WorstDecayNote(decayKeytrack)
+	stretch := math.Pow(math.Pow(2, float64(worst-baseNote)/12), decayKeytrack)
+
+	return math.Min(DecayMsValidationMax, DecayMsValidationMax*stretch)
 }
 
 // ValidateAuthoredBarParams validates params as written in a preset authored at
@@ -113,37 +148,49 @@ func AuthoredDecayMsMax(baseNote int) float64 {
 // stretch factor is a function of the base note and the ceiling does not know
 // it.
 //
-// Only KeyboardFirstNote is checked, and only the decay ceiling. Transposing
-// down is monotonic, so the lowest playable note is the worst case for that
-// bound and clearing it clears every note above. Two bounds at the *other* end
-// of the keyboard can also be violated -- transposing up shrinks decays toward
-// DecayMsMin and pushes mode frequencies toward FrequencyMaxHz, and a preset
-// carrying either extreme will still be refused at the top of the keyboard.
-// Both are the same class of defect and neither is checked here, because
-// closing them means making the optimizer's search box keyboard-aware at its
-// decay floor and its frequency ceiling, which is a separate change with its
-// own risk to every fit. They are also far harder to hit by accident: a 0.1 ms
-// decay or a 50 kHz mode is degenerate on its own terms, whereas a 500 ms decay
-// is what the optimizer is told to search for.
+// One note is checked, and only the decay ceiling. The stretched decay is
+// monotone in the note whatever the base note is, so its maximum over the
+// keyboard sits at an endpoint -- see [WorstDecayNote], which is the bottom key
+// while the exponent is positive and the *top* key once it goes negative and
+// transposing up is what lengthens the ring. Clearing that end clears the rest.
+//
+// Two bounds at the other end of the keyboard can also be violated --
+// transposing up shrinks decays toward DecayMsMin and pushes mode frequencies
+// toward FrequencyMaxHz, and a preset carrying either extreme will still be
+// refused at the top of the keyboard. Neither is checked here, because closing
+// them means making the optimizer's search box keyboard-aware at its decay
+// floor and its frequency ceiling, which is a separate change with its own risk
+// to every fit. Both are real rather than theoretical: moving the top key to
+// C8 put default.json's shortest mode under the decay floor and
+// recorded-bar.json's highest mode past the frequency ceiling, which is why
+// those two constants moved with the keyboard.
+//
+// A negative exponent can invalidate a preset that validates today, and that is
+// correct rather than a regression: such a preset really would ring longer at
+// the top of the keyboard than the ceiling allows. It does mean decay_keytrack
+// is not a free annotation on an existing file.
 func ValidateAuthoredBarParams(params *BarParams, baseNote int) error {
 	if err := ValidateBarParams(params); err != nil {
 		return err
 	}
+
+	keytrack := params.ResolvedDecayKeytrack()
+	worst := WorstDecayNote(keytrack)
 
 	// Transposing a clone, rather than comparing against a precomputed ceiling,
 	// is what makes this bit-exact with playback: the value checked here is the
 	// same float the synthesizer will hand to NewBar, not a bound restated in a
 	// second place that could disagree by an ulp at the boundary.
 	transposed := params.Clone()
-	TransposeToNote(&transposed, baseNote, KeyboardFirstNote)
+	TransposeToNote(&transposed, baseNote, worst)
 
 	for i := range transposed.Modes {
 		if decay := transposed.Modes[i].DecayMs; decay > DecayMsValidationMax {
 			return fmt.Errorf(
 				"modes[%d].decay_ms: %g ms at base note %d becomes %g ms at note %d, past the %g ms ceiling"+
 					" (a preset at note %d may carry at most %.1f ms)",
-				i, params.Modes[i].DecayMs, baseNote, decay, KeyboardFirstNote, DecayMsValidationMax,
-				baseNote, AuthoredDecayMsMax(baseNote),
+				i, params.Modes[i].DecayMs, baseNote, decay, worst, DecayMsValidationMax,
+				baseNote, AuthoredDecayMsMax(baseNote, keytrack),
 			)
 		}
 	}

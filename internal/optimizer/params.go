@@ -248,6 +248,28 @@ type ParamCodec struct {
 	outputGainDB     float64
 	modeHarmonics    [][]float64
 	bounds           ParamBounds
+
+	// decayKeytrack is the carried exponent, used when searchKeytrack is false.
+	decayKeytrack *float64
+
+	// searchKeytrack appends the exponent to the vector, after the Chebyshev
+	// gains. The tail rather than the scalars, so that a vector without it is a
+	// prefix of one with it -- which is what lets a joint fit warm-start from a
+	// keytrack-free one by appending a coordinate rather than re-laying out the
+	// whole thing. It also leaves scalarParameterCount at 2, so BlockGroups and
+	// DimensionNames need no renumbering.
+	searchKeytrack bool
+	keytrackBounds Range
+}
+
+// WithSearchedDecayKeytrack returns a codec that also searches the decay
+// key-tracking exponent, in the given range.
+func (c *ParamCodec) WithSearchedDecayKeytrack(bounds Range) *ParamCodec {
+	clone := *c
+	clone.searchKeytrack = true
+	clone.keytrackBounds = bounds
+
+	return &clone
 }
 
 // NewParamCodec builds a codec from a validated parameter template.
@@ -300,6 +322,7 @@ func newParamCodec(params *model.BarParams, bounds ParamBounds, strict bool) (*P
 		chebyshevStage:   params.Chebyshev.Stage,
 		baseFrequency:    params.BaseFrequency,
 		outputGainDB:     params.OutputGainDB,
+		decayKeytrack:    params.DecayKeytrack,
 		modeHarmonics:    modeHarmonics,
 		bounds:           bounds,
 	}, nil
@@ -373,7 +396,12 @@ func (b ParamBounds) expandToInclude(params *model.BarParams) ParamBounds {
 
 // Dimension returns the encoded vector dimensionality.
 func (c *ParamCodec) Dimension() int {
-	return scalarParameterCount + c.modeCount*3 + c.harmonicCount
+	dimension := scalarParameterCount + c.modeCount*3 + c.harmonicCount
+	if c.searchKeytrack {
+		dimension++
+	}
+
+	return dimension
 }
 
 // BlockGroups partitions the encoded dimensions into covariance blocks for the
@@ -429,6 +457,12 @@ func (c *ParamCodec) EncodedBounds() Bounds {
 		ranges = append(ranges, c.bounds.HarmonicGain)
 	}
 
+	if c.searchKeytrack {
+		// Linear, not log: the exponent is a small signed number rather than a
+		// decade-spanning quantity, and it is legitimately negative.
+		ranges = append(ranges, c.keytrackBounds)
+	}
+
 	return Bounds{Ranges: ranges}
 }
 
@@ -470,6 +504,10 @@ func (c *ParamCodec) EncodeParams(params *model.BarParams) ([]float64, error) {
 	}
 
 	encoded = append(encoded, params.Chebyshev.HarmonicGains...)
+
+	if c.searchKeytrack {
+		encoded = append(encoded, params.ResolvedDecayKeytrack())
+	}
 
 	return encoded, nil
 }
@@ -520,7 +558,16 @@ func (c *ParamCodec) DecodeParams(encoded []float64) (*model.BarParams, error) {
 
 	params.Modes = sortedModes(params.Modes)
 
-	copy(params.Chebyshev.HarmonicGains, bounded[index:])
+	copy(params.Chebyshev.HarmonicGains, bounded[index:index+c.harmonicCount])
+
+	switch {
+	case c.searchKeytrack:
+		keytrack := c.keytrackBounds.Clamp(bounded[len(bounded)-1])
+		params.DecayKeytrack = &keytrack
+	case c.decayKeytrack != nil:
+		carried := *c.decayKeytrack
+		params.DecayKeytrack = &carried
+	}
 
 	if err := model.ValidateBarParams(params); err != nil {
 		return nil, err

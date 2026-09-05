@@ -73,10 +73,13 @@ func TestSeedPresetKeepsTheTemplateOnRequestAndUpgradesWhenSeeding(t *testing.T)
 		t.Fatalf("seeded %d modes from %d partials, preset holds %d", seeded, len(measurement.Partials), len(all.Parameters.Modes))
 	}
 
-	// A v1 template holds exactly four modes, so a seeded preset is written
-	// in the current version, with the v1 defaults made explicit.
-	if all.Version != preset.CurrentVersion || all.Parameters.Chebyshev.Stage == "" {
-		t.Fatalf("seeded preset version %q stage %q, want %q with an explicit stage", all.Version, all.Parameters.Chebyshev.Stage, preset.CurrentVersion)
+	// A v1 template holds exactly four modes and the recording decides how many
+	// there are here, so the seed leaves v1 behind -- but only as far as the
+	// variable mode count needs, with the v1 defaults made explicit. It carries
+	// neither an output gain nor a keytrack, so it is a v2 document.
+	if all.Version != preset.VersionV2 || all.Parameters.Chebyshev.Stage == "" {
+		t.Fatalf("seeded preset version %q stage %q, want %q with an explicit stage",
+			all.Version, all.Parameters.Chebyshev.Stage, preset.VersionV2)
 	}
 
 	if template.Version != preset.VersionV1 || len(template.Parameters.Modes) != 4 {
@@ -111,7 +114,7 @@ func TestObjectiveNarrowsTheDecayBoxToTheAuthoredCeiling(t *testing.T) {
 		t.Fatalf("NewObjectiveFunction: %v", err)
 	}
 
-	ceiling := model.AuthoredDecayMsMax(template.Note)
+	ceiling := model.AuthoredDecayMsMax(template.Note, model.DecayKeytrackDefault)
 	if got := objective.Codec().Bounds().DecayMs.Max; math.Abs(got-ceiling) > 1e-9 {
 		t.Fatalf("decay box ceiling at note %d = %g, want the authoring ceiling %g", template.Note, got, ceiling)
 	}

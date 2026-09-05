@@ -192,6 +192,17 @@ func (m *Metrics) set(term Term, value float64) {
 	}
 }
 
+// UnmeasuredMetrics is a Metrics with every term NaN, the state before any term
+// has been taken.
+//
+// It is exported because it is also the honest value for a result that has no
+// single set of terms rather than none yet: a joint fit averages per-note
+// scores, so writing zeros -- which read as perfect terms -- or the first
+// note's terms would both be worse than saying nothing.
+func UnmeasuredMetrics() Metrics {
+	return unmeasuredMetrics()
+}
+
 // unmeasuredMetrics is a Metrics with every term NaN, the state before any
 // term has been taken.
 func unmeasuredMetrics() Metrics {

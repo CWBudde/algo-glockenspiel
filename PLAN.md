@@ -1422,6 +1422,334 @@ reweighted for it, which is what actually moved the composite table's scores.
 
 ---
 
+## Phase 9: Presets from the sample packs
+
+**In progress.** The code is written and gated; the measurements are not taken. Branch
+`phase-9-sample-packs`, PR #53, deliberately a draft until the numbers exist.
+
+`testdata/reference/packs/` has held four Freesound packs -- 56 recorded notes -- since phase 8,
+referenced by no Go code. The ask was threefold: fit each sample, find what depends on the MIDI
+note, generalise into one preset that minimises the cost across the keyboard.
+
+**Measured before any code was written**, read-only, with this repo's own `analyze`:
+
+| finding                                                               | number                                                            |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `hollandm` is the only chromatic run and the richest                  | 5.2 partials/note, 20 consecutive semitones                       |
+| morphagene is effectively single-mode -- second partial 39-67 dB down | 1.1 partials/note                                                 |
+| the second partial sits at the free-free bar ratio, near-universally  | 2.74x f0 in 18 of 20 bars                                         |
+| the model's decay law (exponent 1) is wrong, and per instrument       | hollandm -1.22, morphagene -0.55, mooncube +0.04, jamieblam +0.24 |
+| but on hollandm a fitted exponent buys almost nothing                 | `partial_decay_octaves` 0.410 -> 0.398                            |
+| because the slope was never the problem -- bar-to-bar scatter is      | 0.33 octaves, 0.66x the term's norm                               |
+
+So the fitter is good enough and the model's expressiveness across the keyboard is the binding
+constraint -- and not where the ask assumed. Above the second partial the structure is
+idiosyncratic: the 5.3x partial weakens toward the top and a different mode near 4.5-4.7x takes
+over. Nothing smooth captures that. The last two rows are why the decay exponent is treated here
+as a hypothesis to be measured rather than a feature to be added.
+
+### Phase 9.0: The keyboard is a glockenspiel
+
+**Done.** `KeyboardFirstNote`/`LastNote` were C2-C7, which is not a glockenspiel, and two
+blockers fell out of that one defect:
+
+- `ValidateAuthoredBarParams` transposes down to the bottom key and enforces
+  `DecayMsValidationMax`. At MIDI 36 -- four octaves below anything a glockenspiel plays -- an
+  808 ms hollandm bar becomes 13.7 s, and 13 of 20 bars could not be authored at all.
+- Seven of twenty notes sat above the top key, so a keyboard sweep never reached them.
+
+Now G5-C8, MIDI 79-108. That dissolved both, and made the planned `DecayMsValidationMax` raise
+unnecessary: the worst bar needs about 1.1 s at the new bottom key. Worth recording, because
+raising a validation ceiling to admit data is the move you want to not have made.
+
+What the move did break was the frequency ceiling, which `FrequencyMaxHz` had to follow to
+200000 -- consistent with its own stated rationale, that a mode above Nyquist is a wasted
+oscillator rather than an invalid one. `DecayMsMin` fell to 0.01 as the exact mirror: the top key
+is now 39 semitones above note 69, and `default.json`'s 0.5605 ms mode reaches 0.0589 ms there.
+Neither could be fixed by re-authoring -- `max_mode x 2^((top-note)/12)` and
+`min_decay / 2^((top-note)/12)` are invariant under `TransposeToNote`, so the constants are the
+only lever.
+
+One prediction made while planning was wrong and is worth keeping: the casualty was expected to
+be `FrequencyMaxHz`, and the tests said `DecayMsMin`. Both had to move.
+
+### Phase 9.1: Fit each note
+
+**Done, run pending.** A `pack` command group in `glockenspiel-campaign` --
+`plan`, `run`, `collect`, `fit-joint`, `score`, `regress` -- reusing the campaign's provenance
+discipline (`O_EXCL` manifest, binary and reference SHA-256s pinned, a refusal to continue under
+a different build) but not its CSV: `campaign.Row` has no note column and `checkHeader` requires
+the contract exactly, so extending it would make `campaign analyze` refuse the five archived
+results files in `docs/data/`. Notes are not arms.
+
+Two traps, both found rather than avoided:
+
+- **The note index comes from the measured fundamental, never the filename.** Freesound strips
+  `#` from an upload's name, so ten of hollandm's files arrived sharing a name with their own
+  sharp. A harness that trusted the name would have fitted half the pack a semitone from the
+  recording it was scoring against -- silently, with plausible scores. `pack.ResolveNote`
+  refuses a mismatch and records the cents residual, which for hollandm is -1 to +5 cents.
+- **Each per-note fit is authored at its own note.** `PresetFromAnalysis` authors at the
+  _template's_ note, so the c6 fit first wrote `note: 69` with a fundamental of 439.7 Hz instead
+  of 1046.2. The preset renders correctly -- transposition puts it back -- so nothing would have
+  complained, but `pack-modes.csv` would have carried note-69 equivalents and the `log2(decay)`
+  regression would have come out a whole exponent off, which is the one number this phase exists
+  to measure. Found by reading a finished run directory; the first pack run was killed 20 minutes
+  in, `Spec.AuthoredNote` added, and the run restarted.
+
+### Phase 9.2: The regression
+
+**Done, run pending.** `pack regress` fits `log2(decay_ms)` and `log2(ratio)` against MIDI note
+and reports the key-tracking exponent each slope implies, the scatter it leaves, and the scatter
+the model's own law leaves.
+
+It groups by **ratio cluster, not by mode index**, and that is the substance of the step rather
+than a detail of it. The fits hold between four and nine modes depending on how many partials the
+analysis found -- g6 came back with four, ds6 with nine -- so "mode 3" is the fourth strongest
+partial of whatever that note happened to have, and at two notes with different mode counts it is
+routinely a different piece of the bar's physics. Regressing within a mode index pools
+measurements of different partials and calls the mixture key tracking. The first five notes show
+it directly: mode 0's ratio to the fundamental runs from 1.001 to 3.531, because c6's fit
+abandoned its own fundamental and the other four did not. Clustering is single-linkage on
+`log2(ratio)` at a gap of 0.04, chosen from the data: a partial's ratio varies about 1% across the
+pack while the closest real partials sit 5% apart.
+
+**Measured over all twenty notes, 2026-09-05, and the earlier reading was wrong.** Partway through
+the run, over the first five notes, the strong clusters scattered by 0.088 and 0.048 octaves and it
+looked as though the 0.33 octaves in the table above had been an artefact of grouping by index --
+which would have made β _more_ identifiable than this plan assumed. It was the opposite. Those tight
+clusters held three notes that happened to agree. With every note in, the well-populated clusters
+scatter far more than the plan's own figure:
+
+| partial                    | notes    | β     | fitted sd (oct) | pinned sd (oct) | what β buys |
+| -------------------------- | -------- | ----- | --------------- | --------------- | ----------- |
+| 1.00x f0 (the fundamental) | 14 of 20 | +1.60 | 1.541           | 1.563           | **0.021**   |
+| 2.72x f0 (free-free)       | 13 of 20 | +1.46 | 0.988           | 1.015           | **0.026**   |
+| 5.33x f0                   | 8 of 20  | −0.50 | 0.895           | 1.013           | 0.118       |
+| 8.93x f0                   | 6 of 20  | −2.82 | 0.486           | 1.167           | 0.681       |
+
+**β is not earned, and the decision rule already registered says so.** Its third clause -- that the
+fitted exponent be consistent -- fails outright: across clusters β reads +1.60, +10.20, +11.70,
++1.46, +2.24, −0.50, −7.37, +8.25, −44.13, +9.67, −2.82, +3.33. Every cluster where β appears to buy
+something is one of the thin ones, where three to six points and an absurd exponent are fitting
+noise; the two clusters carrying most of the pack both land near the model's own 1.0 and buy about
+0.02 octaves against one to one and a half octaves of scatter. The ablation should still be run,
+because it is registered and because a negative result stated from data is worth more than one
+inferred from a table -- but **the preset ships at v3 unless it says otherwise.**
+
+**The modal structure, though, generalises almost perfectly**, and that is the finding this phase was
+actually looking for:
+
+| partial     | notes    | mean ratio | sd        | min   | max   | drift /octave |
+| ----------- | -------- | ---------- | --------- | ----- | ----- | ------------- |
+| fundamental | 14 of 20 | 1.002      | **0.002** | 1.000 | 1.009 | +0.000        |
+| free-free   | 13 of 20 | 2.723      | **0.037** | 2.619 | 2.779 | −0.016        |
+| third       | 8 of 20  | 5.330      | 0.025     | —     | 5.374 | −0.017        |
+| fourth      | 6 of 20  | 8.932      | 0.094     | —     | 9.136 | +0.012        |
+
+A transposed preset assumes exactly this: every partial a fixed multiple of the fundamental at every
+note. The ratios hold to 0.2% at the fundamental and 1.4% at the free-free partial, with drift
+indistinguishable from zero. **So one preset can carry this instrument's modal structure and cannot
+carry its decays** -- and that split, not β, is the answer to what depends on the MIDI note.
+
+### Phase 9.3: The joint fit
+
+**Done, run pending.** `ObjectiveFunction` was extended rather than forked -- `optimizer.Polish`
+takes a concrete `*ObjectiveFunction` and `fitrun.preparation` holds one, so a parallel type
+would have forked four packages. N=1 is the degenerate case and the four public constructors keep
+their signatures.
+
+The aggregate is **the mean of the per-note `Score`s, not the mean of the terms scored once**.
+Averaging before `saturate` would let one hopeless note dominate a term, defeating the property
+the saturation exists for, and would launder a term measured at 3 of 20 notes into full profile
+weight. Scoring per note keeps each note's weight renormalisation inside that note.
+
+**A joint fit had been describing itself as a single-note one.** A twenty-note run wrote its
+_lowest_ note's file into `config.json`'s `reference` block and into the preset's provenance, and
+filled `result.json`'s `terms` from that one note -- three well-formed records of a search that
+never happened. Now `reference` is written only for N=1 and `references` for a joint fit,
+provenance carries every file with the score it reached, and `terms` is explicitly NaN beside a
+`note_terms` block, because the score is the mean of the per-note scores and no set of terms
+reproduces it. `EvaluateMetrics` refuses a multi-note objective outright rather than returning a
+twentieth of the fit.
+
+Those per-note scores are not bookkeeping: a preset whose mean is good because it fits three
+notes and abandons seventeen is a different object from one that fits all twenty adequately, and
+the mean alone cannot tell them apart.
+
+### Phase 9.4: The decay key-tracking exponent, at schema v4
+
+**Done, unearned.** `BarParams.DecayKeytrack` is a `*float64` because the neutral value is 1.0: a
+bare `float64`'s zero would mean an exponent of 0, which is legal and measured (mooncube is near
+it), so every existing struct literal here and in the external VST3 module would have switched
+laws with no compile error. `nil` means 1.0, and every v1/v2/v3 document renders bit-identically
+to before.
+
+It is searched, never carried, and only by a fit that can see it. At one note the exponent trades
+off exactly against every `DecayMs` -- any value is absorbed by scaling the decays -- so it is a
+gauge freedom of the kind `BaseFrequency` is already excluded for. The objective refuses it below
+two references or an octave of span, plain `fit` has no flag for it, and only
+`pack fit-joint --keytrack` can ask.
+
+Schema v4 by the rule 8.9 wrote: a v3 reader accepts the document, ignores the key and divides by
+the full ratio, so it renders correctly at exactly one note and diverges monotonically from
+there. **But the version is not yet earned.** The registered rule needs all three of a
+Holm-corrected `p < 0.05` on the paired ablation, a median improvement clearing a materiality
+threshold, and a beta consistent across blocks. The third is the one likely to fail and the
+0.410 -> 0.398 above says it may. If it fails, the preset ships at v3 and this section says so.
+
+Four latent bugs were found on the way, each of which would have shipped:
+
+- `preset.go` read `version != VersionV3 && OutputGainDB != nil` to reject a gain on an older
+  document. The moment `CurrentVersion` became v4 that rejected **every calibrated preset a fit
+  writes**. Replaced with an `OlderThan(version, introducedIn)` ladder helper;
+  `synth.ApplyOutputGain` spelled the same comparison and was also pushing v3 documents to the
+  current version for no reason.
+- The raw version probes were `*json.RawMessage`, which resolves an explicit `null` to a nil
+  pointer before `RawMessage`'s Unmarshaler runs, so `"decay_keytrack": null` slipped the ladder.
+  Both are bare `json.RawMessage` now, closing the same hole for `output_gain_db`.
+- `ObjectiveConfig.DecayKeytrackBounds` documented "the zero value takes the model's full range"
+  and did not implement it. A zero `Range` is `Min = Max = 0`, which would have clamped the
+  exponent to exactly 0 -- a legal, measurable value, and so one that would have read as a search
+  result rather than an unset field.
+- **Every preset the repo wrote was stamped `CurrentVersion`**, so the moment v4 existed the fits
+  began emitting v4 documents that carried no keytrack. The version a file claims is a statement
+  about what a reader must understand, and such a file needs nothing beyond v3 -- yet it locked
+  out every v3 reader, the external module that hand-rolls its own decode among them, for a field
+  it does not contain. `preset.MinimumVersion` derives the version from the fields the document
+  actually uses and `preset.Stamp` applies it without ever lowering one, so the outcome this
+  phase is heading for -- **beta unearned, the preset ships at v3** -- falls out of the code
+  rather than out of a manual edit.
+
+  The ordering is the part worth remembering. `Upgrade` cannot know about a field written after
+  it ran, so the repo's habit of upgrading a preset _so that_ it can carry a gain and then
+  writing the gain produces a document whose version does not cover it. Stamping is what a writer
+  does last, after the mutation, not what an upgrade does first.
+
+### Phase 9.5: Verification and write-up
+
+**The matrix exists, 2026-09-05.** Twenty per-note presets plus the joint preset, each
+transposed to all twenty notes, gain solved, scored under the same aggregate objective.
+`docs/data/pack-hollandm-matrix.csv`.
+
+| quantity                                                      | value         |
+| ------------------------------------------------------------- | ------------- |
+| diagonal mean -- every note fitted to itself                  | **0.329422**  |
+| best single-note preset transposed across the range (note 97) | 0.439204      |
+| joint preset across the range                                 | **0.428765**  |
+| **price of one preset covering twenty notes**                 | **+0.099343** |
+
+Both claims the phase registered hold. The joint row beats **every** one of the twenty
+single-note rows, not merely the average one; and the price is the number the exercise
+was for. It is worth about 0.2 norms on the composite -- one preset covering an octave
+and a half costs roughly a third of what the diagonal itself scores.
+
+**The registered Nyquist prediction is falsified, and that matters more than the price.**
+Before the matrix existed this plan predicted that the joint preset would lose most at the
+_bottom_ of the range, because the shared mode box ceiling is 6.33x the fundamental where
+a single-note fit at c6 gets 19x, and said a flat or top-heavy loss would falsify the
+explanation. The loss is flat:
+
+| half                | mean loss against that note's own preset |
+| ------------------- | ---------------------------------------- |
+| bottom, notes 84-93 | +0.10530                                 |
+| top, notes 94-103   | +0.09338                                 |
+
+A 0.012 difference across the whole span, with the two largest single losses (+0.173 at
+note 95, +0.165 at note 98) both in the top half. **So the missing high partials are not
+what one preset costs.** The cost is spread evenly across the keyboard, which is what
+bar-to-bar scatter looks like and is not what a ceiling that binds at one end looks like.
+The 9.2 regression and the matrix now say the same thing from two directions: what a
+single preset cannot carry is the individual bar, not the band limit.
+
+**The joint fit also discarded the free-free partial**, which the seed handed it at
+2.723x with 13 of 20 notes behind it. The fitted preset spends its three modes on a pair
+stacked at 1.001x and 1.002x -- decays of 361 ms and 5.6 ms, so the second is an attack
+transient on the fundamental rather than a partial -- and one at 5.306x. Fitting twenty
+notes at once, the search preferred a well-shaped fundamental envelope over a real second
+mode. Nothing pinned (0 of 15 dimensions), so the box did not force this.
+
+**Reproducibility, checked rather than assumed.** The joint fit was re-run from scratch on a
+binary carrying the version-stamping fix, at the same seed and the same worker width. The two
+runs agree on every one of the 473 iterations the second reached -- identical `current`, `best`
+and `evaluations` at each -- including the final `best` of 0.428765. The second run was then
+killed by the machine for memory at evaluation 20147 and was not restarted, because a run that
+has already reached the same best by the same path has nothing left to demonstrate. So the
+version-stamping change is numerically inert, as a change to a version string ought to be, and
+the run is reproducible at a fixed seed and width in the sense phase 8 pinned.
+
+The consequence to remember: `out/pack/hollandm-joint/preset.json` was written by the binary that
+predates the fix, so the file says v4 while carrying no keytrack. Its parameters are right and
+its version is not, and it is regenerated the next time the fit runs -- which the beta ablation
+does anyway. Nothing ships from `out/`.
+
+**Following a run while it runs.** `pack status --dir <run>` reports where a fit has got to,
+read from the run directory rather than from the process: once, `--watch` in a terminal, or
+`--serve` at a URL. It works from another shell, after the shell that started the run is gone,
+and on a run someone else started, and it never writes. A manifest means a pack run and all
+twenty notes are reported; no manifest means the directory is itself one fit's output, which is
+how it follows a joint fit. The states are the ones `run` already resumes by, so a note it calls
+finished is exactly a note the next run would skip.
+
+Two bugs it found about itself, both pinned by tests, and both of the kind that look fine:
+`time.Duration` marshals as nanoseconds, so a field named `elapsed_ms` was wrong by a factor of a
+million while reporting a plausible number; and NaN is not JSON, so a fit that had not scored
+anything yet made the encoder fail _after_ the handler had written its 200, serving a blank page
+instead of an error. Absent scores are `null` now, the mapping `trace.go` had already chosen.
+
+**Written up.** `docs/training.md` gains "The hollandm pack, 2026-09-05": the pack and the
+note each file actually sounds, the transposition matrix and its row means, the falsified
+prediction, what the joint fit did with its seed, and the reproducibility check -- each with
+the arithmetic it was read under, the binary SHA-256 and revision behind it, every reference
+SHA-256, and the worker width, which belongs in the provenance because the search is
+reproducible at a fixed seed _and_ width rather than at a fixed seed alone.
+
+Still owed:
+
+- Promotion of the joint preset from `out/` to `assets/presets/` stays a separate decision, as it
+  does for the recorded-bar refit.
+- The beta ablation, >=12 paired blocks, under the three-part rule above. Report whether beta
+  pinned on its box edge: if it sits at 1.0 in most blocks the box is binding and the honest
+  conclusion is "beta cannot be evaluated here", not "beta does not help".
+
+  It is running as this is written: 12 blocks, both arms of a block sharing a seed (140000 + k),
+  all twenty notes, `mayfly/desma` at twelve workers. It runs at **6,000 evaluations rather than
+  24,000** -- 24 joint fits at the full budget is 22 hours on this machine, and this plan's own
+  cost estimate already assumed the reduced one. The consequence has to be stated with the
+  result: at a quarter of the budget neither arm has converged, so the ablation asks whether beta
+  helps _at a fixed budget_ rather than whether it reaches a better optimum. That reading is
+  biased against beta, which carries an extra dimension and pays for it early, so a pass is
+  strong evidence and a failure on criteria 1 or 2 is weak. Criterion 3 -- whether the fitted
+  beta is consistent across blocks -- is the one that does not turn on convergence, and it is the
+  one the twenty-note regression already predicts will fail.
+
+### What this phase will not do, stated up front
+
+- **It cannot learn a loudness curve.** Each note's level is solved in closed form and divided
+  out, so the joint objective is blind to relative level across notes. Correct for this pack --
+  five of its files touch full scale -- but someone will later expect the preset to have learned
+  one, and it cannot have.
+- **It cannot capture bar-to-bar scatter.** 0.33 octaves of decay and the idiosyncratic third
+  mode are properties of twenty distinct pieces of metal. A single transposed preset structurally
+  cannot reach them; only a zone or multisample layer could.
+- **It cannot reach above 6.33x the fundamental**, at 44.1 kHz over MIDI 84-103. The mode box is
+  rectangular and shared, so its ceiling binds at the highest note, where 0.45 x 44100 is only
+  6.3x that note's fundamental -- while a single-note fit at c6 gets 19x. This is not
+  conservatism: mode frequencies go straight into the oscillator bank with no Nyquist guard, so a
+  mode the top note cannot hold would fold down into audible alias garbage there.
+
+  **Registered prediction, before the matrix exists:** c6's measured partials reach 13.2x and
+  14.7x f0, so the joint preset should lose most at the _bottom_ of the range, where the modal
+  structure is richest and the shared ceiling bites hardest, and least at the top, where the
+  recordings hold two or three partials anyway. If `mean(joint row) - mean(diagonal)` is instead
+  flat across the range, or worst at the top, this explanation is wrong and the write-up says so.
+
+  **Outcome: wrong.** The loss is flat -- +0.105 over notes 84-93 against +0.093 over 94-103,
+  with the two worst notes in the top half. The ceiling is still real and still caps what the
+  preset can represent, but it is not what one preset costs. See Phase 9.5.
+
+---
+
 ## Deferred
 
 - **A two-sample step through the squared rotation matrix** (Phase 2.4). The recursion costs
@@ -1442,7 +1770,8 @@ reweighted for it, which is what actually moved the composite table's scores.
   a time with no separate tail path, and `cpufeat.Features` now carries `HasAVX512F` and
   `HasAVX512DQ`. Revisit when a runner pool with guaranteed AVX-512 is available, or when
   forced-feature emulation can execute the kernel on hardware that has the instructions.
-- Richer preset library and multi-note modeling.
+- Richer preset library. **The multi-note modeling half is discharged by Phase 9**, which fits
+  one preset against a spread of recorded notes at once.
 - Any GUI editor for the plugin, which now lives in its own repository.
 - **A shaped excitation** — a short noise burst or strike filter as a fitted model feature.
   Phase 8's review (finding 15) traces the fake beat clusters in `recorded-bar.json` to the
@@ -1451,8 +1780,10 @@ reweighted for it, which is what actually moved the composite table's scores.
   half: the excitation lowpass and the ±2 amplitude range together bound the spectral tilt the
   model can produce, so the high partials go missing and a cluster reappears to make one loud
   enough (`docs/training.md`). Model work, after 8.6 has numbers to compare against.
-- **Multi-note joint fitting** against several recordings with one shared preset, and
-  **multi-velocity fitting**. Both need recordings that do not exist yet.
+- **Multi-velocity fitting**. Still deferred, and still for the original reason: no pack in
+  `testdata/reference/packs/` records the same bar at more than one strike strength. The
+  multi-note half of this item **is discharged by Phase 9** -- the recordings turned out to
+  exist, 56 of them, sitting in the tree unreferenced since phase 8.
 - **go-cma-es 0.2.0.** It fixes a measured covariance defect that does not bite at this
   dimensionality, and bumping it makes every recorded CMA-ES figure incomparable. Only after
   8.6's tables exist, and then with a re-baseline. **Still deferred after 8.4**, which pinned

@@ -1276,9 +1276,11 @@ func TestRunFitSeedsTheModesFromTheReference(t *testing.T) {
 	}
 
 	// The minimal preset sounds one mode, so the analysis lists one partial
-	// and the fit searches one mode -- in a v2 preset, since v1 holds four.
-	if len(fitted.Parameters.Modes) != 1 || fitted.Version != preset.CurrentVersion {
-		t.Fatalf("fitted preset has %d modes in version %q, want 1 in %q", len(fitted.Parameters.Modes), fitted.Version, preset.CurrentVersion)
+	// and the fit searches one mode. The version is whatever the fitted fields
+	// need -- v3 here, for the output gain calibration writes -- rather than
+	// whichever version happens to be newest.
+	if want := preset.MinimumVersion(&fitted.Parameters); len(fitted.Parameters.Modes) != 1 || fitted.Version != want {
+		t.Fatalf("fitted preset has %d modes in version %q, want 1 in %q", len(fitted.Parameters.Modes), fitted.Version, want)
 	}
 
 	for _, want := range []string{"modes: 1 seeded from the reference's partials", "pinned: "} {
@@ -1339,8 +1341,12 @@ func TestRunFitSeedsTheModesFromTheReference(t *testing.T) {
 		t.Fatalf("kept preset has %d modes, want the template's 4", len(keptPreset.Parameters.Modes))
 	}
 
-	if keptPreset.Version != preset.CurrentVersion {
-		t.Fatalf("kept preset is version %q, want %q: it carries an output gain", keptPreset.Version, preset.CurrentVersion)
+	// v3 exactly, and not the newest version: the gain is the only field here
+	// that outgrows v2, so pushing the document to v4 would close it to readers
+	// that could have read it for no gain at all.
+	if keptPreset.Version != preset.VersionV3 {
+		t.Fatalf("kept preset is version %q, want %q: it carries an output gain and nothing newer",
+			keptPreset.Version, preset.VersionV3)
 	}
 
 	if keptPreset.Parameters.OutputGainDB == 0 {

@@ -2,6 +2,7 @@ package fitrun
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/cwbudde/algo-glockenspiel/internal/analysis"
@@ -50,7 +51,20 @@ const (
 	// render.wav possible without re-deriving the loader's own policy from
 	// the reference_options block.
 	FileReference = "reference.wav"
+
+	// NotesDir is where a multi-reference run keeps its per-note files:
+	// notes/<nnn>/analysis.json, reference.wav and render.wav, the note zero
+	// padded to three digits so a listing sorts in pitch order.
+	NotesDir = "notes"
 )
+
+// ReferenceSpec is one recording of a multi-reference fit: the file and the
+// note it sounds. The note is measured by the caller, because the note a file
+// sounds is the thing a file name is least reliable about.
+type ReferenceSpec struct {
+	Path string
+	Note int
+}
 
 // Spec is one fit: what to fit against, with what, and under which budget.
 //
@@ -62,8 +76,44 @@ type Spec struct {
 	// Dir is the run directory. It is created if it does not exist.
 	Dir string
 
-	// ReferencePath is the recording to fit against.
+	// ReferencePath is the recording to fit against. It is ignored when
+	// References is set.
 	ReferencePath string
+
+	// References fits one preset against several recordings at once, one per
+	// note, scoring it as the mean of their composite scores.
+	//
+	// This is what fitting an instrument means rather than one of its bars: the
+	// candidate is authored at AuthoredNote and transposed to each reference's
+	// own note, so the search looks for the bar whose transposition covers the
+	// whole range. Empty is the single-reference case and everything below
+	// behaves exactly as it did.
+	//
+	// A multi-reference run writes its per-note files under notes/<nnn>/ and
+	// writes no top-level reference.wav, analysis.json or render.wav at all,
+	// because a consumer reading those by name would be comparing one note
+	// against a fit of twenty and nothing would look wrong.
+	References []ReferenceSpec
+
+	// AuthoredNote is the note the fitted preset is authored at: the note its
+	// mode frequencies and decays are written in, and the one every other note
+	// is transposed from at render time.
+	//
+	// Zero keeps the template's own note, which is what every fit did before
+	// this field existed and is why it is the default. That is a real choice
+	// rather than an oversight, but it is a surprising one: a fit of a C6
+	// recording under the embedded note-69 template writes a preset whose
+	// fundamental reads 439.7 Hz, because PresetFromAnalysis divides every
+	// measured partial by the ratio to express it at the template's note. The
+	// preset renders correctly -- transposition puts it back -- but its numbers
+	// are not the bar's partials, and anything reading them as measurements of
+	// the recording is off by the ratio, decays included.
+	//
+	// Setting it transposes the template first, so the seeded modes are the
+	// measured partials themselves. A multi-reference fit defaults it to the
+	// median of the reference notes, which halves the furthest transposition
+	// the preset has to survive.
+	AuthoredNote int
 
 	// Reference is the loader's policy. The zero value is the fit command's
 	// default: channel zero, the automatic cut, peak-normalised.
@@ -71,6 +121,18 @@ type Spec struct {
 
 	// Template is the starting preset. Nil takes the embedded default.
 	Template *preset.Preset
+
+	// SearchDecayKeytrack searches the decay key-tracking exponent instead of
+	// leaving it at the template's value.
+	//
+	// It is only meaningful for a multi-reference fit, and the objective
+	// refuses it outright for one reference or for references less than an
+	// octave apart. That refusal is the point rather than a limitation: at a
+	// single note the exponent trades off exactly against every DecayMs, so a
+	// fit that searched it would report a number that means nothing. Plain
+	// `fit` therefore has no flag for it and never sets it; only a joint fit
+	// over a spread of notes can ask.
+	SearchDecayKeytrack bool
 
 	// Modes is how many modes to seed from the reference's partials. Zero
 	// takes every measured partial; optimizer.KeepTemplateModes keeps the
@@ -275,9 +337,20 @@ type CMAESSettings struct {
 // Summary is result.json: what the run spent and what it found, in the fields
 // the campaign's collect step turns into one CSV row.
 type Summary struct {
-	Score             float64                 `json:"score"`
-	Profile           string                  `json:"profile"`
-	Terms             optimizer.Metrics       `json:"terms"`
+	Score   float64 `json:"score"`
+	Profile string  `json:"profile"`
+
+	// Terms is the shipped vector's composite terms. A joint fit leaves every
+	// term NaN and fills NoteTerms instead: its score is the mean of the
+	// per-note scores, which no combination of terms reproduces, so there is
+	// no set of terms this field could hold that the score was computed from.
+	Terms optimizer.Metrics `json:"terms"`
+
+	// NoteTerms is each reference note's terms and score under the shipped
+	// vector, empty for a fit of a single recording. It is what says whether a
+	// good mean was reached by covering the range or by abandoning part of it.
+	NoteTerms []optimizer.NoteMetrics `json:"note_terms,omitempty"`
+
 	Evaluations       int                     `json:"evaluations"`
 	Iterations        int                     `json:"iterations"`
 	Restarts          int                     `json:"restarts"`
@@ -341,6 +414,30 @@ type Resolved struct {
 // rest of the package reads one set of values and the config file records the
 // same ones the run used.
 func (s Spec) withDefaults() Spec {
+	if len(s.References) > 0 {
+		// The references are ordered so the run directory, the trace and every
+		// table read in pitch order, and so the median below is a median.
+		//
+		// The slice is copied first. Spec is passed by value, but a slice
+		// header carries a pointer, so sorting in place would reorder the
+		// caller's own slice as a side effect of calling Run -- and a caller
+		// that built its references in a meaningful order, or reads them back
+		// after the run, has no way to know that happened.
+		s.References = append([]ReferenceSpec(nil), s.References...)
+		sort.Slice(s.References, func(i, j int) bool { return s.References[i].Note < s.References[j].Note })
+
+		if s.AuthoredNote == 0 {
+			// The middle note, which halves the furthest transposition the
+			// preset has to survive. The lowest note would be preferable if the
+			// authoring decay ceiling still bound, and it did while the
+			// keyboard bottomed out four octaves below the instrument; it does
+			// not now.
+			s.AuthoredNote = s.References[len(s.References)/2].Note
+		}
+
+		s.Note = s.AuthoredNote
+	}
+
 	if s.Note == 0 {
 		s.Note = defaultNote
 	}
@@ -374,8 +471,26 @@ func (s Spec) validate() error {
 		return fmt.Errorf("run directory cannot be empty")
 	}
 
-	if s.ReferencePath == "" {
+	if len(s.References) == 0 && s.ReferencePath == "" {
 		return fmt.Errorf("reference path cannot be empty")
+	}
+
+	seen := make(map[int]struct{}, len(s.References))
+
+	for _, ref := range s.References {
+		if ref.Path == "" {
+			return fmt.Errorf("every reference needs a path")
+		}
+
+		if ref.Note < 0 || ref.Note > 127 {
+			return fmt.Errorf("reference %q is at note %d, outside 0..127", ref.Path, ref.Note)
+		}
+
+		if _, ok := seen[ref.Note]; ok {
+			return fmt.Errorf("two references sit at note %d, which would give that note double weight", ref.Note)
+		}
+
+		seen[ref.Note] = struct{}{}
 	}
 
 	switch s.Engine.Name {

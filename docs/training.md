@@ -1115,3 +1115,158 @@ here; until it is, the rule refuses the promotion and the refusal stands on evid
   comparison against channel zero at the recording's own level. Phase 8.1's loader cuts to the
   first strike and records what it did; since 8.2 every fit reads through it, and the composite
   table above is the re-take.
+
+## The hollandm pack, 2026-09-05
+
+Phase 9's three steps -- fit every note, find what depends on the note, generalise into one
+preset -- taken against `testdata/reference/packs/hollandm-toy-glockenspiel`, the only
+chromatic run among the four packs and the richest at 5.2 partials a note. Twenty consecutive
+semitones, MIDI 84 to 103.
+
+Provenance. The twenty per-note fits were run by
+`a63247972ec94d68d74897390508fd740026e2bc4a3a5134e87909c118113a34` at revision `bb07c14`; the
+joint fit by `93c80353...` at revision `0f52053`; the derived tables by `cad66e25...` at
+revision `6a2c433`. Every fit ran at 24,000 evaluations, `mayfly/desma` with population 10 and
+15 restarts, profile `balanced`, `TimeBudget: 0` and the clock off, twelve workers. **The
+worker width is part of the provenance**: the search is reproducible at a fixed seed _and_ a
+fixed width, not at a fixed seed alone.
+
+### The pack, and the note each file actually sounds
+
+Ten of the twenty files arrived from Freesound sharing a name with their own sharp, because the
+upload form strips `#`. The note is therefore taken from the measured fundamental and the file
+name is only checked against it; a file whose name and pitch disagree by more than 50 cents is
+refused rather than fitted a semitone away from itself. `cents` below is how far the recording
+sits from equal temperament, and it is part of what one preset structurally cannot follow: the
+spread is -0.45 to +4.67 cents, about 0.3 on `partial_cents` against its norm of 10.
+
+| note | file      | cents | reference sha256   |   seed |    score |   s |
+| ---: | --------- | ----: | ------------------ | -----: | -------: | --: |
+|   84 | `c6.wav`  | -0.45 | `45b0682fd98047c4` | 130000 | 0.356647 | 164 |
+|   85 | `cs6.wav` | +1.87 | `bb38fd931f17a782` | 130001 | 0.352803 | 297 |
+|   86 | `d6.wav`  | -0.20 | `f93606c19065630a` | 130002 | 0.368057 | 256 |
+|   87 | `ds6.wav` | +2.08 | `f012eaba050ff26b` | 130003 | 0.370669 | 239 |
+|   88 | `e6.wav`  | +1.69 | `88132d7872635d18` | 130004 | 0.351347 | 481 |
+|   89 | `f6.wav`  | -0.76 | `6d284f25d445ec2f` | 130005 | 0.389584 | 433 |
+|   90 | `fs6.wav` | +3.47 | `63696f44dfdd1e0e` | 130006 | 0.356153 | 231 |
+|   91 | `g6.wav`  | +0.45 | `b3048703e20b7e89` | 130007 | 0.359447 | 272 |
+|   92 | `gs6.wav` | +1.34 | `61a6fd0d818876ec` | 130008 | 0.318498 | 219 |
+|   93 | `a6.wav`  | +3.41 | `8f717888c91a7dd6` | 130009 | 0.300934 | 222 |
+|   94 | `as6.wav` | +4.67 | `b248665f6184e9a0` | 130010 | 0.358214 | 145 |
+|   95 | `b6.wav`  | +2.56 | `1188be8b50c0949f` | 130011 | 0.322725 | 103 |
+|   96 | `c7.wav`  | +3.15 | `f66be9c5a277812b` | 130012 | 0.306971 | 190 |
+|   97 | `cs7.wav` | +0.09 | `031dbe8d82c45816` | 130013 | 0.328851 | 192 |
+|   98 | `d7.wav`  | +0.49 | `5b4341b2d5754d29` | 130014 | 0.284294 | 136 |
+|   99 | `ds7.wav` | +1.34 | `651216fa7d30df75` | 130015 | 0.320145 | 196 |
+|  100 | `e7.wav`  | +2.55 | `5c10df34686a3db4` | 130016 | 0.341532 | 197 |
+|  101 | `f7.wav`  | +2.60 | `e2d7deb749271672` | 130017 | 0.305849 | 116 |
+|  102 | `fs7.wav` | +3.76 | `515f19c91effecf6` | 130018 | 0.238406 | 112 |
+|  103 | `g7.wav`  | +0.90 | `cd79f0f3af171b66` | 130019 | 0.257320 |  92 |
+
+Mean of the twenty, each note fitted to itself: **0.329422**. That is the
+floor the rest of this section is measured against, and it is unreachable by construction --
+it is twenty presets, not one.
+
+### The transposition matrix
+
+Each of the twenty per-note presets was transposed to all twenty notes with
+`TransposeToNote`, its output gain solved in closed form at each, and scored under the same
+aggregate objective the joint fit minimises: the mean of the per-note `Score(profile)`, never
+the mean of the terms then one score. The joint preset is the twenty-first row. The full
+20x21 table is [docs/data/pack-hollandm-matrix.csv](data/pack-hollandm-matrix.csv); the row
+means are:
+
+| preset authored at | mean over 84-103 |     | preset authored at | mean over 84-103 |
+| -----------------: | ---------------: | --- | -----------------: | ---------------: |
+|                 84 |         0.632260 |     |                 94 |         0.487500 |
+|                 85 |         0.551303 |     |                 95 |         0.563090 |
+|                 86 |         0.563241 |     |                 96 |         0.508973 |
+|                 87 |         0.517042 |     |                 97 |         0.439204 |
+|                 88 |         0.637414 |     |                 98 |         0.476017 |
+|                 89 |         0.578130 |     |                 99 |         0.448135 |
+|                 90 |         0.507894 |     |                100 |         0.446613 |
+|                 91 |         0.618787 |     |                101 |         0.491812 |
+|                 92 |         0.441039 |     |                102 |         0.482035 |
+|                 93 |         0.472866 |     |                103 |         0.500822 |
+
+|                                           | mean over 84-103 |
+| ----------------------------------------- | ---------------: |
+| best single-note preset (note 97)         |         0.439204 |
+| **the joint preset**                      |     **0.428765** |
+| each note fitted to itself (the diagonal) |         0.329422 |
+
+**The joint row beats every single-note row**, not merely the average one, which is the
+registered claim and the reason to fit jointly at all rather than to pick the best bar and
+transpose it. And:
+
+> **the price of one preset covering twenty notes is +0.099343**
+
+which is the deliverable of the whole exercise: 0.329 is what twenty presets buy, 0.429 is
+what one buys, and the difference is what a single transposed preset structurally cannot
+reach.
+
+### The prediction that was falsified
+
+Before the matrix existed, PLAN.md registered the prediction that the loss would be
+bottom-heavy, because the shared mode ceiling binds at the top note: with the joint fit
+authored at 94 and the top note at 103, the box ceiling is `min(default, 0.45*rate / max_i
+r_i)` = 11,800 Hz, or 6.33x f0, against 19x f0 for a single-note fit at c6. The measurement
+says otherwise:
+
+| half of the range | loss against the diagonal |
+| ----------------- | ------------------------: |
+| bottom (84-93)    |                  +0.10530 |
+| top (94-103)      |                  +0.09338 |
+
+The two worst single notes are 95 (+0.17268) and 98 (+0.16530), both in the top half. The
+ceiling still caps what the preset can represent -- that is arithmetic -- but **it is not what
+one preset costs**. What a single preset cannot carry is the individual bar, not the band
+limit, and the twenty-note regression says the same thing from the other direction: 0.33
+octaves of bar-to-bar decay scatter against a term norm of 0.5.
+
+### What the joint fit did with its seed
+
+The seed was pooled over all twenty notes at coverage 0.35 -- every note's measured partials
+divided by `2^((n_i-94)/12)`, clustered in log frequency, and the clusters admitted that at
+least seven of twenty notes agree on. That gives three modes at 1.002x, 2.723x and 5.330x f0.
+The 2.723x cluster is the free-free bar's second partial, present in 18 of the 20 bars and
+holding to 1.4% with no drift across the range; two further clusters at 6.90x and 8.93x were
+admitted by coverage but sit outside the shared box, because the top note cannot hold them.
+
+The fit did not keep the second partial. It returned:
+
+| ratio to f0 | frequency at note 94 |    decay | amplitude |
+| ----------: | -------------------: | -------: | --------: |
+|      1.001x |            1866.9 Hz | 361.4 ms |   -0.0839 |
+|      1.002x |            1868.7 Hz |   5.6 ms |   -0.5327 |
+|      5.306x |            9893.7 Hz |  20.8 ms |   +0.5510 |
+
+Two of the three modes are the fundamental: one long and quiet, one 5.6 ms and loud. That is
+an attack transient on the fundamental rather than a second mode, so the search spent a mode
+shaping the onset instead of placing the 2.723x partial it was seeded with. **Nothing pinned
+-- 0 of 15 dimensions sit on a box edge -- so the box did not force this**; fitting twenty
+notes at once, a well-shaped fundamental envelope simply scores better than a real second
+mode does. This is a finding about the objective, not about the bar.
+
+### Reproducibility, checked rather than assumed
+
+The joint fit was re-run from scratch on a later binary carrying the schema-stamping fix, at
+the same seed and the same worker width. The two runs agree on **every one of the 473
+iterations the second reached** -- identical `current`, `best` and `evaluations` at each --
+including the final `best` of 0.428765. The second run was then killed by the machine for
+memory at evaluation 20,147 and was not restarted: a run that has reached the same best by the
+same path has nothing left to demonstrate. So the stamping change is numerically inert, as a
+change to a version string ought to be.
+
+One consequence worth writing down: `out/pack/hollandm-joint/preset.json` says version 4.0
+while carrying no `decay_keytrack`, because the binary that wrote it predates the fix that
+earns a version from the fields a document actually uses. Its parameters are right and its
+version is not. Nothing ships from `out/`.
+
+### What this could not measure
+
+- **A loudness curve.** Each note's level is solved in closed form and divided out, so the
+  joint objective is blind to relative level across notes. Correct for this pack, five of whose
+  files touch full scale -- but the preset has not learned a loudness law and cannot have.
+- **Bar-to-bar scatter.** 0.33 octaves of decay spread and an idiosyncratic third mode are
+  properties of twenty distinct pieces of metal. Only a zone or multisample layer reaches them.

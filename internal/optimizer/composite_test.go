@@ -198,7 +198,7 @@ func TestCompositeChargesAnExtraPartialButNotAClick(t *testing.T) {
 
 	// The codec is shaped by the template; a four-mode candidate needs an
 	// objective built from a four-mode template.
-	objectiveFour, err := NewObjectiveFunction(objective.reference, extra, 44100, 69, 100, MetricBalanced)
+	objectiveFour, err := NewObjectiveFunction(objective.refs[0].samples, extra, 44100, 69, 100, MetricBalanced)
 	if err != nil {
 		t.Fatalf("NewObjectiveFunction failed: %v", err)
 	}

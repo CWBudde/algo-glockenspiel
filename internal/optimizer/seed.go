@@ -26,23 +26,21 @@ const seedFallbackDecayMs = 100.0
 // listed. A partial whose decay could not be fitted takes the median
 // half-life of those that could.
 //
-// The result is a current-version preset whatever the template's version
-// was: a v1 preset holds exactly four modes, and the recording decides how
-// many there are here. A v1 template's implicit defaults are made explicit
-// by preset.Upgrade, so nothing else about it changes.
+// The result carries whatever schema version its fields need and no more: a
+// v1 preset holds exactly four modes and the recording decides how many there
+// are here, so the seed is at least v2, and a v1 template's implicit defaults
+// are made explicit by preset.Upgrade. Nothing else about it changes.
 func PresetFromAnalysis(template *preset.Preset, measurement *analysis.Measurement, note, modes int) (*preset.Preset, error) {
 	if template == nil {
 		return nil, fmt.Errorf("template preset cannot be nil")
 	}
 
-	if template.Version != preset.CurrentVersion {
-		upgraded, err := preset.Upgrade(template)
-		if err != nil {
-			return nil, err
-		}
-
-		template = upgraded
+	upgraded, err := preset.Upgrade(template)
+	if err != nil {
+		return nil, err
 	}
+
+	template = upgraded
 
 	if measurement == nil || len(measurement.Partials) == 0 {
 		return nil, fmt.Errorf("the analysis lists no partials to seed from")
@@ -79,6 +77,13 @@ func PresetFromAnalysis(template *preset.Preset, measurement *analysis.Measureme
 	// by the ratio and multiplying the decay by it -- the inverse of what
 	// model.TransposeToNote does at render time.
 	ratio := math.Pow(2, float64(note-template.Note)/12)
+
+	// The decay inverse is the ratio raised to the template's key-tracking
+	// exponent, matching what TransposeToNote will divide by at render time.
+	// Getting this wrong is silent: the seeded decay would simply be off by a
+	// factor, and the search would spend part of its budget walking back.
+	keytrack := template.Parameters.ResolvedDecayKeytrack()
+	decayRatio := math.Pow(ratio, keytrack)
 	seeded := template.Clone()
 	seeded.Parameters.Modes = make([]model.ModeParams, len(partials))
 
@@ -103,7 +108,8 @@ func PresetFromAnalysis(template *preset.Preset, measurement *analysis.Measureme
 		seeded.Parameters.Modes[i] = model.ModeParams{
 			Amplitude: math.Min(model.AmplitudeMax, amplitude),
 			Frequency: frequency,
-			DecayMs:   math.Min(model.AuthoredDecayMsMax(template.Note), math.Max(model.DecayMsMin, halfLife*ratio)),
+			DecayMs: math.Min(model.AuthoredDecayMsMax(template.Note, keytrack),
+				math.Max(model.DecayMsMin, halfLife*decayRatio)),
 		}
 	}
 

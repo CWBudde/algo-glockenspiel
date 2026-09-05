@@ -810,17 +810,34 @@ export interface BarParams {
    * at the wrong level rather than refuse it.
    */
   output_gain_db?: number;
+
+  /**
+   * `decay_keytrack`: the exponent transposition raises the frequency ratio to
+   * before dividing a decay by it. Absent means 1, the law every preset written
+   * before it existed was authored under -- a bar an octave down rings exactly
+   * twice as long.
+   *
+   * Absent rather than zero is the neutral value, and that is why the Go side
+   * carries it as a pointer: zero is a legal exponent meaning no key tracking
+   * at all, which is roughly what a metallophone measures.
+   *
+   * It is a v4 field because a v3 reader that ignored it would divide every
+   * decay by the full ratio and render correctly at exactly one note, the one
+   * the preset was authored at, diverging monotonically from there with no
+   * error anywhere.
+   */
+  decay_keytrack?: number;
 }
 
 /**
  * `preset.Preset`, the body of `GET api/fit/preset` and the document the
  * optional `preset` multipart field carries.
  *
- * `version` is "1.0", "2.0" or "3.0"; v2 adds the variable-length mode array,
- * per-mode harmonics and the explicit Chebyshev stage, and v3 adds
- * `output_gain_db`. A document is held to its own version's rules, so a
- * calibrated preset is v3 rather than a v2 one an older reader would play at
- * the wrong level.
+ * `version` is "1.0", "2.0", "3.0" or "4.0"; v2 adds the variable-length mode
+ * array, per-mode harmonics and the explicit Chebyshev stage, v3 adds
+ * `output_gain_db` and v4 adds `decay_keytrack`. A document is held to its own
+ * version's rules, so a calibrated preset is at least v3 rather than a v2 one
+ * an older reader would play at the wrong level.
  */
 export interface Preset {
   version: string;
