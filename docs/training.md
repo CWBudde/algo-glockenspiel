@@ -838,6 +838,81 @@ preset stays off it`. Its score, 0.3164, is unremarkable, so this is an ordinary
 more than 63 dB below full scale rather than a degenerate one. That is the warning 8.9 added doing
 the job it was added for, at a rate of one in sixty.
 
+## The second reference re-taken, 2026-09-05
+
+The promotion rule asks about both references, and the C5 campaign above puts a challenger in
+front of it, so the same three shapes were run on `legacy_synth_a4.wav` over eight paired seeds at
+the campaign's 24,000-evaluation budget. Twenty-four fits, all stopping on `max_evaluations`. The
+arm settings are copied from the campaign's own job configs, so these are the same three shapes the
+campaign ran and not an approximation of them.
+
+| seed | `mayfly-single` | `mayfly-r16` | `sep-cmaes-r` |
+| ---- | --------------- | ------------ | ------------- |
+| 1    | 0.172141        | 0.170350     | 0.172168      |
+| 2    | 0.172141        | 0.170933     | 0.172144      |
+| 3    | 0.170593        | 0.170324     | 0.170531      |
+| 4    | 0.172147        | 0.169934     | 0.172177      |
+| 5    | 0.172139        | 0.170848     | 0.172528      |
+| 6    | 0.172524        | 0.170470     | 0.170961      |
+| 7    | 0.172151        | 0.170442     | 0.170491      |
+| 8    | 0.172140        | 0.169936     | 0.172142      |
+| mean | 0.171997        | **0.170405** | 0.171643      |
+| sd   | 0.000583        | 0.000365     | 0.000834      |
+
+**`mayfly-r16` wins here, and it wins every seed.** Against `mayfly-single` the paired difference is
+0.001592 with t = 6.86, eight blocks of eight; against `sep-cmaes-r` it is 0.001238 with t = 3.95,
+again eight of eight. The arm that lost eleven of twelve blocks on the recording wins all eight on
+the synthetic render.
+
+That is not a contradiction, it is what two references are for. The A4 file holds a single partial
+and every shape solves it to within 0.002 of score; the recording holds eight partials in a room
+and the shapes separate by fifty times as much. The second reference is not a tie-breaker of equal
+weight, it is a check that a change good for the hard case is not paid for on the easy one.
+
+**The old outlier was an artifact too.** The 2026-09-03 table recorded `sep-cmaes-r` with an sd of
+0.006696 against `mayfly-r16`'s 0.000925, and named seed 3 — which scored 0.083878 where its
+siblings scored about 0.0648 — as "the whole of its mean's disadvantage". Seed 3 now scores
+0.170531, in line with every other seed, and the sd is 0.000834 against 0.000365. The bad seed was
+the floor, not the engine. The variance argument that section makes does not survive, though its
+conclusion — no difference worth calling one between the two shapes on this reference — does.
+
+### The decision: the default does not change
+
+Phase 8.6's rule is that a default changes only when it wins a registered contrast and regresses no
+term of `balanced` on either reference, where a term counts as regressed when the paired difference
+is both real and larger than one percent of the term's norm in `optimizer.DefaultNorms`.
+
+`mayfly-single` passes the first clause on the recording, decisively. It fails the second on A4,
+paired over the eight seeds, `mayfly-single` minus `mayfly-r16`:
+
+| term                    | difference | % of norm | t     | worse in |
+| ----------------------- | ---------- | --------- | ----- | -------- |
+| `onset_db`              | +0.85989   | +5.73%    | +5.40 | 8/8      |
+| `envelope_db`           | +0.05612   | +1.87%    | +6.37 | 8/8      |
+| `partial_decay_octaves` | +0.00101   | +0.20%    | +3.90 | 8/8      |
+| `spectral_coarse_db`    | +0.00229   | +0.02%    | +0.73 | 1/8      |
+| `partial_cents`         | −0.00044   | −0.00%    | −1.24 | 3/8      |
+| `decay_slope_dbps`      | −0.00599   | −0.06%    | −1.62 | 2/8      |
+| `spectral_fine_db`      | −0.00052   | −0.01%    | −4.39 | 0/8      |
+| `waveform`              | −0.01353   | −2.71%    | −6.68 | 0/8      |
+
+`onset_db` and `envelope_db` are unanimous, significant, and above the one percent threshold. Two
+material regressions on the second reference, so the rule refuses the promotion.
+
+**`mayfly-r16` remains the CLI default, now on evidence rather than on inheritance.** It is worth
+being exact about what that sentence is worth: the arm is retained having been beaten on the
+primary reference, by a rule written before the result was known. The three terms that saved it are
+`onset_db`, `envelope_db` and the waveform trade — and `onset_db` did not exist when this default
+was chosen, which makes the term that decided the rematch one the original campaign could not have
+measured.
+
+Two things follow, and neither is taken here. `mayfly-single` is now the better arm on the only
+real recording this project has, by a margin no seed disputes, so the case for it is open rather
+than closed and wants a design that measures both shapes at two or three budgets — the campaign
+already showed `mayfly-single` reaching its best at 98.8% of its budget, still improving when the
+cap cut it. And `sep-cmaes-r` reached parity on the recording, which is not a win, so `seed-hunt`
+stays unrunnable for the second campaign running.
+
 ## What the baseline is for
 
 - **Norms.** Phase 8.2 scaled each term of the composite objective so that no term saturates on
