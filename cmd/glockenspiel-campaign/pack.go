@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/pack"
@@ -38,7 +41,8 @@ func newPackCmd() *cobra.Command {
 			"at a time, and collect writes the tables a note-versus-partial regression reads.",
 	}
 
-	cmd.AddCommand(newPackPlanCmd(), newPackRunCmd(), newPackCollectCmd(), newPackFitJointCmd(), newPackScoreCmd(), newPackRegressCmd())
+	cmd.AddCommand(newPackPlanCmd(), newPackRunCmd(), newPackCollectCmd(), newPackFitJointCmd(),
+		newPackScoreCmd(), newPackRegressCmd(), newPackStatusCmd())
 
 	return cmd
 }
@@ -335,4 +339,88 @@ func newPackCollectCmd() *cobra.Command {
 	_ = cmd.MarkFlagRequired("dir")
 
 	return cmd
+}
+
+// newPackStatusCmd is how you find out where a fit has got to without being at
+// the machine running it.
+//
+// It reads the run directory rather than talking to the process, so it works
+// from a second shell, after the shell that started the run has gone, and on a
+// run started by someone else. --serve is the same reading over HTTP, for the
+// case the pack commands were missing entirely: a joint fit is the better part
+// of an hour and until now the only way to follow one was to tail a log on the
+// machine it was running on.
+func newPackStatusCmd() *cobra.Command {
+	var (
+		dir   string
+		watch time.Duration
+		serve string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Report how far a pack run or a joint fit has got",
+		Long: "The directory decides what is read: a pack run directory holding a manifest reports " +
+			"every note, and a single fit's output directory reports that one fit. Everything comes " +
+			"from files the run has already written and flushed, so this never disturbs a run in " +
+			"flight and never writes to its directory.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			if serve != "" {
+				return pack.Serve(ctx, dir, serve, cmd.OutOrStdout())
+			}
+
+			if watch <= 0 {
+				status, err := pack.ReadStatus(dir)
+				if err != nil {
+					return err
+				}
+
+				_, _ = fmt.Fprint(cmd.OutOrStdout(), pack.RenderStatus(status))
+
+				return nil
+			}
+
+			return watchStatus(ctx, dir, watch, cmd.OutOrStdout())
+		},
+	}
+
+	cmd.Flags().StringVar(&dir, "dir", "", "pack run directory, or a single fit's output directory")
+	cmd.Flags().DurationVar(&watch, "watch", 0,
+		"reprint at this interval instead of once (0 prints once)")
+	cmd.Flags().StringVar(&serve, "serve", "",
+		"serve the progress over HTTP at this address instead of printing it, e.g. :8099")
+	_ = cmd.MarkFlagRequired("dir")
+
+	return cmd
+}
+
+// watchStatus reprints the status until the context is cancelled.
+//
+// It redraws by clearing the screen rather than by scrolling. A progress table
+// appended once a second is a log of a progress table, and the thing being
+// watched is the latest one.
+func watchStatus(ctx context.Context, dir string, every time.Duration, out io.Writer) error {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+
+	for {
+		status, err := pack.ReadStatus(dir)
+		if err != nil {
+			return err
+		}
+
+		_, _ = fmt.Fprintf(out, "\033[H\033[2J%s\n%s", pack.RenderStatus(status), time.Now().Format(time.Kitchen))
+
+		select {
+		case <-ctx.Done():
+			_, _ = fmt.Fprintln(out)
+
+			return nil
+		case <-ticker.C:
+		}
+	}
 }
