@@ -51,6 +51,7 @@ func NewRootCmd() *cobra.Command {
 		newStatusCmd(),
 		newCollectCmd(),
 		newAnalyzeCmd(),
+		newPackCmd(),
 		newVersionCmd(),
 	)
 
