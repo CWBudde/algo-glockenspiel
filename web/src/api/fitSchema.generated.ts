@@ -140,13 +140,22 @@ export const LOG_ENCODED_BOUNDS_KEYS = [
   "decay_ms",
 ] as const;
 
+/**
+ * The MIDI notes at the two ends of the playable keyboard, from
+ * model.KeyboardFirstNote and model.KeyboardLastNote. A note outside this span
+ * cannot be built and its note-on is dropped without a sound, so the browser
+ * must not draw keys beyond it.
+ */
+export const KEYBOARD_FIRST_NOTE = 79;
+export const KEYBOARD_LAST_NOTE = 108;
+
 /** The range model.ValidateBarParams holds each dimension to. DecodeParamBounds in internal/optimizer/boundsfile.go rejects a supplied range that leaves this box, and for a good reason: every candidate drawn from it would fail validation and score +Inf, so the fit would burn its whole budget to produce nothing. */
 export const MODEL_BOUNDS_LIMITS = {
   input_mix: [0, 2] as const,
   filter_freq: [20, 20000] as const,
   amplitude: [-2, 2] as const,
-  frequency: [0.01, 50000] as const,
-  decay_ms: [0.1, 5000] as const,
+  frequency: [0.01, 200000] as const,
+  decay_ms: [0.01, 5000] as const,
   harmonic_gain: [0, 2] as const,
 } as const;
 

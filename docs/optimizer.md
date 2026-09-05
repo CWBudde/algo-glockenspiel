@@ -35,7 +35,7 @@ reshaped it, for four reasons the review found:
   depends on which one the search sat in, and `Pinned` names a mode by its written index.
 - **The decay box is `[0.5, 2000]` ms**, wide enough for the recording's 677 ms fundamental,
   and the objective narrows its ceiling to `model.AuthoredDecayMsMax` for the template's note —
-  743 ms at note 69 — so a fit cannot write a decay the preset file then refuses.
+  1487 ms at note 100 — so a fit cannot write a decay the preset file then refuses.
 
 The **mode count comes from the reference**, not the template: `SeedPreset` replaces the
 template's modes with one per measured partial, at its frequency, attack level and half-life

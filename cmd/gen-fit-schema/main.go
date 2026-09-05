@@ -250,6 +250,16 @@ func writeBounds(b *strings.Builder) {
 	writeArrayConst(b, "LOG_ENCODED_BOUNDS_KEYS", fitschema.LogEncodedBoundsKeys())
 	b.WriteString("\n")
 
+	b.WriteString(`/**
+ * The MIDI notes at the two ends of the playable keyboard, from
+ * model.KeyboardFirstNote and model.KeyboardLastNote. A note outside this span
+ * cannot be built and its note-on is dropped without a sound, so the browser
+ * must not draw keys beyond it.
+ */
+`)
+	fmt.Fprintf(b, "export const KEYBOARD_FIRST_NOTE = %d;\n", fitschema.KeyboardFirstNote())
+	fmt.Fprintf(b, "export const KEYBOARD_LAST_NOTE = %d;\n\n", fitschema.KeyboardLastNote())
+
 	writeBoundsTable(b, "MODEL_BOUNDS_LIMITS",
 		`The range model.ValidateBarParams holds each dimension to. `+
 			`DecodeParamBounds in internal/optimizer/boundsfile.go rejects a supplied `+

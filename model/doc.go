@@ -45,13 +45,14 @@
 // The authoring ceiling is not a constant at all. A preset is written at
 // one note and played across the whole keyboard, and transposing down stretches
 // every decay, so what a preset file may carry depends on its base note:
-// [AuthoredDecayMsMax] returns 5000 ms at note 36, 743 ms at note 69 and
-// 156.25 ms at note 96. [ValidateAuthoredBarParams] is the check, and it is
+// [AuthoredDecayMsMax] returns the full 5000 ms anywhere at or below the
+// bottom key, 2102 ms at note 94, 1487 ms at note 100 and 936 ms at note 108.
+// [ValidateAuthoredBarParams] is the check, and it is
 // strictly stronger than ValidateBarParams. Use those two for anything that
 // produces or accepts a preset file.
 //
 // Note the direction of that: the authoring ceiling falls below
-// DecayMsSearchMax everywhere above note 51, so the optimizer narrows its
+// DecayMsSearchMax everywhere above note 94, so the optimizer narrows its
 // decay box to AuthoredDecayMsMax for the note it fits at rather than trusting
 // the constant. Treating DecayMsSearchMax as an authoring bound is what
 // silenced the bottom 17 keys of the keyboard once already.

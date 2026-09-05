@@ -34,16 +34,54 @@ const (
 
 	// FrequencyMinHz and FrequencyMaxHz bound ModeParams.Frequency and
 	// BarParams.BaseFrequency. The ceiling sits above any audible rate on
-	// purpose: a mode above Nyquist is a wasted oscillator rather than an
-	// invalid one, and refusing it would make a preset's validity depend on the
-	// sample rate it happens to be rendered at. Enforced by ValidateBarParams.
+	// purpose: refusing a mode above Nyquist here would make a preset's
+	// validity depend on the sample rate it happens to be rendered at.
+	// Enforced by ValidateBarParams.
+	//
+	// That is a statement about validity and not about sound. A mode above
+	// Nyquist is *not* a wasted oscillator -- a resonator handed one produces
+	// the alias at full amplitude -- so the renderer culls it instead, at the
+	// rate it is actually rendering at. See rotorCoefficients in
+	// internal/oscbank. Validity is rate-independent, audibility is not, and
+	// keeping the two apart is what lets this constant be a guard against
+	// nonsense rather than a band limit.
+	//
+	// The ceiling is 200 kHz rather than 50 kHz because the keyboard's top key
+	// moved to MIDI 108. Transposition multiplies every mode frequency by the
+	// ratio, so this constant divided by the ratio from a preset's own note to
+	// the top key is the real limit on what that preset may be authored with --
+	// and a preset authored at note 69 is now stretched 39 semitones, a factor
+	// of 9.51, which took the authored ceiling from 10.5 kHz to 5.3 kHz and put
+	// the shipped recorded-bar.json (a 9792 Hz mode, 93 kHz at the top key)
+	// outside it. The alternative was deleting two of that preset's modes for
+	// the second time in its history. Following this constant's own reasoning
+	// instead: a 93 kHz mode is not something to refuse at authoring time. It
+	// is something the renderer must not sound, which is where it is handled.
 	FrequencyMinHz = 0.01
-	FrequencyMaxHz = 50000.0
+	FrequencyMaxHz = 200000.0
 
 	// DecayMsMin is the shortest decay a mode may carry. See
 	// DecayMsValidationMax and DecayMsSearchMax for the two ceilings, and the
 	// package overview for why there are two.
-	DecayMsMin = 0.1
+	//
+	// It is the exact mirror of DecayMsValidationMax and moves for the mirror
+	// reason. That ceiling is enforced after transposing a preset *down* to the
+	// bottom key, where decays inflate; this floor is enforced after transposing
+	// it *up* to the top key, where they shrink. Moving the top key to MIDI 108
+	// therefore tightened this floor by the same factor it loosened the ceiling:
+	// default.json's shortest mode is 0.5605 ms at note 69 and 0.0589 ms at note
+	// 108, which the old 0.1 ms floor refused -- so NewBar failed and the engine
+	// dropped every note-on above 98 without a sound.
+	//
+	// No amount of re-authoring fixes that, because decay_min / 2^((top-note)/12)
+	// is invariant under TransposeToNote, exactly as the frequency ceiling is.
+	// Lowering the floor is the only lever. 0.01 ms is 0.44 samples at 44.1 kHz,
+	// so it sits below the "dies within a sample" line the *search* floor
+	// (DecayMsSearchMin, 0.5 ms) is drawn at -- which is right, because these
+	// two floors answer different questions. The search has no business spending
+	// steps on a mode that is a click; validation has no business refusing to
+	// build a bar whose top octave contains one.
+	DecayMsMin = 0.01
 
 	// DecayMsValidationMax is the hard ceiling ValidateBarParams enforces: the
 	// widest decay a BarParams may carry at the moment it is handed to NewBar.
@@ -60,9 +98,17 @@ const (
 	// happens, which is after transposition. Everything else follows from it.
 	// What a preset file may be *written* with follows from it too, and is
 	// therefore not a constant -- see [AuthoredDecayMsMax] and
-	// [ValidateAuthoredBarParams]. A preset at note 36 may carry the full 5000 ms,
-	// one at note 69 only 743 ms, one at note 100 only 124 ms; all three ring for
-	// the same five seconds at the bottom key.
+	// [ValidateAuthoredBarParams]. A preset at or below the bottom key may carry
+	// the full 5000 ms, one at note 100 only 1487 ms, one at note 108 only 936 ms;
+	// all three ring for the same five seconds at the bottom key.
+	//
+	// The number did not have to move when the keyboard became a glockenspiel,
+	// and that is worth recording rather than leaving to look like luck. It is
+	// enforced after transposition, so raising the bottom key from MIDI 36 to 79
+	// shortened every transposed decay by a factor of 12 and left five seconds
+	// with room to spare -- the hollandm pack's longest bar, 808 ms at MIDI 85,
+	// needs 13.7 s at note 36 and 1.1 s at note 79. The floor is the constant that
+	// had to move instead; see [DecayMsMin].
 	//
 	// An earlier revision of this constant derived 5000 from base note 69 alone
 	// -- 500 ms at the top of the optimizer's search box, transposed from note 69
@@ -85,8 +131,8 @@ const (
 	// box. That is all they are.
 	//
 	// The ceiling is emphatically not the one a preset is authored under, which
-	// is [AuthoredDecayMsMax] and depends on the base note -- 743 ms at note 69,
-	// 124 ms at note 100 -- so the optimizer narrows its box to that ceiling
+	// is [AuthoredDecayMsMax] and depends on the base note -- 1487 ms at note 100,
+	// 936 ms at note 108 -- so the optimizer narrows its box to that ceiling
 	// for the note it fits at, and nothing validates against these values.
 	//
 	// The ceiling was 500 ms until Phase 8.3, kept there for a step-size

@@ -337,23 +337,40 @@ func TestPresetsPastTheirBaseNoteCeilingAreRefusedAtLoad(t *testing.T) {
 	}
 }
 
-// TestSearchBoundIsAuthorableOnlyUpToNote51 states, as an assertion, the fact
+// TestSearchBoundIsAuthorableOnlyUpToNote94 states, as an assertion, the fact
 // the old derivation of DecayMsValidationMax silently assumed away: the
 // optimizer's decay box and the authoring ceiling agree only over part of the
-// keyboard. Above note 51 the box is wider than a preset at that position may
+// keyboard. Above note 94 the box is wider than a preset at that position may
 // carry, which is why the objective narrows it to the ceiling for its note.
 //
 // This is a real edge rather than a curiosity, and pinning it is what keeps the
 // two constants honest with each other: if either moves, this test says where
-// the crossover went.
-func TestSearchBoundIsAuthorableOnlyUpToNote51(t *testing.T) {
-	if got := model.AuthoredDecayMsMax(51); got < model.DecayMsSearchMax {
-		t.Errorf("at base note 51 the ceiling is %g ms, below the search bound %g", got, model.DecayMsSearchMax)
+// the crossover went. It has moved once already -- the crossover was note 51
+// while the keyboard bottomed out at MIDI 36, and followed the bottom key up to
+// 94 when the keyboard became a glockenspiel's G5..C8. That is the whole point
+// of pinning it: the number is a consequence of two constants, not a fact about
+// the instrument, and it should be re-derived rather than preserved.
+const searchBoundCrossoverNote = 94
+
+func TestSearchBoundIsAuthorableOnlyUpToNote94(t *testing.T) {
+	if got := model.AuthoredDecayMsMax(searchBoundCrossoverNote); got < model.DecayMsSearchMax {
+		t.Errorf("at base note %d the ceiling is %g ms, below the search bound %g",
+			searchBoundCrossoverNote, got, model.DecayMsSearchMax)
 	}
 
-	if got := model.AuthoredDecayMsMax(52); got >= model.DecayMsSearchMax {
-		t.Errorf("at base note 52 the ceiling is %g ms, still at or above the search bound %g",
-			got, model.DecayMsSearchMax)
+	if got := model.AuthoredDecayMsMax(searchBoundCrossoverNote + 1); got >= model.DecayMsSearchMax {
+		t.Errorf("at base note %d the ceiling is %g ms, still at or above the search bound %g",
+			searchBoundCrossoverNote+1, got, model.DecayMsSearchMax)
+	}
+
+	// And the crossover really is where the constant says, rather than the
+	// constant merely being consistent with two lucky notes.
+	for note := model.KeyboardFirstNote; note <= model.KeyboardLastNote; note++ {
+		wide := model.AuthoredDecayMsMax(note) >= model.DecayMsSearchMax
+		if want := note <= searchBoundCrossoverNote; wide != want {
+			t.Fatalf("note %d: ceiling %g ms is wider-than-search=%v, want %v -- the crossover is not %d",
+				note, model.AuthoredDecayMsMax(note), wide, want, searchBoundCrossoverNote)
+		}
 	}
 }
 

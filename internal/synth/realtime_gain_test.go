@@ -133,11 +133,26 @@ func TestGainsForNoteSpansTheKeyboardRange(t *testing.T) {
 			lowLeft, lowRight, highLeft, highRight)
 	}
 
-	centre := (KeyboardFirstNote + KeyboardLastNote) / 2
+	// The keyboard spans an odd number of semitones (79..108 is 29), so its
+	// centre falls *between* two notes and no single note is dead centre. Assert
+	// the property that holds either way: the two notes straddling the midpoint
+	// are mirror images. Asking gainsForNote for a rounded-down "centre" note
+	// would only pin the rounding.
+	lowMid := (KeyboardFirstNote + KeyboardLastNote) / 2
+	highMid := KeyboardFirstNote + KeyboardLastNote - lowMid
 
-	centreLeft, centreRight := gainsForNote(centre)
-	if math.Abs(float64(centreLeft-centreRight)) > 1e-6 {
-		t.Fatalf("middle of the keyboard should be centred: left=%g right=%g", centreLeft, centreRight)
+	lowMidLeft, lowMidRight := gainsForNote(lowMid)
+	highMidLeft, highMidRight := gainsForNote(highMid)
+
+	if math.Abs(float64(lowMidLeft-highMidRight)) > 1e-6 || math.Abs(float64(lowMidRight-highMidLeft)) > 1e-6 {
+		t.Fatalf("the notes straddling the centre are not mirrored: %d=(%g, %g) %d=(%g, %g)",
+			lowMid, lowMidLeft, lowMidRight, highMid, highMidLeft, highMidRight)
+	}
+
+	// And they sit either side of centre rather than both on one side.
+	if lowMidLeft <= 0.5 || highMidRight <= 0.5 {
+		t.Fatalf("the centre notes do not straddle the middle: %d=(%g, %g) %d=(%g, %g)",
+			lowMid, lowMidLeft, lowMidRight, highMid, highMidLeft, highMidRight)
 	}
 
 	// Out-of-range note-ons clamp to the ends rather than running off the

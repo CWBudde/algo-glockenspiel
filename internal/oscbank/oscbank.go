@@ -386,7 +386,28 @@ func rotorCoefficients(osc Oscillator, harmonic int, decayFactor float64, decayi
 		return rotorCoefficient{}, false
 	}
 
-	phase := 2 * math.Pi * float64(harmonic+1) * osc.Frequency / sampleRate
+	frequency := float64(harmonic+1) * osc.Frequency
+
+	// A rotor at or above Nyquist is culled rather than rendered.
+	//
+	// It is tempting to treat one as harmless -- the model's frequency ceiling
+	// says as much, calling a mode above Nyquist "a wasted oscillator rather
+	// than an invalid one" -- but a resonator does not go quiet above Nyquist.
+	// It produces the alias, at full amplitude, wherever that happens to land:
+	// recorded-bar.json's 9791.5 Hz mode transposed to the keyboard's top key
+	// is 93.15 kHz, which is a loud 4.95 kHz partial at 44.1 kHz and a loud
+	// 2.85 kHz one at 48 kHz. That is the same preset sounding different on
+	// two soundcards, which is worse than either result on its own.
+	//
+	// Culling here rather than in validation keeps the two questions apart, as
+	// FrequencyMaxHz's own reasoning asks: whether a preset is *valid* stays
+	// independent of the rate it is rendered at, and whether a rotor is
+	// *audible* is decided at the rate it is actually rendered at.
+	if frequency >= 0.5*sampleRate {
+		return rotorCoefficient{}, false
+	}
+
+	phase := 2 * math.Pi * frequency / sampleRate
 	sinVal, cosVal := math.Sincos(phase)
 
 	return rotorCoefficient{

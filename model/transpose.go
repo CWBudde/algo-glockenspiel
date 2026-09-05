@@ -14,9 +14,21 @@ import (
 // They are the range ValidateAuthoredBarParams and AuthoredDecayMsMax reason
 // over, so a host that lays out a different keyboard should treat them as this
 // instrument's declared span rather than as its own.
+//
+// The span is the orchestral glockenspiel's real sounding range, G5 to C8, and
+// that is a correctness property rather than a cosmetic one. It used to be
+// 36..96, C2 to C7, which is not an instrument anybody builds: it put the
+// bottom key four octaves below anything a glockenspiel plays, and since
+// validation transposes a preset *down* to the bottom key before checking its
+// decays, every real bar blew up there. The hollandm reference pack measures
+// half-lives to 808 ms at MIDI 85; at note 36 that is 13.7 s against a 5 s
+// ceiling, so thirteen of its twenty bars were unauthorable. At note 79 the
+// same bar needs 1.1 s and the ceiling never binds. The top key moved for the
+// mirror reason: that pack reaches MIDI 103 and the old keyboard stopped at 96,
+// so seven of its notes were outside the instrument altogether.
 const (
-	KeyboardFirstNote = 36
-	KeyboardLastNote  = 96
+	KeyboardFirstNote = 79
+	KeyboardLastNote  = 108
 )
 
 // TransposeToNote rescales params in place from fromNote to toNote.
@@ -62,10 +74,10 @@ func TransposeToNote(params *BarParams, fromNote, toNote int) {
 // it, is not a constant: transposing down multiplies every decay by
 // 2^((baseNote-note)/12), so how much decay a preset may be written with
 // depends entirely on how far down the keyboard reaches beneath its base note.
-// A preset at note 36 may use the full 5000 ms, one at note 69 may use 743 ms,
-// and one at note 100 only 124 ms -- all three ring for the same five seconds
-// once played at the bottom key, which is the quantity the ceiling actually
-// bounds.
+// A preset at or below the bottom key may use the full 5000 ms, one at note 94
+// may use 2102 ms, and one at note 108 only 936 ms -- all three ring for the
+// same five seconds once played at the bottom key, which is the quantity the
+// ceiling actually bounds.
 //
 // [ValidateAuthoredBarParams] uses it only to tell an author what the bound is.
 // It does not decide anything: that decision is made by transposing the preset

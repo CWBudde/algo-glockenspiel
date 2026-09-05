@@ -141,16 +141,82 @@ func TestNoteTrimIsUnityAtThePresetsOwnNote(t *testing.T) {
 	}
 }
 
+// TestTrimTableIsFiniteAndUnclamped is the guard on the assumption every other
+// level test rests on: that calibrateNoteTrims produced a usable table at all.
+//
+// It earns its place because two of the three presets here are authored at note
+// 69, which is *below* the keyboard since that became the glockenspiel's
+// G5..C8. Their trims are therefore all boosts -- every playable note is quieter
+// than the reference note, which is not itself playable -- and the shipped
+// default asks for up to +20.6 dB. That is well inside the +/-36 dB clamp, but
+// it is close enough to it that a future preset or a future range could push a
+// note onto the clamp, and a clamped trim is a note the engine has quietly given
+// up on levelling. The clamp exists for pathology, so nothing shipped should
+// reach it.
+func TestTrimTableIsFiniteAndUnclamped(t *testing.T) {
+	for _, path := range []string{
+		"../../assets/presets/default.json",
+		"../../assets/presets/recorded-bar.json",
+		"../../testdata/presets/minimal.json",
+	} {
+		p, err := preset.Load(filepath.FromSlash(path))
+		if err != nil {
+			t.Fatalf("load %s: %v", path, err)
+		}
+
+		synthesizer, err := NewSynthesizer(p, 44100)
+		if err != nil {
+			t.Fatalf("NewSynthesizer for %s: %v", path, err)
+		}
+
+		trims := calibrateNoteTrims(synthesizer)
+		if want := KeyboardLastNote - KeyboardFirstNote + 1; len(trims) != want {
+			t.Fatalf("%s: trim table holds %d notes, want %d", path, len(trims), want)
+		}
+
+		for i, trim := range trims {
+			note := KeyboardFirstNote + i
+
+			if math.IsNaN(float64(trim)) || math.IsInf(float64(trim), 0) || trim <= 0 {
+				t.Fatalf("%s: trim at note %d is %g, which is not a usable gain", path, note, trim)
+			}
+
+			// The clamp is 1/64..64. Anything within a hair of it is a note the
+			// trim gave up on rather than levelled.
+			if trim <= 1.0/64+1e-6 || trim >= 64-1e-6 {
+				t.Errorf("%s: trim at note %d is %g, on the clamp -- that note is not levelled",
+					path, note, trim)
+			}
+		}
+	}
+}
+
 // TestTheLevelLawIsMeasuredNotAssumed is the evidence for building the trim
 // table by rendering instead of by formula, kept as a test so the claim stays
 // true rather than becoming a comment that once was.
 //
-// The shipped preset's level falls about 0.46 dB per semitone because its four
-// modes beat against each other and how much of that beat pattern fits inside
-// the decay grows with the decay. A single-mode preset has nothing to beat
-// against and is therefore nearly flat. Any fixed curve fitted to one of them is
-// wrong for the other, which is exactly the failure mode this asserts: the two
-// presets disagree about the slope by more than an order of magnitude.
+// Any fixed curve fitted to one preset is wrong for the other, and that is what
+// this asserts. What it does *not* assert any more is a particular reason, because
+// the reason changed when the keyboard became a glockenspiel.
+//
+// Over the old 36..96 keyboard the mechanism was mode beating: the shipped preset
+// fell about 0.46 dB per semitone because its four modes beat against each other
+// and how much of that pattern fits inside the decay grows as the decay does,
+// while minimal.json -- whose modes are exact harmonics of 440 Hz, so the sum is
+// periodic -- was flat to within 0.3 dB. The test asserted that flatness.
+//
+// Over 79..108 the ordering reverses: minimal.json now tilts -0.69 dB/semitone
+// against the shipped preset's -0.49. Beating is no longer what dominates. The
+// excitation lowpass is not transposed (FilterFrequency is absolute, and
+// TransposeToNote deliberately leaves it alone), so at glockenspiel pitches every
+// mode has slid far above its own cutoff and the second-order rolloff sets the
+// level. minimal.json's cutoff is 1000 Hz and its top mode reaches 16.7 kHz at
+// note 108, four octaves past it; the shipped preset tilts less because its cutoff
+// is higher and its dry mix carries unfiltered excitation.
+//
+// So the claim under test is the one that survives both mechanisms and is the only
+// one calibrateNoteTrims actually rests on: the two presets disagree about the
+// slope by enough that no single curve serves both.
 func TestTheLevelLawIsMeasuredNotAssumed(t *testing.T) {
 	slopeOf := func(path string) float64 {
 		t.Helper()
@@ -190,8 +256,11 @@ func TestTheLevelLawIsMeasuredNotAssumed(t *testing.T) {
 		t.Errorf("the shipped preset's level slope is %.4f dB/semitone, expected a clear tilt", shipped)
 	}
 
-	if math.Abs(single) > math.Abs(shipped)/2 {
-		t.Errorf("the single-mode preset tilts %.4f dB/semitone against the shipped preset's %.4f; "+
+	// A tenth of a dB per semitone is 3 dB of divergence across the 29-semitone
+	// keyboard -- ten times the 0.3 dB the trims are expected to hold a note to,
+	// so a curve fitted to either preset would be audibly wrong for the other.
+	if math.Abs(single-shipped) < 0.1 {
+		t.Errorf("the two presets tilt %.4f and %.4f dB/semitone, closer than 0.1 apart; "+
 			"if these ever agree, a fixed per-note curve would become defensible and this test "+
 			"should be revisited rather than deleted", single, shipped)
 	}

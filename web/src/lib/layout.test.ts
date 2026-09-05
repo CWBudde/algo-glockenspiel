@@ -28,13 +28,13 @@ describe("computer-keyboard hints", () => {
 });
 
 describe("mobile playfield geometry", () => {
-  it("aligns the 15-unit C4-C6 rack inside the 36-unit C2-C7 keyboard", () => {
+  it("aligns the 15-unit C6-C8 rack inside the 18-unit G5-C8 keyboard", () => {
     expect(computePlayfieldLayout()).toEqual({
       whiteUnitPx: 44,
-      totalWhiteUnits: 36,
+      totalWhiteUnits: 18,
       rackWhiteUnits: 15,
-      rackOffsetWhiteUnits: 14,
-      initialScrollLeft: 616,
+      rackOffsetWhiteUnits: 3,
+      initialScrollLeft: 132,
       viewportWhiteUnits: 7,
       viewportWidth: 308,
     });
@@ -43,7 +43,7 @@ describe("mobile playfield geometry", () => {
   it("derives the initial scroll from the requested pitch width", () => {
     const layout = computePlayfieldLayout(52, 8);
 
-    expect(layout.initialScrollLeft).toBe(728);
+    expect(layout.initialScrollLeft).toBe(156);
     expect(layout.viewportWidth).toBe(416);
   });
 });

@@ -288,7 +288,10 @@ func newVoiceBank(s *Synthesizer) *oscbank.VoiceBank {
 // beat into phase, and how much of that beat pattern fits inside the decay
 // envelope grows as the decay does, i.e. as 1/ratio. testdata/presets/minimal
 // has a single mode and therefore nothing to beat against, and its level is
-// flat to within 0.3 dB from note 36 to note 78 -- measured, not assumed.
+// flat to within 0.3 dB from note 36 to note 78 -- measured on the old C2..C7
+// keyboard, where the excitation lowpass still sat below the modes. Over the
+// glockenspiel's G5..C8 it is no longer flat at all; see
+// TestTheLevelLawIsMeasuredNotAssumed for what replaced this reasoning.
 // Applying the shipped preset's -0.46 dB/semitone line to it would *introduce*
 // some 28 dB of tilt where there is currently none. Even the physically
 // motivated law, multiplying by the transposition ratio (-0.5017 dB/semitone,

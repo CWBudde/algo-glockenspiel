@@ -95,10 +95,18 @@ func TestSeedPresetKeepsTheTemplateOnRequestAndUpgradesWhenSeeding(t *testing.T)
 }
 
 func TestObjectiveNarrowsTheDecayBoxToTheAuthoredCeiling(t *testing.T) {
+	// Note 100 rather than the fixture's 69, because the narrowing only has
+	// anything to do below the crossover at note 94: at 69 the authoring ceiling
+	// is the full DecayMsValidationMax and the search box is the narrower of the
+	// two, so the test would pass on a build where the narrowing was deleted.
+	// At 100 the ceiling is 1486.5 ms against the 2000 ms box, so the assertion
+	// below can only hold if the objective really applied it.
 	template := threeModePreset()
-	reference := renderReference(t, template, 44100, 69, 100, 0.1)
+	template.Note = 100
 
-	objective, err := NewObjectiveFunction(reference, template, 44100, 69, 100, MetricRMS)
+	reference := renderReference(t, template, 44100, 100, 100, 0.1)
+
+	objective, err := NewObjectiveFunction(reference, template, 44100, 100, 100, MetricRMS)
 	if err != nil {
 		t.Fatalf("NewObjectiveFunction: %v", err)
 	}
@@ -135,11 +143,14 @@ func TestObjectiveNarrowsTheDecayBoxToTheAuthoredCeiling(t *testing.T) {
 		t.Fatalf("a preset written from the corner of the box does not validate: %v", err)
 	}
 
+	// A box whose *floor* sits above the authoring ceiling has no legal point in
+	// it at all, and strict bounds must say so rather than silently narrowing to
+	// an empty range. 1600 ms clears note 100's 1486.5 ms ceiling.
 	config := DefaultObjectiveConfig(MetricRMS)
-	config.Bounds.DecayMs = Range{Min: 800, Max: 2000}
+	config.Bounds.DecayMs = Range{Min: 1600, Max: 2000}
 	config.StrictBounds = true
 
-	if _, err := NewObjectiveFunctionWithConfig(reference, template, 44100, 69, 100, config); err == nil || !strings.Contains(err.Error(), "may carry") {
+	if _, err := NewObjectiveFunctionWithConfig(reference, template, 44100, 100, 100, config); err == nil || !strings.Contains(err.Error(), "may carry") {
 		t.Fatalf("a decay box above the authoring ceiling was accepted: %v", err)
 	}
 }
