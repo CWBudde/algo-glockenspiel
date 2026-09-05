@@ -1407,9 +1407,18 @@ balanced weight was being spent on a constant.
 **The ranking reorders.** Best of the eight was seed-6 before and is seed-4 after; seed-8 and
 seed-6 swap as well. So numbers taken under the old arithmetic cannot be compared with numbers
 taken after it, and a conclusion drawn from them about which arm or seed won may not survive
-re-measurement. `docs/training.md`'s tables, the `engine-shape` campaign results and the score in
-every committed `preset.json` provenance block are in that position. Re-taking them is a
-campaign, not an edit.
+re-measurement. `docs/training.md`'s tables and the `engine-shape` campaign results are in that
+position. Re-taking them is a campaign, not an edit.
+
+**Re-taken 2026-09-05, and the warning was justified.** The `engine-shape` ranking inverted:
+`mayfly-r16` fell from first of five to fourth, and `mayfly-single` now beats it on the recording
+in eleven blocks of twelve. The default survives only because the promotion rule's second clause
+refuses the challenger on the A4 reference. The clause about "the score in every committed
+`preset.json` provenance block" was wrong and is struck — no tracked preset carries a provenance
+block at all, and both shipped presets are hand-authored and quote no score. The 2026-09-05
+sections of [docs/training.md](docs/training.md) hold all of it, and record that 8.10 was not the
+only thing that had moved: the objective had also gained an eleventh term, `onset_db`, and been
+reweighted for it, which is what actually moved the composite table's scores.
 
 ---
 
@@ -1454,10 +1463,32 @@ campaign, not an edit.
 ## Resume Point
 
 Phases 0-4, 6 and now 8 are closed and summarised above; their detail is in [docs/](docs/).
-**Phases 5 and 7 are open**, and what is left in each is small and named below. The larger piece
-of work is not a phase at all: 8.10 changed what the objective scores, so `docs/training.md`'s
-tables and the `engine-shape` campaign results were taken under arithmetic that no longer runs.
-Re-taking them is a campaign, and it is the thing to do next.
+**Phases 5 and 7 are open**, and what is left in each is small and named below.
+
+**The re-measurement is done, 2026-09-05.** It was the thing to do next and it is no longer
+outstanding: `engine-shape` was re-run from a stamped build, the second reference was re-taken
+over eight paired seeds, the `recorded-bar` refit was re-run at its own recipe, and every
+`distance`-derived table in `docs/training.md` was re-taken or marked. What it found is worth
+carrying rather than filing:
+
+- **The campaign's ranking inverted.** `mayfly-r16` went from first of five to fourth.
+  `mayfly-single` beats it on the recording in eleven blocks of twelve at p = 0.0003, where the
+  two had been indistinguishable at p = 0.64. The default is retained only because 8.6's
+  promotion rule refuses the challenger on the second reference, where it materially regresses
+  `onset_db` and `envelope_db` over eight seeds of eight. **This is now a live open question**,
+  not a settled one: the better arm on the only real recording this project has is not the one
+  it ships, and settling that needs a design measuring both shapes at two or three budgets,
+  because the campaign also showed `mayfly-single` still improving at 98.8% of its budget.
+- **8.10 was not the only thing that had moved.** The objective had gained an eleventh term,
+  `onset_db`, and `balanced` was reweighted for it, which is what actually moved the composite
+  table's scores — every term underneath them reproduced. The campaign that promoted the current
+  default predates that term entirely: its `results.csv` has 36 columns and no `onset_db`.
+- **The refit's blocker is discharged.** It now renders at −2.7 dBFS against the shipped preset's
+  −3.0, beats it by 47% at its own note, and is the first fit against the recording to correlate
+  in the time domain at all — waveform gain +4.4 dB against the shipped preset's −47.3.
+  **Whether to ship it is an open decision**, deliberately not taken; the preset is in `out/`.
+- One documented number was simply an error rather than a casualty: the analysis seed's
+  `balanced` 0.24 should have read 0.3085 on the day it was written.
 
 **Phase 8, training.** Reviewed on 2026-09-02; 8.0 is done the same day. `glockenspiel distance`
 prints every objective term for a written preset and `docs/training.md` holds the baseline for

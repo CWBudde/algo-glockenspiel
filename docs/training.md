@@ -913,6 +913,72 @@ already showed `mayfly-single` reaching its best at 98.8% of its budget, still i
 cap cut it. And `sep-cmaes-r` reached parity on the recording, which is not a win, so `seed-hunt`
 stays unrunnable for the second campaign running.
 
+## The refit re-taken, 2026-09-05
+
+The `recorded-bar` refit is re-run with the current binary at the same recipe the 2026-09-03 one
+used — the promoted mayfly shape, 120,000 evaluations with the clock off, `--polish cmaes`,
+`--seed 1`, note 72 — so this is a rerun rather than a new experiment. It stopped on
+`max_evaluations` at 120,021 evaluations, the same count as before, and its polish stage was
+rejected again for the same reason, having lowered the polish profile while raising the primary
+score.
+
+| preset                      | `balanced` at 69 | at 72      | modes | render peak   | waveform | wf gain     |
+| --------------------------- | ---------------- | ---------- | ----- | ------------- | -------- | ----------- |
+| shipped `recorded-bar.json` | 0.5669           | 0.5536     | 12    | −3.0 dBFS     | 1.000    | −47.3 dB    |
+| refit `recorded-bar.json`   | 0.4916           | **0.2937** | 8     | **−2.7 dBFS** | 0.714    | **+4.4 dB** |
+
+**The level problem is gone.** The 2026-09-03 refit rendered at −27.5 dBFS and could not be
+shipped, because nothing in the schema could correct it. This one renders at −2.7 dBFS against the
+shipped preset's −3.0. Its solved `output_gain_db` is **−0.93 dB**: the fit landed within a
+decibel of the target on its own, and the gain Phase 8.9 added barely has to do anything. What was
+a 24.5 dB blocker is a rounding correction.
+
+That is worth separating into its two causes, because only one of them is 8.9. Phase 8.9 made the
+level **representable** — a schema field the fit writes, so a preset can carry its own level at
+all. Phase 8.10 removed the reason the level was wrong in the first place: the old floor paid a
+candidate for being quiet, and this fit is the same recipe run without that incentive. The
+campaign above shows the drift is now two-sided and still large in general, mean absolute 19.6 dB,
+so landing at −0.93 dB is this run's luck rather than a new guarantee. The guarantee is 8.9's:
+whatever the fit drifts to, the written preset carries the correction.
+
+**The refit is better by 47%, not 62%.** At its own note it scores 0.2937 against the shipped
+preset's 0.5536. The 2026-09-03 figures were 0.2043 against 0.5365, a 62% improvement, and most of
+the difference between the two margins is the old floor flattering a −27.5 dBFS candidate. The
+refit is still far better, and it still needs no hand retune, having been fitted at note 72 — the
+recording's own pitch — so the ×1.667 hand multiplication that produced the shipped file has
+nothing left to do.
+
+**A fit against this recording now correlates in the time domain, which has not happened before.**
+This file's baseline recorded that "against the recording, the time-domain objective sees nothing":
+every shipped preset's waveform gain sat tens of decibels down, meaning zero correlation, and only
+the spectral term ordered candidates at all. The shipped preset still reads −47.3 dB with a
+waveform residual of 1.000, recovering none of the reference's energy. The refit reads **+4.4 dB**
+with a residual of 0.714 — real correlation, and 29% of the recording's energy recovered by a
+model that had recovered none of it. The analysis seed's 0.73 was called "the first number in this
+repository that says the model can reach the recording"; this is that claim from a fit rather than
+from a seed.
+
+Every other term moves the same way: `spectral_fine_db` 17.5 to 13.1, `spectral_coarse_db` 21.6 to
+16.0, `envelope_db` 2.22 to 0.60, `onset_db` 29.1 to 9.6, `partial_extra` 0.50 to 0.15. The refit
+finishes with **one of thirty dimensions on a bound**, against the 2026-09-03 refit's pinned
+amplitude, so the search is no longer fighting the box.
+
+**`default.json` is still not refitted**, and that reason is unchanged by any of this:
+`legacy_synth_a4.wav` holds exactly one partial, so a fit against it writes a one-mode preset.
+Choosing a default sound is not a fit against a single-partial synthetic render, and it needs a
+multi-partial reference at A4 that this repository does not have.
+
+### Shipping it is a separate decision
+
+The blocker 8.6 recorded is discharged: the refit is better on the recording by every term, and it
+now carries a correct level. Promotion is still a judgement about the instrument's sound rather
+than about a score, and the preset is left in `out/` for that decision to be taken deliberately.
+Two things the decision should weigh. It matches one of the recording's eight partials where the
+shipped preset also matches one, so the improvement is in shape and level rather than in partial
+placement. And `calibrateNoteTrims` normalises the whole instrument to the preset's own note, so
+shipping a preset changes the level of every key, which is exactly why the level had to be right
+before this could be considered at all.
+
 ## What the baseline is for
 
 - **Norms.** Phase 8.2 scaled each term of the composite objective so that no term saturates on
