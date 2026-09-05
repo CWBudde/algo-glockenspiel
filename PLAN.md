@@ -1586,6 +1586,17 @@ Three latent bugs were found on the way, each of which would have shipped:
 - **It cannot capture bar-to-bar scatter.** 0.33 octaves of decay and the idiosyncratic third
   mode are properties of twenty distinct pieces of metal. A single transposed preset structurally
   cannot reach them; only a zone or multisample layer could.
+- **It cannot reach above 6.33x the fundamental**, at 44.1 kHz over MIDI 84-103. The mode box is
+  rectangular and shared, so its ceiling binds at the highest note, where 0.45 x 44100 is only
+  6.3x that note's fundamental -- while a single-note fit at c6 gets 19x. This is not
+  conservatism: mode frequencies go straight into the oscillator bank with no Nyquist guard, so a
+  mode the top note cannot hold would fold down into audible alias garbage there.
+
+  **Registered prediction, before the matrix exists:** c6's measured partials reach 13.2x and
+  14.7x f0, so the joint preset should lose most at the _bottom_ of the range, where the modal
+  structure is richest and the shared ceiling bites hardest, and least at the top, where the
+  recordings hold two or three partials anyway. If `mean(joint row) - mean(diagonal)` is instead
+  flat across the range, or worst at the top, this explanation is wrong and the write-up says so.
 
 ---
 
