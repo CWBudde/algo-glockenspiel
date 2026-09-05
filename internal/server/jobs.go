@@ -49,6 +49,13 @@ type fitJobListing struct {
 	Velocity  int    `json:"velocity"`
 	Optimizer string `json:"optimizer"`
 	Metric    string `json:"metric"`
+
+	// Followed says the server did not start this run: it read it out of the
+	// work directory and follows it by tailing its trace. The history carries
+	// it as well as the snapshot because the run list is where such a fit
+	// first appears, and a row that could not say where its fit came from
+	// would have to be opened to find out.
+	Followed bool `json:"followed"`
 }
 
 // fitJobList is the job history endpoint's body. It is an object rather than a
@@ -72,6 +79,7 @@ func (j *fitJob) listing() fitJobListing {
 		Velocity:  j.request.Velocity,
 		Optimizer: j.request.Optimizer,
 		Metric:    j.request.Metric,
+		Followed:  j.followed,
 	}
 
 	if !j.finishedAt.IsZero() {

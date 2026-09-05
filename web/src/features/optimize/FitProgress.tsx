@@ -8,6 +8,7 @@ import { FitStatus } from "./FitStatus";
 import { ParameterTable } from "./ParameterTable";
 import { TermBars } from "./TermBars";
 import { useFitEvents, type FitEvents } from "./useFitEvents";
+import { useTracedFit } from "./useTracedFit";
 import type { FitArtifacts } from "./Audition";
 
 export interface FitProgressProps {
@@ -30,6 +31,19 @@ export interface FitProgressProps {
    * terminal state on its own.
    */
   onSnapshot?: (snapshot: FitSnapshot) => void;
+  /**
+   * Whether `jobId` is the run `api/fit/events` is expected to be about: the
+   * one this page started, or the one it adopted as the active job.
+   *
+   * The stream carries no job id -- it is always about whatever the server
+   * considers active -- so a job named from the run history, including a run
+   * the server merely follows, is read through `useTracedFit` instead. False
+   * asks for that reading directly; true still falls back to it if the stream
+   * turns out to be about somebody else's fit.
+   *
+   * Ignored when `events` is supplied: the browser worker is its own source.
+   */
+  streamed?: boolean;
   /** In-memory progress from the browser worker; absent for the HTTP service. */
   events?: FitEvents | undefined;
   /** In-memory artifacts from the browser worker; absent for the HTTP service. */
@@ -56,13 +70,29 @@ export function FitProgress({
   jobId,
   maxIterations,
   onSnapshot,
+  streamed = true,
   events,
   artifacts,
   onUseInPlay,
 }: FitProgressProps) {
-  const serverEvents = useFitEvents(events === undefined ? jobId : null);
+  const streamable = events === undefined && streamed;
+  const streamedEvents = useFitEvents(streamable ? jobId : null);
+
+  // Read rather than streamed in two cases, and they are the same case seen
+  // from two sides: a job the stream was never going to be about (a row
+  // picked out of the run history, a run the server only follows), and a job
+  // the stream turned out not to be about after all, because another run took
+  // the active slot while this one was being watched. Either way the run is
+  // still there on disk and still moving, so it is read from its own status
+  // and its own trace instead of being left frozen.
+  const tracedJobId =
+    events !== undefined || (streamable && !streamedEvents.displaced)
+      ? null
+      : jobId;
+  const tracedEvents = useTracedFit(tracedJobId);
+
   const { snapshot, points, revision, streaming, streamError } =
-    events ?? serverEvents;
+    events ?? (tracedJobId === null ? streamedEvents : tracedEvents);
 
   useEffect(() => {
     if (snapshot !== null) {

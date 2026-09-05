@@ -8,13 +8,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { FitApiError, getFitJob, getFitStatus } from "../api/fit";
+import { FitApiError, getFitStatus } from "../api/fit";
 import type { FitSnapshot } from "../api/types";
 import { FitForm, type FitActions } from "../features/optimize/FitForm";
 import { FitProgress } from "../features/optimize/FitProgress";
 import { RunList } from "../features/optimize/RunList";
 import type { ApiProbe } from "../features/optimize/useApiAvailable";
-import type { FitEvents } from "../features/optimize/useFitEvents";
 import type { WasmFitWorker } from "../features/optimize/useWasmFitWorker";
 
 /** The command that makes the fit API reachable. */
@@ -63,17 +62,6 @@ export function OptimizePage({ api, wasm, onUseInPlay }: OptimizePageProps) {
   // shows the list (the WASM path) always does.
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
 
-  // The selected job's own snapshot, read once rather than streamed: SSE
-  // (api/fit/events) always answers about whichever job the server considers
-  // active, never about an id in the URL, so a history row that is not that
-  // job has to be read with getFitJob instead. `jobId` is stamped alongside
-  // the answer so a stale fetch for a row the user has since left never
-  // overwrites what is now selected.
-  const [selectedRead, setSelectedRead] = useState<{
-    jobId: string;
-    snapshot: FitSnapshot | null;
-  } | null>(null);
-
   const onSnapshot = useCallback((next: FitSnapshot, startedWith?: number) => {
     setServerSnapshot(next);
 
@@ -115,28 +103,9 @@ export function OptimizePage({ api, wasm, onUseInPlay }: OptimizePageProps) {
   // to the live view.
   const viewingActive =
     browserMode || selectedJobId === null || selectedJobId === snapshot?.jobId;
-  const selectedSnapshot =
-    !viewingActive && selectedRead?.jobId === selectedJobId
-      ? selectedRead.snapshot
-      : null;
   const progressJobId = viewingActive
     ? (snapshot?.jobId ?? null)
     : selectedJobId;
-
-  // A picked historical row is shown from one read, not a stream: passing a
-  // ready-made FitEvents through FitProgress's `events` prop is what lets it
-  // skip its own useFitEvents(jobId) call, which would otherwise open
-  // api/fit/events and draw whatever job the server currently considers
-  // active under the id of the one that was actually picked.
-  const historicalEvents: FitEvents | undefined = viewingActive
-    ? undefined
-    : {
-        snapshot: selectedSnapshot,
-        points: [],
-        revision: 0,
-        streaming: false,
-        streamError: null,
-      };
   const serviceStatus =
     availability === "probing"
       ? "Checking fit service"
@@ -161,6 +130,14 @@ export function OptimizePage({ api, wasm, onUseInPlay }: OptimizePageProps) {
     getFitStatus()
       .then((current) => {
         if (!cancelled) {
+          // Whatever the server calls its active job, including a run it
+          // merely follows out of its work directory. Adopting one of those
+          // here takes nothing away -- this page is tracking nothing yet, and
+          // a `glockenspiel fit` running in a terminal is exactly what a
+          // freshly opened tab should be showing. What must not happen is the
+          // same switch *later*, once the page is watching a fit of its own;
+          // that is the event stream's problem and useFitEvents refuses it
+          // there, by name, rather than being papered over here.
           setServerSnapshot(current);
         }
       })
@@ -181,42 +158,6 @@ export function OptimizePage({ api, wasm, onUseInPlay }: OptimizePageProps) {
       cancelled = true;
     };
   }, [availability]);
-
-  // Reads the row the run list picked, whenever it names a job other than the
-  // one already tracked live. Picking the active job itself needs no read --
-  // serverSnapshot already has it -- which is what keeps a click back onto the
-  // live row instant instead of round-tripping through the network.
-  useEffect(() => {
-    if (
-      availability !== "available" ||
-      selectedJobId === null ||
-      selectedJobId === serverSnapshot?.jobId
-    ) {
-      return;
-    }
-
-    let cancelled = false;
-
-    // No "loading" write here: selectedSnapshot below already reads as null
-    // for any jobId that does not match selectedRead's, so a newly picked
-    // row shows nothing until this read lands rather than briefly showing
-    // the row picked before it.
-    getFitJob(selectedJobId)
-      .then((job) => {
-        if (!cancelled) {
-          setSelectedRead({ jobId: selectedJobId, snapshot: job });
-        }
-      })
-      .catch((cause: unknown) => {
-        if (!cancelled) {
-          console.error(`Reading fit ${selectedJobId} failed`, cause);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [availability, selectedJobId, serverSnapshot?.jobId]);
 
   return (
     <section className="optimize-panel" aria-labelledby="optimize-heading">
@@ -298,13 +239,21 @@ export function OptimizePage({ api, wasm, onUseInPlay }: OptimizePageProps) {
 
             <FitProgress
               artifacts={browserMode ? (wasm.client ?? undefined) : undefined}
-              events={browserMode ? wasm.events : historicalEvents}
+              events={browserMode ? wasm.events : undefined}
               jobId={progressJobId}
               maxIterations={maxIterations}
               onSnapshot={
                 browserMode || viewingActive ? onSnapshot : ignoreSnapshot
               }
               onUseInPlay={onUseInPlay}
+              // A row picked out of the run history is not what the event
+              // stream is about -- the stream has no job id in it and always
+              // answers about the server's active job -- so it is read from
+              // its own status and trace instead. That reading is live in its
+              // own right: a followed fit picked here keeps its cost curve
+              // and its term bars moving, which is the whole point of the run
+              // list showing one.
+              streamed={viewingActive}
             />
           </div>
         </>

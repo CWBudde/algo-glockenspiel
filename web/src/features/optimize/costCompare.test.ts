@@ -20,6 +20,7 @@ function job(overrides?: Partial<FitJobListEntry>): FitJobListEntry {
     velocity: 100,
     optimizer: "mayfly",
     metric: "balanced",
+    followed: false,
     ...overrides,
   };
 }

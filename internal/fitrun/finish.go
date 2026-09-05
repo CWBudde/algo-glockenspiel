@@ -132,10 +132,12 @@ func finish(
 	// larger loss. A trace write is the opposite and stays fatal: the campaign
 	// scores from the trace, and a run whose trace is short is a wrong number
 	// rather than a missing convenience.
-	err = saveCheckpoint(spec, prepared, chosen, tuning,
-		result.Iterations, result.Iterations, result.BestParams, result.BestCost)
-	if err != nil {
-		_, _ = fmt.Fprintf(out, "checkpoint: %v; the run is finished without one\n", err)
+	if spec.checkpoints() {
+		err = saveCheckpoint(spec, prepared, chosen, tuning,
+			result.Iterations, result.Iterations, result.BestParams, result.BestCost)
+		if err != nil {
+			_, _ = fmt.Fprintf(out, "checkpoint: %v; the run is finished without one\n", err)
+		}
 	}
 
 	if err := preset.Save(&fitted, filepath.Join(spec.Dir, FilePreset)); err != nil {
@@ -169,8 +171,15 @@ func finish(
 		Preset:  &fitted,
 		Metrics: metrics,
 		Encoded: bestEncoded,
+		Profile: prepared.profile,
+		Pinned:  pinned,
 	}, nil
 }
+
+// polishRun is optimizer.Polish behind a variable so a test can make the stage
+// fail without a fixture that provokes a real failure: every input the stage
+// takes is validated before the search starts, so there is no cheap way in.
+var polishRun = optimizer.Polish
 
 // polishStage runs the optional local refinement and returns the vector the run
 // should ship, its primary cost, and what the stage did.
@@ -199,7 +208,7 @@ func polishStage(
 	options.Seed = chosen.Seed
 	options.MaxWorkers = chosen.Workers
 
-	polished, err := optimizer.Polish(ctx, prepared.objective, result.BestParams, options)
+	polished, err := polishRun(ctx, prepared.objective, result.BestParams, options)
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "polish (%s) failed: %v; keeping the search result\n", options.Engine, err)
 

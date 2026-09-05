@@ -93,6 +93,18 @@ type fitJob struct {
 	// that started the job could never be read again.
 	bounds *optimizer.ParamBounds
 
+	// followed says this job is a run directory the server read rather than a
+	// fit it started. Nothing in this process owns the search: it may be a
+	// `glockenspiel fit` in another terminal, a campaign job, another server
+	// on the same work directory, or a run whose process is long gone. The
+	// server watches such a run by tailing its trace and has no way to stop
+	// it, which is why the stop control refuses it and the wire form says so.
+	//
+	// It is set when the job is built, before anything else can see the job,
+	// and never changes; readers take the job's lock anyway because everything
+	// that reads it is already holding it.
+	followed bool
+
 	// presetOnDisk says that preset.json is in the run directory even though
 	// no result is held in memory. It is how a job rebuilt at startup can
 	// answer the preset and audio endpoints: the fitted preset outlived the
@@ -200,6 +212,14 @@ type fitSnapshot struct {
 	// It is not simply state == succeeded: a run cancelled after its first
 	// report still leaves the best parameters found so far.
 	HasPreset bool `json:"hasPreset"`
+
+	// Followed says the server did not start this run: it read it out of the
+	// work directory and watches it by tailing its trace. Such a run cannot be
+	// stopped from here, and a client that offers a stop control has to say so
+	// rather than let it fail. It is always present rather than omitted when
+	// false, because "this fit is the server's own" is a fact about every
+	// job, not an occasional extra.
+	Followed bool `json:"followed"`
 
 	// MayflyVariant is the dialect the run actually uses, which is not always
 	// the one that was asked for: a preset selects one of its own. Without this
@@ -409,6 +429,7 @@ func (j *fitJob) snapshot() fitSnapshot {
 		Metric:              j.request.Metric,
 		StartedAt:           j.startedAt,
 		HasPreset:           j.result != nil || j.presetOnDisk,
+		Followed:            j.followed,
 		SeededModes:         j.seededModes,
 		Converged:           j.converged,
 		Request:             j.requestEchoLocked(),
@@ -1039,11 +1060,52 @@ func (m *jobManager) recordLocked(job *fitJob) {
 	// condition rather than a slice expression: a queue longer than the cap
 	// would otherwise let the history forget a job that is still going to
 	// report into it.
-	for len(m.jobs) > maxStoredJobs && !m.jobs[0].running() {
+	//
+	// A followed job is the exception, and it has to be. Such a job is a run
+	// directory this server watches, and one that stops being written -- the
+	// process behind it killed, its machine rebooted -- stays running for
+	// good, because nothing on disk will ever say otherwise. Blocking on it
+	// would let a single abandoned directory at the head of the history pin
+	// every job after it in memory for as long as the server lives, which is a
+	// worse failure than forgetting a run that is still on disk and comes back
+	// on the next restart.
+	for len(m.jobs) > maxStoredJobs && (!m.jobs[0].running() || m.jobs[0].followed) {
 		delete(m.byID, m.jobs[0].id)
 
 		m.jobs[0] = nil
 		m.jobs = m.jobs[1:]
+	}
+}
+
+// forget removes a job rebuilt from disk, for a run directory that is being
+// read again because it has become a different run.
+//
+// It is only ever called for a followed job, which is why it can simply drop
+// one: such a job has no goroutine of its own, so there is nothing left
+// reporting into it. Its done channel is closed if it was still open, because
+// anything watching a job that no longer exists would otherwise wait for a
+// report that can never come.
+func (m *jobManager) forget(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	job, ok := m.byID[id]
+	if !ok {
+		return
+	}
+
+	delete(m.byID, id)
+
+	for index, held := range m.jobs {
+		if held == job {
+			m.jobs = append(m.jobs[:index], m.jobs[index+1:]...)
+
+			break
+		}
+	}
+
+	if job.running() {
+		close(job.done)
 	}
 }
 

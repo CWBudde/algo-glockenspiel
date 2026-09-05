@@ -3,10 +3,12 @@ import { useCallback, useEffect, useState } from "react";
 import { listFitJobs } from "../../api/fit";
 import type { FitJobListEntry } from "../../api/types";
 import {
+  FOLLOWED_REASON,
   formatRunCost,
   formatRunElapsed,
   hasActiveRun,
   runElapsedMs,
+  runOriginLabel,
   runStateLabel,
   sortRunsNewestFirst,
 } from "./runList";
@@ -26,6 +28,21 @@ import {
  */
 const POLL_MS = 3000;
 
+/**
+ * How often the list re-reads `api/fit/jobs` when every row it holds is
+ * already terminal.
+ *
+ * A finished history used to change only when this page started something,
+ * so the list stopped reading once it had settled. It no longer can: the
+ * server rescans its work directory every second and adopts whatever appeared
+ * there, so a `glockenspiel fit` in another terminal, or the next job of a
+ * campaign, becomes a row without anyone here asking. Ten seconds is the
+ * price of noticing that -- one small request per ten seconds on an idle tab
+ * -- against the alternative of a run list that is only correct after a
+ * reload.
+ */
+const IDLE_POLL_MS = 10_000;
+
 export interface RunListProps {
   /** The job currently loaded into the results panel, or null for none. */
   selectedJobId: string | null;
@@ -38,9 +55,14 @@ export interface RunListProps {
  * currently selected one marked.
  *
  * A queued or running row is not read differently from a finished one -- the
- * state column already says which it is -- but the list as a whole refreshes
- * while any row is unsettled and stops once every row is terminal, which is
- * what makes a fit that just finished appear here without a reload.
+ * state column already says which it is -- except that a row the server only
+ * follows is marked as such, because that is the one thing about it the
+ * columns cannot show: its numbers come from a run directory this server is
+ * reading, not from a search it is doing.
+ *
+ * The list refreshes on its own either way, quickly while a row is unsettled
+ * and slowly when none is, which is what makes both a fit that just finished
+ * and a fit somebody just started in a terminal appear here without a reload.
  */
 export function RunList({ selectedJobId, onSelect }: RunListProps) {
   const [jobs, setJobs] = useState<FitJobListEntry[] | null>(null);
@@ -75,11 +97,7 @@ export function RunList({ selectedJobId, onSelect }: RunListProps) {
   const active = jobs !== null && hasActiveRun(jobs);
 
   useEffect(() => {
-    if (!active) {
-      return;
-    }
-
-    const id = window.setInterval(refresh, POLL_MS);
+    const id = window.setInterval(refresh, active ? POLL_MS : IDLE_POLL_MS);
 
     return () => {
       window.clearInterval(id);
@@ -128,6 +146,18 @@ export function RunList({ selectedJobId, onSelect }: RunListProps) {
               >
                 <span className="run-list-cell run-list-state">
                   {runStateLabel(job.state)}
+                  {/*
+                    A run this server did not start says so on its own row.
+                    The title carries the reason in full, because the word
+                    alone answers "whose fit is this?" but not "why is the
+                    stop control refusing me?", and the row is where that
+                    question is first asked.
+                  */}
+                  {runOriginLabel(job) !== null && (
+                    <span className="run-list-origin" title={FOLLOWED_REASON}>
+                      {runOriginLabel(job)}
+                    </span>
+                  )}
                 </span>
                 <span className="run-list-cell run-list-numeric">
                   {formatRunCost(job)}

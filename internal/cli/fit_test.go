@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 	"github.com/cwbudde/algo-glockenspiel/internal/synth"
@@ -77,17 +78,12 @@ func TestRunFitWritesArtifacts(t *testing.T) {
 		t.Errorf("provenance engine = %#v, terms = %s", fitted.Provenance.Engine, fitted.Provenance.Terms)
 	}
 
-	if _, err := os.Stat(filepath.Join(workDir, "fitted_output.wav")); err != nil {
-		t.Fatalf("expected fitted output wav to exist: %v", err)
+	if _, err := os.Stat(filepath.Join(workDir, fitrun.FileRender)); err != nil {
+		t.Fatalf("expected the run's render to exist: %v", err)
 	}
 
-	matches, err := filepath.Glob(filepath.Join(workDir, "checkpoint_*.json"))
-	if err != nil {
-		t.Fatalf("glob checkpoints: %v", err)
-	}
-
-	if len(matches) == 0 {
-		t.Fatal("expected at least one checkpoint file")
+	if _, err := os.Stat(filepath.Join(workDir, fitrun.FileCheckpoint)); err != nil {
+		t.Fatalf("expected the run's checkpoint to exist: %v", err)
 	}
 }
 
@@ -134,13 +130,8 @@ func TestRunFitCanDisableCheckpoints(t *testing.T) {
 		t.Fatalf("runFit failed: %v", err)
 	}
 
-	matches, err := filepath.Glob(filepath.Join(workDir, "checkpoint_*.json"))
-	if err != nil {
-		t.Fatalf("glob checkpoints: %v", err)
-	}
-
-	if len(matches) != 0 {
-		t.Fatalf("expected no checkpoint files when disabled, got %d", len(matches))
+	if _, err := os.Stat(filepath.Join(workDir, fitrun.FileCheckpoint)); !os.IsNotExist(err) {
+		t.Fatalf("expected no checkpoint when checkpointing is disabled, got %v", err)
 	}
 }
 
@@ -408,34 +399,6 @@ func TestRunFitRejectsInvalidMetric(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected invalid metric to fail")
-	}
-}
-
-func TestShouldCheckpoint(t *testing.T) {
-	tests := []struct {
-		name                string
-		optimizerIterations int
-		lastCheckpointed    int
-		checkpointEvery     int
-		want                bool
-	}{
-		{name: "every iteration", optimizerIterations: 3, lastCheckpointed: 2, checkpointEvery: 1, want: true},
-		{name: "interval reached", optimizerIterations: 4, lastCheckpointed: 2, checkpointEvery: 2, want: true},
-		{name: "interval overshot", optimizerIterations: 9, lastCheckpointed: 2, checkpointEvery: 5, want: true},
-		{name: "interval not reached", optimizerIterations: 5, lastCheckpointed: 4, checkpointEvery: 2, want: false},
-		{name: "disabled", optimizerIterations: 4, checkpointEvery: 0, want: false},
-		{name: "negative interval", optimizerIterations: 4, checkpointEvery: -1, want: false},
-		{name: "backend reports no iteration count", optimizerIterations: 0, checkpointEvery: 1, want: false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := shouldCheckpoint(tc.optimizerIterations, tc.lastCheckpointed, tc.checkpointEvery)
-			if got != tc.want {
-				t.Fatalf("shouldCheckpoint(%d, %d, %d) = %v, want %v",
-					tc.optimizerIterations, tc.lastCheckpointed, tc.checkpointEvery, got, tc.want)
-			}
-		})
 	}
 }
 
@@ -804,17 +767,20 @@ func TestRunFitKeepsExplicitBoundsAsHardConstraint(t *testing.T) {
 
 	cmd := &cobra.Command{}
 
-	var errOut bytes.Buffer
+	// The warning is part of the run's own log now, which is the terminal and
+	// the run directory's log.txt at once, rather than a line the command
+	// prints on its own to stderr.
+	var out bytes.Buffer
 
-	cmd.SetOut(io.Discard)
-	cmd.SetErr(&errOut)
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
 
 	if err := runFit(cmd, options); err != nil {
 		t.Fatalf("runFit with strict bounds failed: %v", err)
 	}
 
-	if !strings.Contains(errOut.String(), "clamped") {
-		t.Fatalf("expected a warning that the starting preset was clamped, got %q", errOut.String())
+	if !strings.Contains(out.String(), "clamped") {
+		t.Fatalf("expected a warning that the starting preset was clamped, got %q", out.String())
 	}
 
 	fitted, err := preset.Load(outputPath)

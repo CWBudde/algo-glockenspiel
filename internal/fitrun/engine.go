@@ -56,8 +56,7 @@ func buildMayfly(spec Spec, chosen *Resolved, out io.Writer) (optimizer.Optimize
 			chosen.Workers = report.Workers
 			chosen.Variant = report.Variant
 
-			_, _ = fmt.Fprintf(out, "mayfly: variant=%s seed=%d rounds=%dx%d workers=%d\n",
-				report.Variant, report.Seed, report.Rounds, report.IterationsPerRound, report.Workers)
+			_, _ = fmt.Fprintln(out, formatResolvedMayfly(report))
 
 			if spec.OnResolve != nil {
 				spec.OnResolve(*chosen)
@@ -95,8 +94,7 @@ func buildCMAES(spec Spec, prepared *preparation, chosen *Resolved, out io.Write
 			chosen.Lambda = report.Lambda
 			chosen.Covariance = report.Covariance
 
-			_, _ = fmt.Fprintf(out, "cmaes: covariance=%s lambda=%d sigma=%g seed=%d workers=%d\n",
-				report.Covariance, report.Lambda, report.Sigma, report.Seed, report.Workers)
+			_, _ = fmt.Fprintln(out, formatResolvedCMAES(report))
 
 			if spec.OnResolve != nil {
 				spec.OnResolve(*chosen)

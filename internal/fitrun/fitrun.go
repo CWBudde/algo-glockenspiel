@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/cwbudde/algo-glockenspiel/assets"
@@ -124,8 +125,13 @@ func prepare(spec Spec, out io.Writer) (*preparation, error) {
 	// Measured through the optimizer's own entry point rather than reused from
 	// the document above: the seed, the frequency box and the partial term all
 	// have to read one measurement, and that is the one they read in the fit
-	// command too.
-	measurement := optimizer.MeasureReference(loaded.Samples, spec.SampleRate)
+	// command too. A caller that brought its own document is fitting against
+	// that document, so it replaces the measurement everywhere at once rather
+	// than in the objective alone.
+	measurement := spec.Analysis
+	if measurement == nil {
+		measurement = optimizer.MeasureReference(loaded.Samples, spec.SampleRate)
+	}
 
 	template, err := templateFor(spec)
 	if err != nil {
@@ -137,7 +143,7 @@ func prepare(spec Spec, out io.Writer) (*preparation, error) {
 		return nil, err
 	}
 
-	_, _ = fmt.Fprintf(out, "modes: %d seeded from the reference's partials\n", seededModes)
+	writeSeededModes(out, seeded, seededModes, spec.Modes)
 
 	config := optimizer.DefaultObjectiveConfig(spec.Metric)
 	config.Bounds = optimizer.DefaultParamBounds
@@ -170,11 +176,39 @@ func prepare(spec Spec, out io.Writer) (*preparation, error) {
 		return nil, err
 	}
 
+	// A resumed run continues from the vector the checkpoint holds rather than
+	// from the seeded template. The length is checked rather than trusted: a
+	// checkpoint written against a differently shaped preset (another harmonic
+	// count, Chebyshev toggled) encodes a different number of coordinates, and
+	// resuming was asked for explicitly, so it is refused loudly instead of
+	// quietly starting over.
+	if spec.Resume != nil {
+		if len(spec.Resume.BestParams) != len(encoded) {
+			return nil, fmt.Errorf(
+				"the checkpoint holds %d parameters but the preset encodes %d: use the preset the checkpoint was written with, or do not resume",
+				len(spec.Resume.BestParams), len(encoded))
+		}
+
+		encoded = append(encoded[:0], spec.Resume.BestParams...)
+	}
+
 	// The seeded preset can sit fractionally outside the encoded box, so the
-	// backend is handed a feasible point rather than left to reject one.
+	// backend is handed a feasible point rather than left to reject one. With a
+	// caller's own strict box the starting point can sit well outside it, which
+	// is the case this clamp was written for.
 	initial, err := objective.Codec().EncodedBounds().Clamp(encoded)
 	if err != nil {
 		return nil, err
+	}
+
+	// A clamp worth mentioning is one against a box the caller wrote: the
+	// default box is widened to hold the template, so anything it moves is
+	// rounding, while a strict box that had to be pulled in means the run is
+	// not starting from the preset that was handed to it. Only the strict case
+	// is reported, and only once, before the search.
+	if spec.Bounds != nil && spec.StrictBounds && !slices.Equal(initial, encoded) {
+		_, _ = fmt.Fprintln(out,
+			"warning: the starting preset lies outside the requested bounds and was clamped into them")
 	}
 
 	profile := objective.Profile()

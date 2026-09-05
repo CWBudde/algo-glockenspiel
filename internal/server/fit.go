@@ -358,8 +358,22 @@ func (s *Server) handleFitCancel(writer http.ResponseWriter, request *http.Reque
 	// most recent job by leaving ?job= off must answer the same as cancelling
 	// it by its own id, and a terminal job named implicitly used to succeed
 	// with 200 while the same job named explicitly was refused with 409.
-	if job.snapshot().State.terminal() {
+	current := job.snapshot()
+	if current.State.terminal() {
 		writeJSONError(writer, http.StatusConflict, fmt.Sprintf("fit %s is not running", job.id))
+
+		return
+	}
+
+	// A followed run is somebody else's search: this server read its directory
+	// out of the work directory and watches it by tailing its trace, and has
+	// no process, no context and no backend to stop. Refusing it is the honest
+	// answer -- cancelling would set the job's own state to cancelled while the
+	// run went on writing its trace, and the history would then disagree with
+	// the directory it was read from.
+	if current.Followed {
+		writeJSONError(writer, http.StatusConflict,
+			fmt.Sprintf("fit %s was not started by this server, so it cannot be stopped from here", job.id))
 
 		return
 	}

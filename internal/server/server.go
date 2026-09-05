@@ -142,6 +142,26 @@ type Server struct {
 	shutdown     chan struct{}
 	shutdownOnce sync.Once
 
+	// scanMu guards the work-directory scan and everything it owns: the set of
+	// directories already turned into jobs, and the runs being followed. The
+	// scan runs from New and then from followRuns' ticker, which are never
+	// concurrent with each other in the ordinary case; the lock is what keeps
+	// that from being an assumption a second Run could break.
+	scanMu sync.Mutex
+	// scanned maps a run directory, relative to the work directory, to the
+	// modification time its config.json had when the directory was adopted.
+	// The time rather than mere presence, because a directory can become a
+	// second run: `glockenspiel fit --resume` deliberately continues into the
+	// work directory it was given, rewriting config.json and result.json, and
+	// a set would have frozen that job at the snapshot the first run ended on.
+	scanned   map[string]time.Time
+	following []*followedRun
+
+	// followInterval overrides how often the work directory is rescanned.
+	// Zero means followInterval, the constant; it is a field so a test does
+	// not have to wait a real second per tick.
+	followInterval time.Duration
+
 	// compareSlots bounds how many /compare requests may build their payload
 	// at once. That endpoint allocates two signals and two full-resolution
 	// spectrogram views before anything is reduced -- at 192 kHz, on the order
@@ -198,7 +218,11 @@ func New(cfg Config) (*Server, error) {
 	// and every one of them still on disk becomes a job the read endpoints can
 	// answer for. A work directory that cannot be read is logged and survived
 	// -- it costs the history, not the server.
-	srv.restoreJobs()
+	//
+	// Run keeps reading it on a timer from there; this first pass is here
+	// rather than there so that a caller mounting Handler without Run still
+	// gets the history, as every test of this package does.
+	srv.scanRuns()
 
 	return srv, nil
 }
@@ -565,6 +589,17 @@ func (s *Server) Run(ctx context.Context) error {
 	go func() {
 		served <- httpServer.Serve(listener)
 	}()
+
+	// The work directory is read again on a timer for as long as the server
+	// serves. It is rooted in ctx rather than in the shutdown channel because
+	// it is Run's own goroutine and Run's own context is exactly its lifetime:
+	// both exits below return only after ctx is done or the listener has
+	// stopped, and a scan that outlived either would be reading a directory
+	// nobody is serving from any more.
+	scanCtx, stopScanning := context.WithCancel(ctx)
+	defer stopScanning()
+
+	go s.followRuns(scanCtx)
 
 	select {
 	case err := <-served:

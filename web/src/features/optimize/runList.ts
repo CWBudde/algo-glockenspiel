@@ -52,12 +52,47 @@ export function runStateLabel(state: FitState): string {
 }
 
 /**
- * Whether the list is worth polling: true while any row is still queued or
- * running. A finished history never changes on its own, so a list of only
- * terminal rows has nothing to refresh for.
+ * Whether anything in the list is still moving: true while any row is queued
+ * or running, whoever started it.
+ *
+ * A followed row counts exactly like the server's own. It is a run in another
+ * process -- `glockenspiel fit` in a second terminal, a campaign job -- whose
+ * numbers the server reads by tailing its trace, so its cost and its elapsed
+ * time move on every poll and it becomes terminal without this page asking
+ * for anything. Excluding it would freeze the one row that most obviously
+ * ought to be alive.
+ *
+ * This is a cadence, not a switch: the list keeps reading even when every row
+ * is terminal, because the server adopts new run directories on its own timer
+ * and a fit someone starts in a terminal has to appear here without a reload.
+ * See RunList's two intervals.
  */
 export function hasActiveRun(jobs: readonly FitJobListEntry[]): boolean {
   return jobs.some((job) => job.state === "queued" || job.state === "running");
+}
+
+/**
+ * Why a followed row's stop control is missing, in one sentence.
+ *
+ * It is a constant rather than words in the component because two places say
+ * it -- the run list's row and the form's disabled Cancel button -- and a
+ * user who reads the second after the first should not have to work out
+ * whether they mean the same thing.
+ */
+export const FOLLOWED_REASON =
+  "started outside this server, which follows its run directory and cannot stop it";
+
+/**
+ * The short mark a followed row carries, or null for a run the server started
+ * itself.
+ *
+ * A word rather than an icon, and beside the state rather than in a column of
+ * its own: the origin only ever has something to say about a minority of
+ * rows, and a column that is empty for most of a history costs every row its
+ * width.
+ */
+export function runOriginLabel(job: FitJobListEntry): string | null {
+  return job.followed ? "followed" : null;
 }
 
 /**

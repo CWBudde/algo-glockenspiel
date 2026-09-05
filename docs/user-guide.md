@@ -185,8 +185,8 @@ campaign, a batch of presets, or anything scripted belongs on this command line 
 - `--checkpoint-interval`: write a checkpoint once this many of the backend's own iterations have passed since the last one, counted in the same unit as `--max-iter` and independent of `--report-every`; `0` disables checkpointing entirely, including the final checkpoint. A backend reports on its own schedule, so the spacing is "at least this many" rather than exactly
 - `--seed`: the one random seed for every backend, Mayfly, CMA-ES and the polish stage alike. `0` (the default) picks a seed, prints it, and records it in the checkpoint, so the run stays reproducible and a resume continues the same stream. `--mayfly-seed` and `--cmaes-seed` remain as deprecated aliases that write the same option; combining one with `--seed` is an error. Run _k_ of a restarting fit, and each Mayfly round, draws a stream mixed out of the seed rather than offset from it, so two fits whose seeds differ by one share no restart
 - `--workers`: how many goroutines evaluate candidates in parallel; `0` (the default) follows the machine's CPU count. The resolved width is printed, recorded in the checkpoint, and reused by `--resume` unless `--workers` is written again, so a fit continued on another machine reproduces the run it is continuing rather than the machine it lands on
-- `--work-dir`: stores checkpoints and `fitted_output.wav`, resolved relative to the current directory (default `out/fit`)
-- `--resume`: restart from the latest `checkpoint_*.json` in `work-dir`
+- `--work-dir`: the run directory, resolved relative to the current directory (default `out/fit`). A fit writes the same self-describing set of files a campaign job and a served fit write: `config.json`, `analysis.json`, `reference.wav` (the cut the objective actually scored), `trace.jsonl`, `checkpoint.json`, `preset.json`, `render.wav`, `result.json` and `log.txt`. `render.wav` replaces the `fitted_output.wav` earlier versions wrote, and the single `checkpoint.json` replaces the numbered `checkpoint_NNNN.json` stream: the directory is now readable by the campaign's `collect` step and by `glockenspiel serve`, which could not read the old layout at all
+- `--resume`: continue from the checkpoint in `work-dir`. A run directory holds one, `checkpoint.json`; a work directory left over from an older build still resumes from the newest of its `checkpoint_*.json`
 - `--mayfly-variant`: which of Mayfly's eight dialects to run. The measured effect of the choice is small, so it is rarely the setting worth reaching for first
 - `--mayfly-pop`: Mayfly male/female population size. Bigger is not better at a fixed budget: larger populations were measured as _worse_, because each iteration costs more
 - `--mayfly-preset`: start from one of Mayfly's named configurations, which pick a dialect and its knobs together. Cannot be combined with `--mayfly-variant`, and does not override `--max-iter` or `--mayfly-pop`
@@ -546,10 +546,10 @@ Check:
 
 ### Resume did not seem to do anything
 
-`--resume` only looks for the latest `checkpoint_*.json` in `--work-dir`. Make sure:
+`--resume` reads the `checkpoint.json` in `--work-dir`, or, for a directory written before the run-directory layout, the newest `checkpoint_*.json` in it. Make sure:
 
 - `--work-dir` is the same directory used in the earlier run
-- at least one checkpoint file exists
+- a checkpoint file exists
 - the checkpoint matches the current preset/metric/dimension setup
 
 When a checkpoint contains optimizer state, resume restores:

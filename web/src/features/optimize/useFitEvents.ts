@@ -32,6 +32,19 @@ export interface FitEvents {
   /** Whether a stream is currently open. */
   streaming: boolean;
   /**
+   * Whether the stream answered about a different run than the one being
+   * watched, and was therefore let go.
+   *
+   * `api/fit/events` has no job id in it: it streams whichever job the server
+   * currently considers active, which is the most recently recorded one. Since
+   * the server adopts runs out of its work directory, a `glockenspiel fit`
+   * started in a terminal becomes that job, and a stream opened -- or
+   * reconnected by the browser -- after it appeared would deliver its numbers
+   * under the watched run's name. This says that happened, so a caller can
+   * read the run it actually wants some other way.
+   */
+  displaced: boolean;
+  /**
    * Something worth telling the user about. A 404 before any fit has started is
    * not one of those, so it never lands here.
    */
@@ -50,6 +63,7 @@ const empty: FitEvents = {
   revision: 0,
   streaming: false,
   streamError: null,
+  displaced: false,
 };
 
 /**
@@ -69,6 +83,11 @@ const empty: FitEvents = {
  *     it is the only thing that ends the loop.
  *   - Heartbeat comment lines (`: keep-alive`, every 15 s) are not events;
  *     EventSource drops them without telling anyone, which is what we want.
+ *   - The URL names no job. The stream is about whichever job the server
+ *     considers active, and that is now something this page does not control:
+ *     the server adopts run directories it finds in its work directory, so a
+ *     fit started in a terminal takes the stream over. A snapshot for another
+ *     job is therefore refused rather than drawn, and `displaced` says so.
  *
  * The URL is relative because the bundle is built with `base: "./"` and is
  * served both from `/` by `glockenspiel serve` and from a project sub-path on
@@ -124,6 +143,26 @@ export function useFitEvents(jobId: string | null): FitEvents {
         return;
       }
 
+      if (snapshot.jobId !== jobId) {
+        // Somebody else's run holds the stream. Its snapshots are dropped
+        // rather than drawn: they are a whole other fit's cost, iteration
+        // count and metric breakdown, and painting them under this run's name
+        // would be worse than showing nothing at all. The source is closed so
+        // the browser does not reconnect into the same answer, and the caller
+        // is told, because a run this page is watching still has to be
+        // watchable -- by reading it, which is what `displaced` asks for.
+        source.close();
+
+        setState((previous) => ({
+          ...previous,
+          streaming: false,
+          displaced: true,
+          streamError: null,
+        }));
+
+        return;
+      }
+
       recordPoint(pointsRef.current, snapshot);
 
       setState((previous) => ({
@@ -132,6 +171,7 @@ export function useFitEvents(jobId: string | null): FitEvents {
         revision: previous.revision + 1,
         streaming: !terminal,
         streamError: null,
+        displaced: false,
       }));
 
       if (terminal) {
