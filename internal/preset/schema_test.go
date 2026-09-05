@@ -348,3 +348,110 @@ func TestV1RejectsV2FieldsPresentButEmpty(t *testing.T) {
 		})
 	}
 }
+
+// TestV3RejectsTheKeytrack mirrors TestV2RejectsTheOutputGain, with one part
+// that test does not have.
+//
+// The trap value here is 1.0 rather than zero. One is the exponent a v3 reader
+// applies implicitly, so it is precisely the value an author will believe is
+// harmless to write into an older document -- and it is the one that must still
+// be refused, because a reader that accepts it has accepted a document it
+// cannot be trusted to have understood.
+func TestV3RejectsTheKeytrack(t *testing.T) {
+	base, err := preset.Load(filepath.FromSlash("../../assets/presets/default.json"))
+	if err != nil {
+		t.Fatalf("load default: %v", err)
+	}
+
+	upgraded, err := preset.Upgrade(base)
+	if err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+
+	keytrack := 0.5
+
+	candidate := upgraded.Clone()
+	candidate.Version = preset.VersionV3
+	candidate.Parameters.DecayKeytrack = &keytrack
+
+	if err := preset.Validate(candidate); err == nil {
+		t.Fatal("expected a v3 schema error for decay_keytrack")
+	} else if !strings.Contains(err.Error(), preset.VersionV4) {
+		t.Fatalf("the error should name version %s: %v", preset.VersionV4, err)
+	}
+
+	for _, written := range []string{"1.0", "null"} {
+		data := []byte(`{"version":"3.0","name":"x","note":69,"parameters":{` +
+			`"input_mix":0.1,"filter_frequency":1000,"base_frequency":440,` +
+			`"decay_keytrack":` + written + `,` +
+			`"modes":[{"amplitude":0.5,"frequency":440,"decay_ms":50}]}}`)
+
+		if _, err := preset.Decode(data, "test"); err == nil {
+			t.Errorf("a v3 document carrying decay_keytrack %s was accepted", written)
+		} else if !strings.Contains(err.Error(), "decay_keytrack") {
+			t.Errorf("decay_keytrack %s: unexpected error: %v", written, err)
+		}
+	}
+}
+
+// TestV4StillAcceptsTheOutputGain is the regression the version ladder needed
+// and did not have.
+//
+// The output_gain_db gate read "version is not exactly v3", which was right
+// while v3 was the newest version and became wrong the moment v4 existed --
+// every calibrated preset a fit writes carries an output gain and is written in
+// the current version, so all of them would have been refused for holding a
+// field an older version introduced.
+func TestV4StillAcceptsTheOutputGain(t *testing.T) {
+	data := []byte(`{"version":"4.0","name":"x","note":69,"parameters":{` +
+		`"input_mix":0.1,"filter_frequency":1000,"base_frequency":440,` +
+		`"output_gain_db":-3.5,"decay_keytrack":0.75,` +
+		`"modes":[{"amplitude":0.5,"frequency":440,"decay_ms":50}]}}`)
+
+	loaded, err := preset.Decode(data, "test")
+	if err != nil {
+		t.Fatalf("a v4 document carrying both new fields was refused: %v", err)
+	}
+
+	if loaded.Parameters.OutputGainDB != -3.5 {
+		t.Errorf("output_gain_db read back as %v", loaded.Parameters.OutputGainDB)
+	}
+
+	if loaded.Parameters.ResolvedDecayKeytrack() != 0.75 {
+		t.Errorf("decay_keytrack read back as %v", loaded.Parameters.ResolvedDecayKeytrack())
+	}
+}
+
+// TestUpgradeToV4LeavesTheSoundAlone is why v4 can be the current version
+// without touching a single shipped file: an older document has no keytrack, a
+// nil keytrack means exactly the law those documents were authored under, so
+// restamping them changes nothing about how they render.
+func TestUpgradeToV4LeavesTheSoundAlone(t *testing.T) {
+	for _, path := range []string{
+		"../../assets/presets/default.json",
+		"../../assets/presets/recorded-bar.json",
+	} {
+		base, err := preset.Load(filepath.FromSlash(path))
+		if err != nil {
+			t.Fatalf("load %s: %v", path, err)
+		}
+
+		upgraded, err := preset.Upgrade(base)
+		if err != nil {
+			t.Fatalf("upgrade %s: %v", path, err)
+		}
+
+		if upgraded.Version != preset.VersionV4 {
+			t.Errorf("%s upgraded to %q, want %q", path, upgraded.Version, preset.VersionV4)
+		}
+
+		if upgraded.Parameters.DecayKeytrack != nil {
+			t.Errorf("%s gained a keytrack of %v on upgrade; it should stay absent",
+				path, *upgraded.Parameters.DecayKeytrack)
+		}
+
+		if got := upgraded.Parameters.ResolvedDecayKeytrack(); got != 1 {
+			t.Errorf("%s resolves its absent keytrack to %v, want 1", path, got)
+		}
+	}
+}

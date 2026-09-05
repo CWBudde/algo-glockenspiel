@@ -72,9 +72,12 @@ func TestApplyOutputGainIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestApplyOutputGainUpgradesAV1Preset pins that a preset carrying a gain is a
-// v2 document. A v1 loader rejects the field rather than ignoring it, which is
-// the point: a loader that ignored it would play the preset at the wrong level.
+// TestApplyOutputGainUpgradesAV1Preset pins that a preset carrying a gain is at
+// least a v3 document. A v1 loader rejects the field rather than ignoring it,
+// which is the point: a loader that ignored it would play the preset at the
+// wrong level. The assertion is "not older than v3" rather than "equal to v3"
+// because the ladder keeps growing and the claim is about what the document can
+// carry, not about which version happens to be current.
 func TestApplyOutputGainUpgradesAV1Preset(t *testing.T) {
 	candidate := loadTestPreset(t)
 	if candidate.Version != preset.VersionV1 {
@@ -85,8 +88,8 @@ func TestApplyOutputGainUpgradesAV1Preset(t *testing.T) {
 		t.Fatalf("ApplyOutputGain: %v", err)
 	}
 
-	if candidate.Version != preset.VersionV3 {
-		t.Fatalf("preset carries a gain in version %q, want %q", candidate.Version, preset.VersionV3)
+	if preset.OlderThan(candidate.Version, preset.VersionV3) {
+		t.Fatalf("preset carries a gain in version %q, which cannot carry one", candidate.Version)
 	}
 
 	if err := preset.Validate(candidate); err != nil {

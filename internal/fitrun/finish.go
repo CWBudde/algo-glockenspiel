@@ -35,10 +35,22 @@ func newRunConfig(spec Spec, identity Identity, prepared *preparation, started t
 		GeneratedBy:      spec.GeneratedBy,
 		Name:             spec.Name,
 		Identity:         identity,
-		Reference:        prepared.reference,
 		Started:          started,
 		StrictBounds:     spec.StrictBounds,
 		Gain:             gainName(spec.Gain),
+
+		SearchDecayKeytrack: spec.SearchDecayKeytrack,
+	}
+
+	if len(spec.References) > 0 {
+		config.References = make([]noteReferenceRecord, 0, len(prepared.notes))
+		for _, note := range prepared.notes {
+			config.References = append(config.References,
+				noteReferenceRecord{referenceRecord: note.record, Note: note.note})
+		}
+	} else {
+		reference := prepared.reference
+		config.Reference = &reference
 	}
 
 	if spec.Bounds != nil {
@@ -73,9 +85,20 @@ func finish(
 		return nil, err
 	}
 
-	metrics, err := prepared.objective.EvaluateMetrics(bestEncoded)
+	perNote, err := prepared.objective.EvaluatePerNote(bestEncoded)
 	if err != nil {
 		return nil, err
+	}
+
+	// A joint fit has no single set of terms; see Summary.Terms. Matched and
+	// ReferencePartials go the same way, because they are counts of one note's
+	// partial list against one note's model partials.
+	metrics := optimizer.UnmeasuredMetrics()
+	noteTerms := perNote
+
+	if len(spec.References) == 0 {
+		metrics = perNote[0].Metrics
+		noteTerms = nil
 	}
 
 	pinned, err := prepared.objective.Codec().Pinned(bestEncoded)
@@ -87,6 +110,7 @@ func finish(
 		Score:             bestCost,
 		Profile:           prepared.profile.Name,
 		Terms:             metrics,
+		NoteTerms:         noteTerms,
 		Evaluations:       result.Evaluations,
 		Iterations:        result.Iterations,
 		Restarts:          result.Restarts,
@@ -117,7 +141,7 @@ func finish(
 		return nil, err
 	}
 
-	fitted.Provenance, err = provenanceFor(spec, config.Identity, prepared.reference, summary, *chosen)
+	fitted.Provenance, err = provenanceFor(spec, config.Identity, prepared, summary, *chosen)
 	if err != nil {
 		return nil, err
 	}

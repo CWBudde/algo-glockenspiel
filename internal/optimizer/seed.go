@@ -79,6 +79,13 @@ func PresetFromAnalysis(template *preset.Preset, measurement *analysis.Measureme
 	// by the ratio and multiplying the decay by it -- the inverse of what
 	// model.TransposeToNote does at render time.
 	ratio := math.Pow(2, float64(note-template.Note)/12)
+
+	// The decay inverse is the ratio raised to the template's key-tracking
+	// exponent, matching what TransposeToNote will divide by at render time.
+	// Getting this wrong is silent: the seeded decay would simply be off by a
+	// factor, and the search would spend part of its budget walking back.
+	keytrack := template.Parameters.ResolvedDecayKeytrack()
+	decayRatio := math.Pow(ratio, keytrack)
 	seeded := template.Clone()
 	seeded.Parameters.Modes = make([]model.ModeParams, len(partials))
 
@@ -103,7 +110,8 @@ func PresetFromAnalysis(template *preset.Preset, measurement *analysis.Measureme
 		seeded.Parameters.Modes[i] = model.ModeParams{
 			Amplitude: math.Min(model.AmplitudeMax, amplitude),
 			Frequency: frequency,
-			DecayMs:   math.Min(model.AuthoredDecayMsMax(template.Note), math.Max(model.DecayMsMin, halfLife*ratio)),
+			DecayMs: math.Min(model.AuthoredDecayMsMax(template.Note, keytrack),
+				math.Max(model.DecayMsMin, halfLife*decayRatio)),
 		}
 	}
 

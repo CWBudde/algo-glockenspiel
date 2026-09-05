@@ -37,6 +37,16 @@ type JointOptions struct {
 
 	// Workers bounds parallel evaluation. Zero follows the machine.
 	Workers int
+
+	// SearchDecayKeytrack searches the decay key-tracking exponent instead of
+	// leaving it at 1, the law every preset before schema v4 was written under.
+	//
+	// It is off by default because a fit at the fixed exponent is already a
+	// shippable preset and is the control the exponent has to beat. Turning it
+	// on adds a dimension, so a better score is not on its own evidence that
+	// the exponent is real -- what makes it evidence is the paired ablation,
+	// and that needs both arms.
+	SearchDecayKeytrack bool
 }
 
 // FitJoint fits one preset against every note of a planned pack at once.
@@ -88,19 +98,20 @@ func FitJoint(ctx context.Context, packRunDir, outDir string, log io.Writer, opt
 	}
 
 	spec := fitrun.Spec{
-		Dir:            outDir,
-		References:     refs,
-		AuthoredNote:   opts.AuthoredNote,
-		Modes:          opts.Modes,
-		Metric:         manifest.Profile,
-		Engine:         manifest.Engine,
-		MaxEvaluations: opts.Budget,
-		TimeBudget:     0,
-		Seed:           opts.Seed,
-		Workers:        opts.Workers,
-		ReportEvery:    1,
-		GeneratedBy:    "glockenspiel-campaign pack fit-joint",
-		Name:           fmt.Sprintf("pack-joint/%s", filepath.Base(manifest.Pack)),
+		Dir:                 outDir,
+		References:          refs,
+		AuthoredNote:        opts.AuthoredNote,
+		Modes:               opts.Modes,
+		Metric:              manifest.Profile,
+		Engine:              manifest.Engine,
+		MaxEvaluations:      opts.Budget,
+		TimeBudget:          0,
+		Seed:                opts.Seed,
+		SearchDecayKeytrack: opts.SearchDecayKeytrack,
+		Workers:             opts.Workers,
+		ReportEvery:         1,
+		GeneratedBy:         "glockenspiel-campaign pack fit-joint",
+		Name:                fmt.Sprintf("pack-joint/%s", filepath.Base(manifest.Pack)),
 	}
 
 	fitted := make([]int, 0, len(refs))

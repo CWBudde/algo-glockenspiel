@@ -164,6 +164,7 @@ func prepare(spec Spec, out io.Writer) (*preparation, error) {
 	}
 
 	config.Gain = spec.Gain
+	config.SearchDecayKeytrack = spec.SearchDecayKeytrack
 
 	inputs := make([]optimizer.ReferenceInput, 0, len(notes))
 	for _, note := range notes {

@@ -108,13 +108,15 @@ func SolveOutputGainDB(p *preset.Preset) (gainDB float64, clamped bool, err erro
 // to land on, and it is idempotent: the gain p already carries is replaced
 // rather than compounded.
 //
-// A preset that carries a gain is a v3 document whatever its template was. The
-// gain changes how the preset renders, so a v1 or v2 loader that quietly
-// ignored an unknown field would play the preset at the wrong level instead of
-// refusing it; upgrading is rendering-identical for everything else the older
-// schemas describe. A preset that needs no gain is left exactly as it was,
-// version included -- it stays readable by everything that could read it
-// before.
+// A preset that carries a gain is at least a v3 document whatever its template
+// was. The gain changes how the preset renders, so a v1 or v2 loader that
+// quietly ignored an unknown field would play the preset at the wrong level
+// instead of refusing it; upgrading is rendering-identical for everything else
+// the older schemas describe. A preset already at v3 or newer keeps its own
+// version rather than being pushed to the current one: upgrading a document
+// that can already carry the field buys nothing and would silently close it to
+// readers that could have read it. A preset that needs no gain is left exactly
+// as it was, version included.
 func ApplyOutputGain(p *preset.Preset) (gainDB float64, clamped bool, err error) {
 	gainDB, clamped, err = SolveOutputGainDB(p)
 	if err != nil {
@@ -125,7 +127,7 @@ func ApplyOutputGain(p *preset.Preset) (gainDB float64, clamped bool, err error)
 		return 0, false, nil
 	}
 
-	if p.Version != preset.VersionV3 {
+	if preset.OlderThan(p.Version, preset.VersionV3) {
 		upgraded, upgradeErr := preset.Upgrade(p)
 		if upgradeErr != nil {
 			return 0, false, fmt.Errorf("upgrade the preset so it can carry an output gain: %w", upgradeErr)

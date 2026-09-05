@@ -68,6 +68,40 @@ type ObjectiveConfig struct {
 	// objective's partial term, as `glockenspiel analyze` writes them. Nil
 	// measures the reference at construction.
 	Analysis *analysis.Measurement
+
+	// SearchDecayKeytrack adds the decay key-tracking exponent to the search
+	// space, appended after the Chebyshev gains so a vector without it is a
+	// prefix of one with it.
+	//
+	// It is refused unless the objective spans several notes a real distance
+	// apart, and that is a correctness rule rather than a convenience. At one
+	// note the exponent trades off exactly against every DecayMs -- any beta
+	// can be absorbed by scaling the decays -- so it is a gauge freedom of
+	// precisely the kind BaseFrequency is excluded for, and searching it would
+	// add a dimension with no gradient. Two adjacent notes are barely better:
+	// the lever arm is a twelfth of an octave against decay measurements that
+	// scatter by tens of percent.
+	SearchDecayKeytrack bool
+
+	// DecayKeytrackBounds is the range the exponent is searched in. The zero
+	// value takes the model's full range.
+	DecayKeytrackBounds Range
+}
+
+// resolvedDecayKeytrackBounds is the range the exponent is actually searched
+// in, with the zero value replaced by the model's own.
+//
+// It exists rather than being read off the field because a zero Range is not a
+// harmless default here the way it is for a length: it is Min = Max = 0, which
+// clamps the exponent to exactly 0 -- a legal, measurable exponent (one of the
+// packs sits near it) and so a value that would look like a search result
+// rather than like an unset field.
+func (c ObjectiveConfig) resolvedDecayKeytrackBounds() Range {
+	if c.DecayKeytrackBounds.Min == 0 && c.DecayKeytrackBounds.Max == 0 {
+		return Range{Min: model.DecayKeytrackMin, Max: model.DecayKeytrackMax}
+	}
+
+	return c.DecayKeytrackBounds
 }
 
 // DefaultObjectiveConfig returns the configuration used by the plain
@@ -190,6 +224,74 @@ func NewObjectiveFunctionWithConfig(reference []float32, template *preset.Preset
 		[]ReferenceInput{{Samples: reference, Note: note}}, template, sampleRate, velocity, config, nil)
 }
 
+// decayCeilingKeytrack is the exponent the decay box is narrowed under.
+//
+// A fixed exponent is the template's own. A searched one is whichever value in
+// the range gives the tightest ceiling, because the box has to hold points that
+// are authorable whatever the search settles on -- the alternative is a
+// non-rectangular feasible set, which every backend here assumes away.
+func decayCeilingKeytrack(template *preset.Preset, config ObjectiveConfig) float64 {
+	if !config.SearchDecayKeytrack {
+		return template.Parameters.ResolvedDecayKeytrack()
+	}
+
+	tightest := math.Inf(1)
+	worst := model.DecayKeytrackDefault
+
+	bounds := config.resolvedDecayKeytrackBounds()
+
+	for _, keytrack := range []float64{bounds.Min, bounds.Max} {
+		if ceiling := model.AuthoredDecayMsMax(template.Note, keytrack); ceiling < tightest {
+			tightest, worst = ceiling, keytrack
+		}
+	}
+
+	return worst
+}
+
+// keytrackMinSpanSemitones is how far apart the lowest and highest reference
+// must sit before the decay exponent is worth searching.
+//
+// An octave is not a round number chosen for tidiness. The exponent is
+// identified by how much the decay changes per semitone, against decay
+// measurements that scatter by tens of percent from one bar to the next; over a
+// couple of semitones the lever arm is far shorter than the noise and the
+// search would be fitting scatter. Twelve semitones is where the signal starts
+// to exceed it on the packs measured here.
+const keytrackMinSpanSemitones = 12
+
+// checkKeytrackIsIdentifiable refuses to search the exponent where it cannot be
+// measured.
+//
+// At a single note it is an exact gauge freedom: any exponent can be absorbed
+// by scaling every DecayMs, so the objective is flat along it and the search
+// would be spending a dimension on nothing. That is the same defect
+// BaseFrequency was excluded from the search space for.
+func checkKeytrackIsIdentifiable(refs []ReferenceInput) error {
+	if len(refs) < 2 {
+		return fmt.Errorf(
+			"the decay key-tracking exponent cannot be searched against one note: at a single note it " +
+				"trades off exactly against every decay_ms, so the objective is flat along it")
+	}
+
+	low, high := refs[0].Note, refs[0].Note
+
+	for _, ref := range refs[1:] {
+		low = min(low, ref.Note)
+		high = max(high, ref.Note)
+	}
+
+	if span := high - low; span < keytrackMinSpanSemitones {
+		return fmt.Errorf(
+			"the references span %d semitones (%d..%d), and the decay key-tracking exponent needs at "+
+				"least %d: over a shorter span the change in decay per semitone is smaller than the "+
+				"scatter between bars, so the search would be fitting noise",
+			span, low, high, keytrackMinSpanSemitones)
+	}
+
+	return nil
+}
+
 // checkNotesAreDistinct refuses two references at the same note. They would be
 // rendered identically and averaged, which silently doubles that note's weight.
 func checkNotesAreDistinct(refs []ReferenceInput) error {
@@ -277,7 +379,7 @@ func newObjectiveFunction(
 	// The decay ceiling depends on the note the preset is authored at, which
 	// the bounds cannot know and the codec does not: a search that could
 	// write 2000 ms at note 69 would produce a preset the file refuses.
-	bounds, err := narrowDecayBounds(config.Bounds, template.Note)
+	bounds, err := narrowDecayBounds(config.Bounds, template.Note, decayCeilingKeytrack(template, config))
 	if err != nil {
 		return nil, err
 	}
@@ -285,6 +387,14 @@ func newObjectiveFunction(
 	codec, err := newCodec(&template.Parameters, bounds)
 	if err != nil {
 		return nil, err
+	}
+
+	if config.SearchDecayKeytrack {
+		if err := checkKeytrackIsIdentifiable(refs); err != nil {
+			return nil, err
+		}
+
+		codec = codec.WithSearchedDecayKeytrack(config.resolvedDecayKeytrackBounds())
 	}
 
 	profile, _ := ProfileFor(config.Metric)
@@ -557,29 +667,70 @@ func (o *ObjectiveFunction) Metric() Metric {
 	return o.metric
 }
 
+// NoteMetrics is one note's share of a joint evaluation: the terms measured at
+// that note and the score they reach under the objective's own profile. The
+// mean of the scores is what Evaluate returns.
+type NoteMetrics struct {
+	Note    int     `json:"note"`
+	Score   float64 `json:"score"`
+	Metrics Metrics `json:"terms"`
+}
+
 // EvaluateMetrics decodes and renders a candidate exactly as Evaluate does and
 // returns every composite term for it. Under a composite metric,
 // Metrics.Score(Profile()) is what Evaluate returns for the same candidate.
 // It works under a legacy metric too, where it is a report rather than the
 // cost.
+//
+// It refuses an objective over several notes. There is no single set of terms
+// for one: Evaluate averages the per-note *scores*, so no combination of terms
+// reproduces it, and returning the first note's terms would hand a caller a
+// well-formed number describing a twentieth of the fit. Use EvaluatePerNote.
 func (o *ObjectiveFunction) EvaluateMetrics(encoded []float64) (Metrics, error) {
-	params, err := o.codec.DecodeParams(encoded)
+	if len(o.refs) > 1 {
+		return Metrics{}, fmt.Errorf(
+			"this objective scores %d notes and has no single set of terms: use EvaluatePerNote", len(o.refs))
+	}
+
+	perNote, err := o.EvaluatePerNote(encoded)
 	if err != nil {
 		return Metrics{}, err
 	}
 
+	return perNote[0].Metrics, nil
+}
+
+// EvaluatePerNote decodes and renders a candidate at every note the objective
+// holds and returns each note's terms and score, in the order the references
+// were given.
+func (o *ObjectiveFunction) EvaluatePerNote(encoded []float64) ([]NoteMetrics, error) {
+	params, err := o.codec.DecodeParams(encoded)
+	if err != nil {
+		return nil, err
+	}
+
 	state, ok := o.states.Get().(*renderState)
 	if !ok || state == nil {
-		return Metrics{}, fmt.Errorf("render state unavailable")
+		return nil, fmt.Errorf("render state unavailable")
 	}
 	defer o.states.Put(state)
 
 	state.working.Parameters = *params
 
-	ref := o.refs[0]
-	rendered := state.engine.RenderNote(ref.note, o.velocity, ref.duration)
+	perNote := make([]NoteMetrics, 0, len(o.refs))
 
-	return ref.metrics(o, rendered, params), nil
+	for _, ref := range o.refs {
+		rendered := state.engine.RenderNote(ref.note, o.velocity, ref.duration)
+		metrics := ref.metrics(o, rendered, params)
+
+		perNote = append(perNote, NoteMetrics{
+			Note:    ref.note,
+			Score:   metrics.Score(o.profile),
+			Metrics: metrics,
+		})
+	}
+
+	return perNote, nil
 }
 
 // spectralGainDB converts the least-squares optimal time-domain gain into the

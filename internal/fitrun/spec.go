@@ -122,6 +122,18 @@ type Spec struct {
 	// Template is the starting preset. Nil takes the embedded default.
 	Template *preset.Preset
 
+	// SearchDecayKeytrack searches the decay key-tracking exponent instead of
+	// leaving it at the template's value.
+	//
+	// It is only meaningful for a multi-reference fit, and the objective
+	// refuses it outright for one reference or for references less than an
+	// octave apart. That refusal is the point rather than a limitation: at a
+	// single note the exponent trades off exactly against every DecayMs, so a
+	// fit that searched it would report a number that means nothing. Plain
+	// `fit` therefore has no flag for it and never sets it; only a joint fit
+	// over a spread of notes can ask.
+	SearchDecayKeytrack bool
+
 	// Modes is how many modes to seed from the reference's partials. Zero
 	// takes every measured partial; optimizer.KeepTemplateModes keeps the
 	// template's own modes and seeds nothing.
@@ -325,9 +337,20 @@ type CMAESSettings struct {
 // Summary is result.json: what the run spent and what it found, in the fields
 // the campaign's collect step turns into one CSV row.
 type Summary struct {
-	Score             float64                 `json:"score"`
-	Profile           string                  `json:"profile"`
-	Terms             optimizer.Metrics       `json:"terms"`
+	Score   float64 `json:"score"`
+	Profile string  `json:"profile"`
+
+	// Terms is the shipped vector's composite terms. A joint fit leaves every
+	// term NaN and fills NoteTerms instead: its score is the mean of the
+	// per-note scores, which no combination of terms reproduces, so there is
+	// no set of terms this field could hold that the score was computed from.
+	Terms optimizer.Metrics `json:"terms"`
+
+	// NoteTerms is each reference note's terms and score under the shipped
+	// vector, empty for a fit of a single recording. It is what says whether a
+	// good mean was reached by covering the range or by abandoning part of it.
+	NoteTerms []optimizer.NoteMetrics `json:"note_terms,omitempty"`
+
 	Evaluations       int                     `json:"evaluations"`
 	Iterations        int                     `json:"iterations"`
 	Restarts          int                     `json:"restarts"`

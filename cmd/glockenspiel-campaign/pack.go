@@ -139,6 +139,7 @@ func newPackFitJointCmd() *cobra.Command {
 		seed         int64
 		workers      int
 		notes        []int
+		keytrack     bool
 	)
 
 	cmd := &cobra.Command{
@@ -161,6 +162,8 @@ func newPackFitJointCmd() *cobra.Command {
 				Modes:        modes,
 				Seed:         seed,
 				Workers:      workers,
+
+				SearchDecayKeytrack: keytrack,
 			})
 			if err != nil {
 				return err
@@ -171,6 +174,10 @@ func newPackFitJointCmd() *cobra.Command {
 				outcome.Summary.Score, len(fitted),
 				outcome.Preset.Note, outcome.Summary.Evaluations,
 				outcome.Summary.Pinned, outcome.Summary.Dimension)
+
+			if beta := outcome.Preset.Parameters.DecayKeytrack; beta != nil {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "decay keytrack %.4f\n", *beta)
+			}
 
 			return nil
 		},
@@ -186,6 +193,8 @@ func newPackFitJointCmd() *cobra.Command {
 	cmd.Flags().IntVar(&workers, "workers", 0, "parallel evaluation width (0 follows the machine)")
 	cmd.Flags().IntSliceVar(&notes, "notes", nil,
 		"fit only these MIDI notes (empty fits the whole pack)")
+	cmd.Flags().BoolVar(&keytrack, "keytrack", false,
+		"search the decay key-tracking exponent instead of holding it at 1 (needs notes an octave apart)")
 	_ = cmd.MarkFlagRequired("dir")
 	_ = cmd.MarkFlagRequired("out")
 

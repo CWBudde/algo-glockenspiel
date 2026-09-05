@@ -42,11 +42,11 @@ var baseNotesUnderTest = []int{0, 36, 60, 69, 75, 76, 96, 100, 127}
 // author who read the error message would type in.
 func TestAuthoredCeilingIsExactlyReachable(t *testing.T) {
 	for _, baseNote := range baseNotesUnderTest {
-		params := authoredTestParams(AuthoredDecayMsMax(baseNote))
+		params := authoredTestParams(AuthoredDecayMsMax(baseNote, DecayKeytrackDefault))
 
 		if err := ValidateAuthoredBarParams(&params, baseNote); err != nil {
 			t.Errorf("base note %d: the ceiling itself (%g ms) was rejected: %v",
-				baseNote, AuthoredDecayMsMax(baseNote), err)
+				baseNote, AuthoredDecayMsMax(baseNote, DecayKeytrackDefault), err)
 		}
 	}
 }
@@ -54,7 +54,7 @@ func TestAuthoredCeilingIsExactlyReachable(t *testing.T) {
 // TestAuthoredCeilingRejectsWhatTheBottomKeyCannotBuild pins it from above.
 func TestAuthoredCeilingRejectsWhatTheBottomKeyCannotBuild(t *testing.T) {
 	for _, baseNote := range baseNotesUnderTest {
-		ceiling := AuthoredDecayMsMax(baseNote)
+		ceiling := AuthoredDecayMsMax(baseNote, DecayKeytrackDefault)
 		params := authoredTestParams(ceiling * 1.001)
 
 		if err := ValidateAuthoredBarParams(&params, baseNote); err == nil {
@@ -132,14 +132,14 @@ func TestAuthoredValidationIsStrictlyStrongerThanBarValidation(t *testing.T) {
 // error message cannot drift away from the number being enforced.
 func TestAuthoredDecayMsMaxMatchesTheTranspositionLaw(t *testing.T) {
 	for _, baseNote := range baseNotesUnderTest {
-		params := authoredTestParams(AuthoredDecayMsMax(baseNote))
+		params := authoredTestParams(AuthoredDecayMsMax(baseNote, DecayKeytrackDefault))
 		TransposeToNote(&params, baseNote, KeyboardFirstNote)
 
 		// Below KeyboardFirstNote the bound is the plain ceiling and the bottom
 		// key transposes up, so the result lands under it rather than on it.
 		want := DecayMsValidationMax
 		if baseNote < KeyboardFirstNote {
-			want = AuthoredDecayMsMax(baseNote) / math.Pow(2, float64(KeyboardFirstNote-baseNote)/12)
+			want = AuthoredDecayMsMax(baseNote, DecayKeytrackDefault) / math.Pow(2, float64(KeyboardFirstNote-baseNote)/12)
 		}
 
 		if got := params.Modes[0].DecayMs; math.Abs(got-want) > 1e-6 {
@@ -221,18 +221,18 @@ func TestAuthoredCeilingCrossesTheSearchBoxAtNote95(t *testing.T) {
 		{note: KeyboardLastNote, want: 936.44},
 		{note: 127, want: 312.50},
 	} {
-		if got := AuthoredDecayMsMax(tc.note); math.Abs(got-tc.want) > 0.01 {
+		if got := AuthoredDecayMsMax(tc.note, DecayKeytrackDefault); math.Abs(got-tc.want) > 0.01 {
 			t.Errorf("AuthoredDecayMsMax(%d) = %.2f ms, want %.2f", tc.note, got, tc.want)
 		}
 	}
 
-	if AuthoredDecayMsMax(94) <= DecayMsSearchMax {
+	if AuthoredDecayMsMax(94, DecayKeytrackDefault) <= DecayMsSearchMax {
 		t.Errorf("the authoring ceiling at note 94 (%.2f ms) should still exceed the search box (%g ms)",
-			AuthoredDecayMsMax(94), DecayMsSearchMax)
+			AuthoredDecayMsMax(94, DecayKeytrackDefault), DecayMsSearchMax)
 	}
 
-	if AuthoredDecayMsMax(95) >= DecayMsSearchMax {
+	if AuthoredDecayMsMax(95, DecayKeytrackDefault) >= DecayMsSearchMax {
 		t.Errorf("the authoring ceiling at note 95 (%.2f ms) should have fallen below the search box (%g ms)",
-			AuthoredDecayMsMax(95), DecayMsSearchMax)
+			AuthoredDecayMsMax(95, DecayKeytrackDefault), DecayMsSearchMax)
 	}
 }

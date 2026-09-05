@@ -358,8 +358,8 @@ func TestCalibrateGivesABrowserFitTheHouseLevel(t *testing.T) {
 		t.Fatalf("calibrate: %v", err)
 	}
 
-	if fitted.Version != preset.VersionV3 {
-		t.Fatalf("calibrated preset is version %q, want %q", fitted.Version, preset.VersionV3)
+	if preset.OlderThan(fitted.Version, preset.VersionV3) {
+		t.Fatalf("calibrated preset is version %q, which cannot carry an output gain", fitted.Version)
 	}
 
 	if fitted.Parameters.OutputGainDB == 0 {

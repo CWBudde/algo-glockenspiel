@@ -111,7 +111,7 @@ func TestObjectiveNarrowsTheDecayBoxToTheAuthoredCeiling(t *testing.T) {
 		t.Fatalf("NewObjectiveFunction: %v", err)
 	}
 
-	ceiling := model.AuthoredDecayMsMax(template.Note)
+	ceiling := model.AuthoredDecayMsMax(template.Note, model.DecayKeytrackDefault)
 	if got := objective.Codec().Bounds().DecayMs.Max; math.Abs(got-ceiling) > 1e-9 {
 		t.Fatalf("decay box ceiling at note %d = %g, want the authoring ceiling %g", template.Note, got, ceiling)
 	}

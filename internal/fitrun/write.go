@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -57,11 +58,32 @@ type runConfig struct {
 	Alignment    *string       `json:"alignment,omitempty"`
 	Gain         string        `json:"gain,omitempty"`
 
-	Resolved  Resolved        `json:"resolved"`
-	Identity  Identity        `json:"identity"`
-	Reference referenceRecord `json:"reference"`
-	Started   time.Time       `json:"started"`
-	Finished  *time.Time      `json:"finished,omitempty"`
+	// SearchDecayKeytrack is written only when the run asked for it, so a
+	// campaign job's config.json keeps the field set it wrote before the
+	// exponent existed. Only a joint fit can ask.
+	SearchDecayKeytrack bool `json:"search_decay_keytrack,omitempty"`
+
+	Resolved Resolved `json:"resolved"`
+	Identity Identity `json:"identity"`
+
+	// Reference is written for a fit of a single recording and References for
+	// a joint fit of several, never both. They are not one field carrying one
+	// or many entries because the singular name is already in five archived
+	// run directories and is read by name; a joint fit that wrote its lowest
+	// note there would describe a twenty-note search with one file and look
+	// entirely well-formed doing it.
+	Reference  *referenceRecord      `json:"reference,omitempty"`
+	References []noteReferenceRecord `json:"references,omitempty"`
+
+	Started  time.Time  `json:"started"`
+	Finished *time.Time `json:"finished,omitempty"`
+}
+
+// noteReferenceRecord is one recording of a joint fit, with the note it sounds.
+type noteReferenceRecord struct {
+	referenceRecord
+
+	Note int `json:"note"`
 }
 
 // loadOptionsRecord is analysis.LoadOptions in the snake_case this file's
@@ -267,7 +289,9 @@ func renderPreset(path string, fitted *preset.Preset, sampleRate, note, velocity
 // in the fields a preset on its own can be judged by, which is why it repeats
 // values result.json also holds: a preset copied out of a run directory has to
 // answer for itself.
-func provenanceFor(spec Spec, identity Identity, reference referenceRecord, summary Summary, chosen Resolved) (*preset.Provenance, error) {
+func provenanceFor(spec Spec, identity Identity, prepared *preparation, summary Summary, chosen Resolved) (*preset.Provenance, error) {
+	reference := prepared.reference
+
 	terms, err := json.Marshal(summary.Terms)
 	if err != nil {
 		return nil, fmt.Errorf("encode provenance terms: %w", err)
@@ -294,6 +318,7 @@ func provenanceFor(spec Spec, identity Identity, reference referenceRecord, summ
 		Version:     identity.Revision,
 		Timestamp:   time.Now().UTC(),
 		Reference:   preset.ReferenceProvenance{Path: reference.Path, SHA256: reference.SHA256},
+		References:  noteReferenceProvenance(prepared, summary),
 		Note:        spec.Note,
 		Profile:     summary.Profile,
 		Seed:        summary.Seed,
@@ -303,4 +328,42 @@ func provenanceFor(spec Spec, identity Identity, reference referenceRecord, summ
 		Evaluations: summary.Evaluations,
 		Libraries:   identity.Libraries,
 	}, nil
+}
+
+// noteReferenceProvenance is the per-note block a joint fit's preset carries:
+// every recording it was scored against and what it reached on each. Nil for a
+// fit of a single recording, which Provenance.Reference already describes in
+// full.
+//
+// The scores are looked up by note rather than taken positionally, because
+// nothing forces the summary's per-note order and the preparation's to agree,
+// and a table of scores silently attached to the wrong notes is the one error
+// here that no reader would catch.
+func noteReferenceProvenance(prepared *preparation, summary Summary) []preset.NoteReferenceProvenance {
+	if len(summary.NoteTerms) == 0 {
+		return nil
+	}
+
+	scores := make(map[int]float64, len(summary.NoteTerms))
+	for _, note := range summary.NoteTerms {
+		scores[note.Note] = note.Score
+	}
+
+	refs := make([]preset.NoteReferenceProvenance, 0, len(prepared.notes))
+
+	for _, note := range prepared.notes {
+		score, ok := scores[note.note]
+		if !ok {
+			score = math.NaN()
+		}
+
+		refs = append(refs, preset.NoteReferenceProvenance{
+			Path:   note.record.Path,
+			SHA256: note.record.SHA256,
+			Note:   note.note,
+			Score:  score,
+		})
+	}
+
+	return refs
 }
