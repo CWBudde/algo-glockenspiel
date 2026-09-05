@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
 	"github.com/cwbudde/algo-glockenspiel/internal/pack"
 )
 
@@ -56,13 +57,24 @@ func TestStatusTellsTheThreeStatesApart(t *testing.T) {
 		`{"evaluations":105,"elapsed_ms":733,"current":0.5,"best":0.42}`+"\n", "")
 	writeRunDir(t, filepath.Join(dir, "done"), `{"note":94}`, "",
 		`{"score":0.3,"evaluations":24009,"elapsed_seconds":164,"stop_reason":"max_evaluations"}`)
+	// The reason is fitrun's own constant rather than a hand-written string.
+	// Writing "canceled" here is what let the readers compare against
+	// "canceled" for as long as they did: the fixture and the code agreed with
+	// each other and neither agreed with fitrun, which writes
+	// "context_canceled".
 	writeRunDir(t, filepath.Join(dir, "canceled"), `{"note":94}`, "",
+		`{"score":0.9,"evaluations":10,"stop_reason":"`+fitrun.StopReasonCanceled+`"}`)
+
+	// The literal a much older run directory would carry is still read as
+	// cancelled, because a repeated fit is cheaper than a wrong table row.
+	writeRunDir(t, filepath.Join(dir, "canceled-legacy"), `{"note":94}`, "",
 		`{"score":0.9,"evaluations":10,"stop_reason":"canceled"}`)
 
 	for name, want := range map[string]string{
-		"running":  pack.StateRunning,
-		"done":     pack.StateDone,
-		"canceled": pack.StateCanceled,
+		"running":         pack.StateRunning,
+		"done":            pack.StateDone,
+		"canceled":        pack.StateCanceled,
+		"canceled-legacy": pack.StateCanceled,
 	} {
 		status, err := pack.ReadStatus(filepath.Join(dir, name))
 		if err != nil {
@@ -267,5 +279,95 @@ func TestTheServedDurationsAreMilliseconds(t *testing.T) {
 
 	if got := round.Notes[0].Elapsed.Duration(); got != 21793*time.Millisecond {
 		t.Errorf("round-tripped elapsed is %s, want 21.793s", got)
+	}
+}
+
+// TestPackTimingSumsWhatEachFitRecorded is the arithmetic behind the "per
+// note, spent, about left" line.
+//
+// It was taken from the modification times of the result files, which is a
+// different measurement wearing the same clothes. A pack runs its notes one at
+// a time, so after the first finishes there is one result file, the window
+// between first and last is zero, and the estimate vanishes at the moment it
+// first becomes useful. Once a second finishes the window covers everything
+// except the first note's runtime, so the mean is understated for the rest of
+// the run -- quietly, by a plausible-looking amount.
+//
+// Two finished notes of a known length and one in flight is the smallest case
+// that catches both halves.
+func TestPackTimingSumsWhatEachFitRecorded(t *testing.T) {
+	dir := t.TempDir()
+
+	manifest := `{"pack":"p","budget":24000,"workers":12,"jobs":[
+	  {"note":84,"name":"c6","dir":"notes/084"},
+	  {"note":85,"name":"cs6","dir":"notes/085"},
+	  {"note":86,"name":"d6","dir":"notes/086"},
+	  {"note":87,"name":"ds6","dir":"notes/087"}]}`
+
+	if err := os.WriteFile(filepath.Join(dir, pack.FileManifest), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	writeRunDir(t, filepath.Join(dir, "notes/084"), `{"note":84}`, "",
+		`{"score":0.3,"evaluations":24009,"elapsed_seconds":200,"stop_reason":"max_evaluations"}`)
+	writeRunDir(t, filepath.Join(dir, "notes/085"), `{"note":85}`, "",
+		`{"score":0.3,"evaluations":24009,"elapsed_seconds":100,"stop_reason":"max_evaluations"}`)
+	writeRunDir(t, filepath.Join(dir, "notes/086"), `{"note":86,"max_evaluations":24000}`,
+		`{"evaluations":6000,"elapsed_ms":30000,"current":0.5,"best":0.42}`+"\n", "")
+	writeRunDir(t, filepath.Join(dir, "notes/087"), "", "", "")
+
+	status, err := pack.ReadStatus(dir)
+	if err != nil {
+		t.Fatalf("ReadStatus: %v", err)
+	}
+
+	if status.Finished != 2 || status.Running != 1 || status.Pending != 1 {
+		t.Fatalf("finished %d running %d pending %d, want 2/1/1",
+			status.Finished, status.Running, status.Pending)
+	}
+
+	if got, want := status.MeanJob.Duration(), 150*time.Second; got != want {
+		t.Errorf("mean job is %s, want %s -- the mean of 200s and 100s, not a window between result files",
+			got, want)
+	}
+
+	// 200 + 100 finished, plus the 30 s the note in flight has already spent.
+	if got, want := status.Elapsed.Duration(), 330*time.Second; got != want {
+		t.Errorf("spent is %s, want %s", got, want)
+	}
+
+	// One pending note at the mean, plus what the note in flight still owes.
+	if got, want := status.Remaining.Duration(), 270*time.Second; got != want {
+		t.Errorf("remaining is %s, want %s", got, want)
+	}
+}
+
+// TestARunningNotePastTheMeanIsNotOwedNegativeTime. A note that has already
+// run longer than the mean is nearly done, and subtracting its elapsed from
+// the estimate without a floor would print a remaining time that counts
+// backwards.
+func TestARunningNotePastTheMeanIsNotOwedNegativeTime(t *testing.T) {
+	dir := t.TempDir()
+
+	manifest := `{"pack":"p","budget":24000,"jobs":[
+	  {"note":84,"name":"c6","dir":"notes/084"},
+	  {"note":85,"name":"cs6","dir":"notes/085"}]}`
+
+	if err := os.WriteFile(filepath.Join(dir, pack.FileManifest), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	writeRunDir(t, filepath.Join(dir, "notes/084"), `{"note":84}`, "",
+		`{"score":0.3,"evaluations":24009,"elapsed_seconds":10,"stop_reason":"max_evaluations"}`)
+	writeRunDir(t, filepath.Join(dir, "notes/085"), `{"note":85,"max_evaluations":24000}`,
+		`{"evaluations":23000,"elapsed_ms":600000,"current":0.5,"best":0.42}`+"\n", "")
+
+	status, err := pack.ReadStatus(dir)
+	if err != nil {
+		t.Fatalf("ReadStatus: %v", err)
+	}
+
+	if status.Remaining < 0 {
+		t.Fatalf("remaining is %s, want it floored at zero", status.Remaining.Duration())
 	}
 }

@@ -117,6 +117,7 @@ func FitJoint(ctx context.Context, packRunDir, outDir string, log io.Writer, opt
 		References:          refs,
 		AuthoredNote:        opts.AuthoredNote,
 		Modes:               opts.Modes,
+		SampleRate:          manifest.Rate(),
 		Metric:              manifest.Profile,
 		Engine:              manifest.Engine,
 		MaxEvaluations:      opts.Budget,

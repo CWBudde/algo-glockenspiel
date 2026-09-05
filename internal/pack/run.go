@@ -117,11 +117,29 @@ func inspectJob(dir string) (finished, canceled bool, err error) {
 		return false, false, nil
 	}
 
-	if summary.StopReason == "canceled" {
+	if wasCanceled(summary.StopReason) {
 		return false, true, nil
 	}
 
 	return true, false, nil
+}
+
+// wasCanceled says whether a summary describes a search that was cut short by
+// a signal rather than by its own stopping rule.
+//
+// It exists so the resumer and the status reader cannot drift apart, and it
+// spells the reason through fitrun's own constant rather than by hand. They
+// had drifted: both compared against the literal "canceled", and every backend
+// writes "context_canceled", so a fit cancelled with Ctrl-C read back as
+// finished. The next run then skipped it and collect published its
+// partial-budget result as if it had spent the whole cap.
+//
+// The bare "canceled" is still accepted. Nothing in this repo writes it now,
+// but a run directory outlives the binary that wrote it and reading an old one
+// as cancelled costs a repeat, while reading it as finished costs a wrong
+// number in a table.
+func wasCanceled(reason string) bool {
+	return reason == fitrun.StopReasonCanceled || reason == "canceled"
 }
 
 // checkProvenance refuses to add notes under a different build or a recording
@@ -178,6 +196,10 @@ func runJob(ctx context.Context, manifest *Manifest, job Job, dir string, index 
 		// written as 439.7 Hz -- correct to render, useless to regress.
 		Note:         job.Note,
 		AuthoredNote: job.Note,
+
+		// The pack's own rate, not the package default: a 48 kHz pack would
+		// otherwise be planned and then refused by the reference loader.
+		SampleRate: manifest.Rate(),
 
 		Modes:          manifest.Modes,
 		Metric:         manifest.Profile,

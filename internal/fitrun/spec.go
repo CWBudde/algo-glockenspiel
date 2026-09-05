@@ -417,6 +417,13 @@ func (s Spec) withDefaults() Spec {
 	if len(s.References) > 0 {
 		// The references are ordered so the run directory, the trace and every
 		// table read in pitch order, and so the median below is a median.
+		//
+		// The slice is copied first. Spec is passed by value, but a slice
+		// header carries a pointer, so sorting in place would reorder the
+		// caller's own slice as a side effect of calling Run -- and a caller
+		// that built its references in a meaningful order, or reads them back
+		// after the run, has no way to know that happened.
+		s.References = append([]ReferenceSpec(nil), s.References...)
 		sort.Slice(s.References, func(i, j int) bool { return s.References[i].Note < s.References[j].Note })
 
 		if s.AuthoredNote == 0 {

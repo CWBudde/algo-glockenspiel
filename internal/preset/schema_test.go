@@ -552,3 +552,24 @@ func TestTheVersionIsEarnedByTheFieldsTheDocumentUses(t *testing.T) {
 		})
 	}
 }
+
+// TestProvenanceCloneCopiesTheReferenceSlice. Clone's contract is a deep copy,
+// and `clone := *p` gives a slice its header rather than its contents -- so a
+// joint fit's per-note provenance was shared between a preset and its clone,
+// silently, in exactly the callers that clone for isolation.
+func TestProvenanceCloneCopiesTheReferenceSlice(t *testing.T) {
+	original := &preset.Provenance{
+		References: []preset.NoteReferenceProvenance{
+			{Note: 84, Score: 0.5},
+			{Note: 85, Score: 0.6},
+		},
+	}
+
+	clone := original.Clone()
+	clone.References[0].Score = 99
+
+	if original.References[0].Score != 0.5 {
+		t.Fatalf("editing the clone moved the original to %v, so the slice is shared",
+			original.References[0].Score)
+	}
+}

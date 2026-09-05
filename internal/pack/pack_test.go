@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -585,5 +586,131 @@ func TestTheDiagonalExcludesTheJointPreset(t *testing.T) {
 	// being compared against them, not one of them.
 	if got.BestSingleName != "084" {
 		t.Errorf("best single-note preset is %q, want %q", got.BestSingleName, "084")
+	}
+}
+
+// morphagene is the 48 kHz pack. It exists in this file only to keep the
+// pipeline honest about sample rates, not to be fitted: the README records it
+// as effectively single-mode, 1.1 partials a note.
+const morphagene = "../../testdata/reference/packs/radiohummingbird-morphagene-glockenspiel"
+
+// TestAPackIsFittedAtItsOwnSampleRate covers a pack that could be planned and
+// then not used for anything.
+//
+// Every stage after plan defaulted to 44,100 and then refused a reference that
+// was not at 44,100, so the 48 kHz pack in testdata could be measured, resolved
+// and written into a manifest, and then failed to run, to fit jointly and to
+// score -- three separate errors, all of them about a rate nobody had chosen.
+// The rate is discovered once, at plan time, and every later stage reads it
+// from the manifest.
+func TestAPackIsFittedAtItsOwnSampleRate(t *testing.T) {
+	entries, err := os.ReadDir(morphagene)
+	if err != nil {
+		t.Fatalf("read %s: %v", morphagene, err)
+	}
+
+	packDir := filepath.Join(t.TempDir(), "pack")
+	if err := os.MkdirAll(packDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	copied := 0
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".wav") || copied == 2 {
+			continue
+		}
+
+		raw, err := os.ReadFile(filepath.Join(morphagene, entry.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", entry.Name(), err)
+		}
+
+		if err := os.WriteFile(filepath.Join(packDir, entry.Name()), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		copied++
+	}
+
+	if copied < 2 {
+		t.Fatalf("the 48 kHz pack holds %d usable recordings, want at least 2", copied)
+	}
+
+	runDir := filepath.Join(t.TempDir(), "run")
+
+	manifest, err := pack.Plan(packDir, runDir, pack.Options{Budget: 200, SeedBase: 910_000})
+	if err != nil {
+		t.Fatalf("plan a 48 kHz pack: %v", err)
+	}
+
+	if manifest.SampleRate != 48000 || manifest.Rate() != 48000 {
+		t.Fatalf("the manifest records %d Hz (Rate %d), want the pack's own 48000",
+			manifest.SampleRate, manifest.Rate())
+	}
+
+	// The stage that used to fail: running the fit at all.
+	if err := pack.Run(context.Background(), runDir, io.Discard, pack.RunOptions{}); err != nil {
+		t.Fatalf("run a 48 kHz pack: %v", err)
+	}
+
+	// And scoring a fitted preset back against the recordings, which is where
+	// the rate mismatch surfaced as "is at 48000 Hz, not the requested 44100".
+	first := filepath.Join(runDir, manifest.Jobs[0].Dir, "preset.json")
+	if _, _, err := pack.ScorePresets(runDir, []string{first}, 0, 0); err != nil {
+		t.Fatalf("score a 48 kHz pack: %v", err)
+	}
+}
+
+// TestPlanRefusesAPackThatMixesSampleRates. One pack, one rate: the objective
+// compares a render against a recording sample for sample, so a mixed pack
+// would mean some notes scored against a resampled reference and others
+// against the file. Refused where the disagreement is visible.
+func TestPlanRefusesAPackThatMixesSampleRates(t *testing.T) {
+	packDir := filepath.Join(t.TempDir(), "pack")
+	if err := os.MkdirAll(packDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	at44k, err := os.ReadFile(filepath.Join(hollandm, "c6.wav"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(packDir, "c6.wav"), at44k, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := os.ReadDir(morphagene)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".wav") {
+			continue
+		}
+
+		raw, err := os.ReadFile(filepath.Join(morphagene, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := os.WriteFile(filepath.Join(packDir, entry.Name()), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		break
+	}
+
+	runDir := filepath.Join(t.TempDir(), "run")
+
+	_, err = pack.Plan(packDir, runDir, pack.Options{Budget: 200, SeedBase: 920_000})
+	if err == nil {
+		t.Fatal("a pack mixing 44.1 and 48 kHz was planned")
+	}
+
+	if !strings.Contains(err.Error(), "Hz") {
+		t.Errorf("the refusal does not say which rates disagreed: %v", err)
 	}
 }

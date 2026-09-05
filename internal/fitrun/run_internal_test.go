@@ -91,3 +91,30 @@ func TestRunKeepsTheSearchResultWhenThePolishStageFails(t *testing.T) {
 		t.Errorf("expected the run to report its result, got %q", log.String())
 	}
 }
+
+// TestWithDefaultsLeavesTheCallersReferencesAlone. Spec is passed by value,
+// which makes it look as though a method on it cannot reach the caller -- but
+// a slice header carries a pointer, so sorting References in place reordered
+// the caller's own slice as a side effect of calling Run. A caller that built
+// its references deliberately, or reads them back afterwards, has no way to
+// see that happen.
+func TestWithDefaultsLeavesTheCallersReferencesAlone(t *testing.T) {
+	original := []ReferenceSpec{{Note: 96}, {Note: 84}, {Note: 90}}
+
+	spec := Spec{References: original}
+	resolved := spec.withDefaults()
+
+	if original[0].Note != 96 || original[1].Note != 84 || original[2].Note != 90 {
+		t.Fatalf("the caller's slice was reordered to %v", []int{
+			original[0].Note, original[1].Note, original[2].Note,
+		})
+	}
+
+	// And the copy is still sorted, which is what the rest of the package and
+	// every table read from the run directory depend on.
+	if resolved.References[0].Note != 84 || resolved.References[2].Note != 96 {
+		t.Fatalf("the resolved references are not in pitch order: %v", []int{
+			resolved.References[0].Note, resolved.References[1].Note, resolved.References[2].Note,
+		})
+	}
+}

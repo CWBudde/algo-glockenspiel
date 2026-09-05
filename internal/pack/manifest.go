@@ -63,8 +63,20 @@ type Manifest struct {
 	SeedBase    int64            `json:"seed_base"`
 	MaxCents    float64          `json:"max_cents"`
 	Workers     int              `json:"workers"`
-	Engine      fitrun.Engine    `json:"engine"`
-	Jobs        []Job            `json:"jobs"`
+
+	// SampleRate is the rate every recording in the pack is at, discovered
+	// when the pack was measured rather than assumed.
+	//
+	// It is recorded because the whole pipeline used to default to 44,100 and
+	// then refuse anything else, which made a 48 kHz pack -- the morphagene
+	// one in testdata, for instance -- plannable and then unrunnable,
+	// unfittable and unscoreable. A pack whose files disagree with each other
+	// is refused at plan time instead, where the disagreement is visible, and
+	// omitting the field is how a manifest written before this existed says
+	// "assume the old default".
+	SampleRate int           `json:"sample_rate,omitempty"`
+	Engine     fitrun.Engine `json:"engine"`
+	Jobs       []Job         `json:"jobs"`
 }
 
 // Job is one note's fit.
@@ -82,6 +94,21 @@ type Job struct {
 	Reference campaign.FileHash `json:"reference"`
 	Seed      int64             `json:"seed"`
 	Dir       string            `json:"dir"`
+}
+
+// Rate is the sample rate every fit and every score against this pack must
+// use.
+//
+// A manifest written before SampleRate existed carries zero, and 44,100 is
+// what those runs actually used, so that is what a zero means rather than "ask
+// the file". Reading it from the recordings instead would silently rescore an
+// old pack at a different rate than the one its results were produced at.
+func (m *Manifest) Rate() int {
+	if m.SampleRate == 0 {
+		return 44100
+	}
+
+	return m.SampleRate
 }
 
 func jobDir(note int) string {

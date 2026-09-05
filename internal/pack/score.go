@@ -118,8 +118,12 @@ func ScorePresets(dir string, paths []string, sampleRate, velocity int) ([]Score
 		return nil, nil, err
 	}
 
+	// Zero means the pack's own rate, which is the only rate its recordings
+	// can be compared at: the check below rejects anything else, so defaulting
+	// to 44,100 made a 48 kHz pack unscoreable rather than scored at the wrong
+	// rate. An explicit rate is still honoured, and still has to match.
 	if sampleRate == 0 {
-		sampleRate = 44100
+		sampleRate = manifest.Rate()
 	}
 
 	if velocity == 0 {

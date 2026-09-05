@@ -115,7 +115,7 @@ func Plan(packDir, dir string, opts Options) (*Manifest, error) {
 		return nil, err
 	}
 
-	jobs, err := planJobs(packDir, opts)
+	jobs, sampleRate, err := planJobs(packDir, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -136,6 +136,7 @@ func Plan(packDir, dir string, opts Options) (*Manifest, error) {
 		SeedBase:    opts.SeedBase,
 		MaxCents:    opts.MaxCents,
 		Workers:     opts.Workers,
+		SampleRate:  sampleRate,
 		Engine:      engine,
 		Jobs:        jobs,
 	}
@@ -149,13 +150,14 @@ func Plan(packDir, dir string, opts Options) (*Manifest, error) {
 
 // planJobs measures every WAV in the pack directory and builds the job list in
 // ascending note order.
-func planJobs(packDir string, opts Options) ([]Job, error) {
+func planJobs(packDir string, opts Options) ([]Job, int, error) {
 	entries, err := os.ReadDir(packDir)
 	if err != nil {
-		return nil, fmt.Errorf("read pack directory %q: %w", packDir, err)
+		return nil, 0, fmt.Errorf("read pack directory %q: %w", packDir, err)
 	}
 
 	jobs := make([]Job, 0, len(entries))
+	sampleRate := 0
 
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".wav") {
@@ -167,22 +169,35 @@ func planJobs(packDir string, opts Options) ([]Job, error) {
 
 		measured, err := analysis.Analyze(path, analysis.LoadOptions{}, analysis.PartialOptions{})
 		if err != nil {
-			return nil, fmt.Errorf("measure %q: %w", path, err)
+			return nil, 0, fmt.Errorf("measure %q: %w", path, err)
+		}
+
+		// One pack, one rate. The objective compares a render against a
+		// recording sample for sample, so mixing rates inside a pack would
+		// mean scoring some notes against a resampled reference and others
+		// against the file, and the resampling is the sort of thing that is
+		// better refused here than discovered in a table.
+		if sampleRate == 0 {
+			sampleRate = measured.Reference.SampleRate
+		} else if measured.Reference.SampleRate != sampleRate {
+			return nil, 0, fmt.Errorf(
+				"%s is at %d Hz but the rest of the pack is at %d Hz",
+				entry.Name(), measured.Reference.SampleRate, sampleRate)
 		}
 
 		note, cents, err := ResolveNote(stem, measured.FundamentalHz, opts.MaxCents)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		absolute, err := filepath.Abs(path)
 		if err != nil {
-			return nil, fmt.Errorf("resolve %q: %w", path, err)
+			return nil, 0, fmt.Errorf("resolve %q: %w", path, err)
 		}
 
 		sum, err := fitrun.FileSHA256(absolute)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		jobs = append(jobs, Job{
@@ -195,7 +210,7 @@ func planJobs(packDir string, opts Options) ([]Job, error) {
 	}
 
 	if len(jobs) == 0 {
-		return nil, fmt.Errorf("pack directory %q holds no .wav files", packDir)
+		return nil, 0, fmt.Errorf("pack directory %q holds no .wav files", packDir)
 	}
 
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Note < jobs[j].Note })
@@ -210,13 +225,13 @@ func planJobs(packDir string, opts Options) ([]Job, error) {
 		jobs[i].ID = fmt.Sprintf("n%03d-%s", jobs[i].Note, jobs[i].Name)
 
 		if i > 0 && jobs[i].Note == jobs[i-1].Note {
-			return nil, fmt.Errorf(
+			return nil, 0, fmt.Errorf(
 				"%s.wav and %s.wav both sound MIDI %d, so one of them would overwrite the other's run directory",
 				jobs[i-1].Name, jobs[i].Name, jobs[i].Note)
 		}
 	}
 
-	return jobs, nil
+	return jobs, sampleRate, nil
 }
 
 // planningBinary describes the executable doing the planning, so run can refuse

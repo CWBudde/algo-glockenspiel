@@ -211,24 +211,17 @@ func readPackStatus(dir string, manifest *Manifest) (*Status, error) {
 		Read:    time.Now(),
 	}
 
-	var first, last time.Time
-
 	for _, job := range manifest.Jobs {
-		jobDir := filepath.Join(dir, job.Dir)
-		note := readNoteStatus(jobDir, manifest.Budget)
+		note := readNoteStatus(filepath.Join(dir, job.Dir), manifest.Budget)
 		note.Note = job.Note
 		note.Name = job.Name
-
-		if note.State == StateDone {
-			first, last = spanWith(first, last, jobDir)
-		}
 
 		status.Notes = append(status.Notes, note)
 		status.count(note.State)
 	}
 
 	sort.Slice(status.Notes, func(i, j int) bool { return status.Notes[i].Note < status.Notes[j].Note })
-	status.estimate(first, last)
+	status.estimate()
 
 	return status, nil
 }
@@ -259,7 +252,7 @@ func readJointStatus(dir string) (*Status, error) {
 	}
 
 	status.count(note.State)
-	status.estimate(time.Time{}, time.Time{})
+	status.estimate()
 
 	return status, nil
 }
@@ -283,14 +276,43 @@ func (s *Status) count(state string) {
 // conservative estimate, it is an invented one, and a progress line that
 // invents its own remaining time is worse than a progress line that admits it
 // does not know yet.
-func (s *Status) estimate(first, last time.Time) {
-	if s.Finished == 0 || first.IsZero() {
+//
+// The durations are each fit's own ElapsedSeconds summed, not the window
+// between the first and last result file. Result-file timestamps look like the
+// same measurement and are not: a sequential pack has one result file after
+// the first note finishes, so the window is zero and the estimate disappears
+// exactly when it is first wanted -- and from then on it omits the whole of
+// the first note's runtime, understating every number it prints. Summing what
+// each run recorded about itself is also the only version that stays right if
+// the pack is ever run with several notes in flight.
+func (s *Status) estimate() {
+	var done, running time.Duration
+
+	for _, note := range s.Notes {
+		switch note.State {
+		case StateDone:
+			done += note.Elapsed.Duration()
+		case StateRunning:
+			running += note.Elapsed.Duration()
+		}
+	}
+
+	if s.Finished == 0 {
 		return
 	}
 
-	s.Elapsed = Duration(last.Sub(first))
-	s.MeanJob = Duration(s.Elapsed.Duration() / time.Duration(s.Finished))
-	s.Remaining = Duration(s.MeanJob.Duration() * time.Duration(s.Pending+s.Running))
+	s.MeanJob = Duration(done / time.Duration(s.Finished))
+	s.Elapsed = Duration(done + running)
+
+	// What a note in flight has already spent is subtracted from what it is
+	// expected to cost, floored at zero: a note that has run past the mean is
+	// nearly finished, not owed negative time.
+	remaining := s.MeanJob.Duration()*time.Duration(s.Pending+s.Running) - running
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	s.Remaining = Duration(remaining)
 }
 
 // readNoteStatus reads one fit's run directory.
@@ -310,7 +332,7 @@ func readNoteStatus(dir string, budget int) NoteStatus {
 
 	if summary, err := readSummary(dir); err == nil {
 		note.State = StateDone
-		if summary.StopReason == "canceled" {
+		if wasCanceled(summary.StopReason) {
 			note.State = StateCanceled
 		}
 
@@ -432,27 +454,6 @@ func readTraceTail(dir string) (traceProgress, bool) {
 	}
 
 	return progress, false
-}
-
-// spanWith widens a first-to-last window to include one finished run
-// directory, timed by when its result was written.
-func spanWith(first, last time.Time, dir string) (time.Time, time.Time) {
-	info, err := os.Stat(filepath.Join(dir, fitrun.FileResult))
-	if err != nil {
-		return first, last
-	}
-
-	stamp := info.ModTime()
-
-	if first.IsZero() || stamp.Before(first) {
-		first = stamp
-	}
-
-	if stamp.After(last) {
-		last = stamp
-	}
-
-	return first, last
 }
 
 // RenderStatus writes the progress as the few lines someone waiting on a fit

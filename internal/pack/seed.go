@@ -175,8 +175,18 @@ func clusterMode(cluster Cluster, authoredNote int, fundamental, keytrack float6
 	// The averages are means of values that were each inside the model's range,
 	// but a geometric mean of decays expressed at a distant note can still land
 	// outside it, and a seed the model refuses is worse than a clamped one.
+	//
+	// The decay is clamped to the *authoring* ceiling rather than to
+	// DecayMsValidationMax, because that is the bound the seed is about to be
+	// checked against: PresetFromClusters returns a preset authored at this
+	// note, and preset.Validate puts it through ValidateAuthoredBarParams,
+	// which transposes it to the far end of the keyboard first. Clamping to the
+	// looser of the two ceilings would have let a cluster mean pass the clamp
+	// and fail the validation immediately afterwards -- a seed rejected for
+	// being exactly what the clamp made it.
 	frequency = math.Min(math.Max(frequency, model.FrequencyMinHz), model.FrequencyMaxHz)
-	decay = math.Min(math.Max(decay, model.DecayMsMin), model.DecayMsValidationMax)
+	decay = math.Min(math.Max(decay, model.DecayMsMin),
+		model.AuthoredDecayMsMax(authoredNote, keytrack))
 	amplitude = math.Min(math.Max(amplitude, model.AmplitudeMin), model.AmplitudeMax)
 
 	return model.ModeParams{Frequency: frequency, DecayMs: decay, Amplitude: amplitude}, true

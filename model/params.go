@@ -148,6 +148,36 @@ const (
 	DecayMsSearchMin = 0.5
 	DecayMsSearchMax = 2000.0
 
+	// DecayKeytrackDefault is the exponent transposition raises the frequency
+	// ratio to before dividing a decay by it. One is the law every preset
+	// written before this field existed was authored under -- a bar an octave
+	// down rings exactly twice as long -- and a nil BarParams.DecayKeytrack
+	// means it, which is what makes the field free to add.
+	//
+	// It is a pointer rather than a plain float64 for one reason, and it is not
+	// a style choice: the neutral value is 1, so Go's zero value would mean
+	// beta = 0, a legal and physically meaningful exponent (no key tracking at
+	// all, which is roughly what a metallophone measures). Every BarParams
+	// literal in this repository and in the module that builds against it would
+	// have switched laws with no compile error. The ResolvedStage trick cannot
+	// rescue it either, because unlike an empty ChebyshevStage, 0.0 is a value
+	// an author will legitimately write.
+	DecayKeytrackDefault = 1.0
+
+	// DecayKeytrackMin and DecayKeytrackMax bound BarParams.DecayKeytrack.
+	//
+	// The range is derived rather than chosen. The authoring ceiling scales as
+	// DecayMsValidationMax * 2^(beta*(worst-base)/12), and once it falls under
+	// DecayMsMin no preset at that base note can validate at all -- every fit
+	// there would fail with an empty search box. Requiring the ceiling to stay
+	// above the floor for every authorable note gives beta <= 2.06 going up and
+	// |beta| <= 1.95 going down; this range sits inside both, with the measured
+	// exponents (-0.24 for a metallophone to +1.22 for a toy glockenspiel)
+	// comfortably interior. TestAuthoredCeilingStaysAboveTheDecayFloor is what
+	// keeps that a decision rather than an accident.
+	DecayKeytrackMin = -1.0
+	DecayKeytrackMax = 1.75
+
 	// OutputGainDBMin and OutputGainDBMax bound BarParams.OutputGainDB, the
 	// level the finished bar is rendered at. Enforced by ValidateBarParams.
 	//
@@ -282,6 +312,36 @@ type BarParams struct {
 	// lower, which is why DecayMs and Frequency scale, but it does not get
 	// louder for being transposed.
 	OutputGainDB float64 `json:"output_gain_db,omitempty"`
+
+	// DecayKeytrack is the exponent transposition raises the frequency ratio to
+	// before dividing a decay by it: DecayMs /= ratio^DecayKeytrack.
+	//
+	// Nil means [DecayKeytrackDefault], 1, which is what every preset written
+	// before this field existed was authored under and is why nil rather than
+	// zero is the neutral value -- see the constant for why the field is a
+	// pointer at all.
+	//
+	// It exists because 1 is not what struck bars measure. Across the four
+	// reference packs the exponent runs from -0.24 for a metallophone, whose
+	// ring barely tracks pitch at all, to +1.22 for a toy glockenspiel, whose
+	// top bars die faster than transposition predicts. One preset per
+	// instrument cannot be right for all of them with the exponent nailed down.
+	//
+	// It is not a search dimension of a single-note fit, and must not become
+	// one: at one note it trades off exactly against DecayMs, which is the same
+	// gauge freedom BaseFrequency is excluded for. Only an objective spanning
+	// several notes can see it.
+	DecayKeytrack *float64 `json:"decay_keytrack,omitempty"`
+}
+
+// ResolvedDecayKeytrack returns the key-tracking exponent, which is
+// [DecayKeytrackDefault] when the field is absent.
+func (p *BarParams) ResolvedDecayKeytrack() float64 {
+	if p == nil || p.DecayKeytrack == nil {
+		return DecayKeytrackDefault
+	}
+
+	return *p.DecayKeytrack
 }
 
 // Clone returns a deep copy, safe to mutate independently of the original.
@@ -332,6 +392,21 @@ func (p *BarParams) CopyInto(dst *BarParams) {
 	dst.FilterFrequency = p.FilterFrequency
 	dst.BaseFrequency = p.BaseFrequency
 	dst.OutputGainDB = p.OutputGainDB
+
+	// The pointee is copied rather than the pointer shared: CopyInto is the
+	// allocation-free audio path and its whole contract is that dst is a deep
+	// copy. The aliasing arm matters for the same reason sharesBacking does
+	// below -- a shallow dst := *p leaves the two pointers equal, and writing
+	// through one would be a no-op that left them aliased.
+	if p.DecayKeytrack == nil {
+		dst.DecayKeytrack = nil
+	} else {
+		if dst.DecayKeytrack == nil || dst.DecayKeytrack == p.DecayKeytrack {
+			dst.DecayKeytrack = new(float64)
+		}
+
+		*dst.DecayKeytrack = *p.DecayKeytrack
+	}
 
 	if p.Modes == nil {
 		dst.Modes = nil
@@ -411,6 +486,16 @@ func ValidateBarParams(params *BarParams) error {
 
 	if err := validateFiniteRange("output_gain_db", params.OutputGainDB, OutputGainDBMin, OutputGainDBMax); err != nil {
 		return err
+	}
+
+	// A nil exponent is the absence of a value rather than a zero, so it is not
+	// range-checked: it means DecayKeytrackDefault, which is inside the range by
+	// construction.
+	if params.DecayKeytrack != nil {
+		err := validateFiniteRange("decay_keytrack", *params.DecayKeytrack, DecayKeytrackMin, DecayKeytrackMax)
+		if err != nil {
+			return err
+		}
 	}
 
 	if len(params.Modes) > MaxModes {

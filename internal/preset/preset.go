@@ -193,6 +193,13 @@ func (p *Provenance) Clone() *Provenance {
 		}
 	}
 
+	// References is a slice, so `clone := *p` copied only its header. Every
+	// element is a value with no pointers of its own, so one copy of the
+	// backing array is the whole of the deep copy.
+	if p.References != nil {
+		clone.References = append([]NoteReferenceProvenance(nil), p.References...)
+	}
+
 	return &clone
 }
 

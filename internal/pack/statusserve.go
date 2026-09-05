@@ -45,12 +45,23 @@ func Handler(dir string) http.Handler {
 			return
 		}
 
+		// Marshalled before anything is written, so an encoding failure can
+		// still be reported as one. Encoding straight into the ResponseWriter
+		// sends the 200 first and discovers the problem second, which is how a
+		// fit with no score yet served a blank page that looked healthy: NaN is
+		// not JSON, and by the time the encoder said so the status line was
+		// gone. Score marshals as null now, but the ordering is the part that
+		// keeps the next such field from doing it again.
+		body, err := json.MarshalIndent(status, "", "  ")
+		if err != nil {
+			writeStatusError(writer, err)
+
+			return
+		}
+
 		writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 		writer.Header().Set("Cache-Control", "no-store")
-
-		encoder := json.NewEncoder(writer)
-		encoder.SetIndent("", "  ")
-		_ = encoder.Encode(status)
+		_, _ = writer.Write(body)
 	})
 
 	mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
