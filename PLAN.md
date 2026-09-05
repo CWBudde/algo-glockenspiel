@@ -1501,9 +1501,11 @@ carrying rather than filing:
 **Phase 8, training.** Reviewed on 2026-09-02; 8.0 is done the same day. `glockenspiel distance`
 prints every objective term for a written preset and `docs/training.md` holds the baseline for
 both shipped presets against both references. The baseline's own finding is worth carrying: the
-time-domain objective's least-squares gain against the recording is −52 to −93 dB for every
+time-domain objective's least-squares gain against the recording is −24.6 to −64.8 dB for every
 shipped preset, so nothing the current objective computes from the waveform is informative on a
-real recording, and only the spectral term orders candidates at all. 8.1 is done the same day:
+real recording, and only the spectral term orders candidates at all. (The −52 to −93 dB this
+line quoted until 2026-09-05 was the same finding taken before the loader peak-normalised the
+recording; every figure is 27.6 dB lower for that reason alone.) 8.1 is done the same day:
 `glockenspiel analyze` cuts a reference to its first strike and measures its partials, and
 `docs/training.md` holds the measurement for both references. 8.2 is done the same day: the
 objective is a composite of ten physical terms under a profile, `balanced` by default, every

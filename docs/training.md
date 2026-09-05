@@ -211,18 +211,18 @@ file cut at 1.000 s; the onset sits at frame 303, so the two spans differ by sev
 "Retune undone" is rebuilt the same way, every mode frequency divided by 1.66720, which puts mode
 two on 1053.60 Hz.
 
-| Preset                      | Reference             | Note | `rms`   | `rms+gain` | gain     | residual | `spectral` | `spectral+gain` |
-| --------------------------- | --------------------- | ---- | ------- | ---------- | -------- | -------- | ---------- | --------------- |
-| `default.json`              | `legacy_synth_a4.wav` | 69   | 0.02557 | 0.02557    | +0.00 dB | −17.6 dB | 8.37       | 8.37            |
-| `recorded-bar.json`         | `legacy_synth_a4.wav` | 69   | 0.1259  | 0.1219     | +2.05 dB | −4.0 dB  | 10.13      | 10.24           |
-| `default.json`              | `glockenspiel_c5.wav` | 69   | 0.1518  | 0.1024     | −64.83dB | 0.0 dB   | 15.40      | 14.50           |
-| `recorded-bar.json`         | `glockenspiel_c5.wav` | 69   | 0.1242  | 0.1024     | −33.20dB | 0.0 dB   | 15.30      | 14.55           |
-| `recorded-bar.json`         | `glockenspiel_c5.wav` | 60   | 0.1369  | 0.1022     | −24.76dB | 0.0 dB   | 12.01      | 12.74           |
-| `default.json`              | C5, first second      | 69   | 0.1929  | 0.1286     | −64.80dB | 0.0 dB   | 18.92      | 17.90           |
-| `recorded-bar.json`         | C5, first second      | 69   | 0.1568  | 0.1286     | −33.09dB | 0.0 dB   | 18.55      | 17.91           |
-| `recorded-bar.json`         | C5, first second      | 60   | 0.1715  | 0.1284     | −24.63dB | 0.0 dB   | 15.05      | 15.99           |
-| recorded-bar, retune undone | C5, first second      | 69   | 0.07475 | 0.07393    | +0.96 dB | −4.8 dB  | 15.30      | 15.25           |
-| recorded-bar, retune undone | `glockenspiel_c5.wav` | 69   | 0.06059 | 0.05987    | +1.03 dB | −4.7 dB  | 12.16      | 12.12           |
+| Preset                      | Reference             | Note | `rms`   | `rms+gain` | gain      | residual | `spectral` | `spectral+gain` |
+| --------------------------- | --------------------- | ---- | ------- | ---------- | --------- | -------- | ---------- | --------------- |
+| `default.json`              | `legacy_synth_a4.wav` | 69   | 0.02557 | 0.02557    | +0.00 dB  | −17.6 dB | 8.37       | 8.37            |
+| `recorded-bar.json`         | `legacy_synth_a4.wav` | 69   | 0.1259  | 0.1219     | +2.05 dB  | −4.0 dB  | 10.13      | 10.24           |
+| `default.json`              | `glockenspiel_c5.wav` | 69   | 0.1518  | 0.1024     | −64.83 dB | 0.0 dB   | 15.40      | 14.50           |
+| `recorded-bar.json`         | `glockenspiel_c5.wav` | 69   | 0.1242  | 0.1024     | −33.20 dB | 0.0 dB   | 15.30      | 14.55           |
+| `recorded-bar.json`         | `glockenspiel_c5.wav` | 60   | 0.1369  | 0.1022     | −24.76 dB | 0.0 dB   | 12.01      | 12.74           |
+| `default.json`              | C5, first second      | 69   | 0.1929  | 0.1286     | −64.80 dB | 0.0 dB   | 18.92      | 17.90           |
+| `recorded-bar.json`         | C5, first second      | 69   | 0.1568  | 0.1286     | −33.09 dB | 0.0 dB   | 18.55      | 17.91           |
+| `recorded-bar.json`         | C5, first second      | 60   | 0.1715  | 0.1284     | −24.63 dB | 0.0 dB   | 15.05      | 15.99           |
+| recorded-bar, retune undone | C5, first second      | 69   | 0.07475 | 0.07393    | +0.96 dB  | −4.8 dB  | 15.30      | 15.25           |
+| recorded-bar, retune undone | `glockenspiel_c5.wav` | 69   | 0.06059 | 0.05987    | +1.03 dB  | −4.7 dB  | 12.16      | 12.12           |
 
 Three readings, and only one of them is about Phase 8.10.
 
@@ -754,10 +754,47 @@ which is exactly the property the smoke run further up this file does not have.
 first of five to fourth of five. This is the reordering Phase 8.10 warned was possible, arriving on
 the one table a shipped decision rests on.
 
-Every score rose, by 0.05 to 0.10. That is the discount coming off: every fit against this
-peak-normalised recording lands tens of decibels from its level, which is precisely the regime
-where the old floor flattened the low bins and paid the candidate for being quiet. The arms were
-not all being flattered equally, which is why the order moved rather than merely the level.
+Every score rose, by 0.05 to 0.10. Two things changed between these runs, though, and only one of
+them is Phase 8.10: the objective also gained `onset_db` and `balanced` was reweighted for it, which
+is exactly what "The composite objective re-taken" above shows moving scores on fixed presets. The
+rise and the reordering cannot be attributed to the floor by inspection.
+
+**So the reweighting is ablated rather than argued away.** Every job of this run is rescored from
+its own term columns under the ten-term weights the 2026-09-03 run was scored with — `balanced` at
+`c7f0ecf^`, partials 0.4 / spectrum 0.25 / envelope and slope 0.25 / waveform 0.1 — dropping
+`onset_db` entirely. The reconstruction is checked first against the run it can be checked on: the
+2026-09-03 published `score` column reproduces from its own terms under those weights to 8e-06, and
+this run's published column reproduces under the eleven-term weights to 6e-06, so the arithmetic
+below is the shipped arithmetic and not a re-derivation of it.
+
+| arm              | 2026-09-03 (10 terms) | 2026-09-05 rescored (10 terms) | 2026-09-05 as published (11 terms) |
+| ---------------- | --------------------: | -----------------------------: | ---------------------------------: |
+| `mayfly-single`  |              0.220173 |                   **0.263272** |                       **0.287040** |
+| `sep-cmaes-r`    |              0.253491 |                       0.283831 |                           0.309507 |
+| `sep-cmaes-ipop` |              0.279348 |                       0.287276 |                           0.310222 |
+| `mayfly-r16`     |          **0.213820** |                       0.290354 |                           0.314557 |
+| `blk-cmaes-r`    |              0.275572 |                       0.290258 |                           0.326868 |
+
+**Under identical weights, on identical terms, the inversion is still there.** `mayfly-single` is
+first and `mayfly-r16` fourth of five with the eleventh term removed; the decisive contrast reads
++0.0271 at t = +5.69 winning twelve blocks of twelve, against +0.0275, t = +5.18 and eleven of
+twelve as published. The scores still rise by 0.04 to 0.08 with the weights held fixed. Whatever
+the reweighting did to the composite table on fixed presets, it is not what moved this campaign.
+
+Two limits on that, both real. Rescoring cannot undo the fact that the 2026-09-05 arms _searched_
+the eleven-term objective, so their trajectories differ for a reason no rescore can remove — the
+ablation shows the ranking is not an artefact of how the results were scored, not that the two runs
+optimised the same thing. And it isolates the weights, not the floor: what remains after the
+weights are held fixed is 8.10 together with that trajectory difference. What the floor is known
+independently to have done is the plateau — Phase 8.10 records `spectral_fine_db` reporting the
+height of a constant for candidates far from level, and the sorted column below shows that plateau
+present in the old run and absent from the new one.
+
+The arms were not being flattered equally, which is why the order moved rather than merely the
+level: fits against this peak-normalised recording landed far enough from its level for the old
+floor to bite, and how far was arm-dependent — the gain table below spreads from −33.4 to +60.0 dB
+across the arms of this very run, so "far from level" is a tendency with exceptions, not a property
+of every fit.
 
 ### The contrasts, all three
 
@@ -901,10 +938,11 @@ material regressions on the second reference, so the rule refuses the promotion.
 
 **`mayfly-r16` remains the CLI default, now on evidence rather than on inheritance.** It is worth
 being exact about what that sentence is worth: the arm is retained having been beaten on the
-primary reference, by a rule written before the result was known. The three terms that saved it are
-`onset_db`, `envelope_db` and the waveform trade — and `onset_db` did not exist when this default
-was chosen, which makes the term that decided the rematch one the original campaign could not have
-measured.
+primary reference, by a rule written before the result was known. Exactly two terms save it,
+`onset_db` and `envelope_db`, because the rule vetoes on material _regressions_ only — `waveform`
+is the challenger's largest term movement on this reference, −2.71% of its norm in eight seeds of
+eight, and it counts for nothing here. And `onset_db` did not exist when this default was chosen,
+which makes the term that decided the rematch one the original campaign could not have measured.
 
 Two things follow. `mayfly-single` is now the better arm on the only real recording this project
 has, by a margin no seed disputes, so the case for it is open rather than closed and wants a design
