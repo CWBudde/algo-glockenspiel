@@ -1628,17 +1628,51 @@ Four latent bugs were found on the way, each of which would have shipped:
 
 ### Phase 9.5: Verification and write-up
 
-**Not started.** Blocked on the 20-note pack run. What it owes:
+**The matrix exists, 2026-09-05.** Twenty per-note presets plus the joint preset, each
+transposed to all twenty notes, gain solved, scored under the same aggregate objective.
+`docs/data/pack-hollandm-matrix.csv`.
 
-- `pack collect` and `pack regress`: per mode index, `log2(decay_ms)` and `log2(freq/f0)` on MIDI
-  note, from the **fitted** decays rather than the analyzer half-lives, because only the fitted
-  ones live in the model's coordinates.
-- The joint fit itself, and the preset in `out/`. Promotion to `assets/presets/` stays a separate
-  decision, as it does for the recorded-bar refit.
-- **The transposition matrix.** Each per-note preset transposed to each note, gain solved, scored
-  under the same aggregate objective: 20x20, plus the joint preset as a 21st row. The joint row's
-  mean must beat every single-note row's, and **`mean(joint row) - mean(diagonal)` is the price
-  of one preset covering twenty notes** -- the actual deliverable of the whole exercise.
+| quantity                                                      | value         |
+| ------------------------------------------------------------- | ------------- |
+| diagonal mean -- every note fitted to itself                  | **0.329422**  |
+| best single-note preset transposed across the range (note 97) | 0.439204      |
+| joint preset across the range                                 | **0.428765**  |
+| **price of one preset covering twenty notes**                 | **+0.099343** |
+
+Both claims the phase registered hold. The joint row beats **every** one of the twenty
+single-note rows, not merely the average one; and the price is the number the exercise
+was for. It is worth about 0.2 norms on the composite -- one preset covering an octave
+and a half costs roughly a third of what the diagonal itself scores.
+
+**The registered Nyquist prediction is falsified, and that matters more than the price.**
+Before the matrix existed this plan predicted that the joint preset would lose most at the
+_bottom_ of the range, because the shared mode box ceiling is 6.33x the fundamental where
+a single-note fit at c6 gets 19x, and said a flat or top-heavy loss would falsify the
+explanation. The loss is flat:
+
+| half                | mean loss against that note's own preset |
+| ------------------- | ---------------------------------------- |
+| bottom, notes 84-93 | +0.10530                                 |
+| top, notes 94-103   | +0.09338                                 |
+
+A 0.012 difference across the whole span, with the two largest single losses (+0.173 at
+note 95, +0.165 at note 98) both in the top half. **So the missing high partials are not
+what one preset costs.** The cost is spread evenly across the keyboard, which is what
+bar-to-bar scatter looks like and is not what a ceiling that binds at one end looks like.
+The 9.2 regression and the matrix now say the same thing from two directions: what a
+single preset cannot carry is the individual bar, not the band limit.
+
+**The joint fit also discarded the free-free partial**, which the seed handed it at
+2.723x with 13 of 20 notes behind it. The fitted preset spends its three modes on a pair
+stacked at 1.001x and 1.002x -- decays of 361 ms and 5.6 ms, so the second is an attack
+transient on the fundamental rather than a partial -- and one at 5.306x. Fitting twenty
+notes at once, the search preferred a well-shaped fundamental envelope over a real second
+mode. Nothing pinned (0 of 15 dimensions), so the box did not force this.
+
+Still owed:
+
+- Promotion of the joint preset from `out/` to `assets/presets/` stays a separate decision, as it
+  does for the recorded-bar refit.
 - The beta ablation, >=12 paired blocks, under the three-part rule above. Report whether beta
   pinned on its box edge: if it sits at 1.0 in most blocks the box is binding and the honest
   conclusion is "beta cannot be evaluated here", not "beta does not help".
@@ -1665,6 +1699,10 @@ Four latent bugs were found on the way, each of which would have shipped:
   structure is richest and the shared ceiling bites hardest, and least at the top, where the
   recordings hold two or three partials anyway. If `mean(joint row) - mean(diagonal)` is instead
   flat across the range, or worst at the top, this explanation is wrong and the write-up says so.
+
+  **Outcome: wrong.** The loss is flat -- +0.105 over notes 84-93 against +0.093 over 94-103,
+  with the two worst notes in the top half. The ceiling is still real and still caps what the
+  preset can represent, but it is not what one preset costs. See Phase 9.5.
 
 ---
 
