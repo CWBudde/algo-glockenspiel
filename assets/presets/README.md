@@ -55,4 +55,13 @@ fundamental is 1053.6 Hz, and the preset is retuned so that it lands instead on
 the default preset's own first mode, 1756.5243 Hz, making the two sounds a
 unison rather than a sixth apart. Two modes fitted at 8.0 and 9.8 kHz were
 dropped to stay under the 10.5 kHz ceiling once retuned, which cost about 1 dB
-of fit; the retuned fit reaches a residual 11.1 dB below the reference RMS.
+of fit; the shipping commit records that the retuned fit reaches a residual
+11.1 dB below the reference RMS.
+
+That 11.1 dB has never been reproduced and should not be relied on. The fitted
+preset itself was not kept, so the closest available reconstruction — this
+preset with every mode frequency divided by 1.66720, undoing the retune —
+reaches 4.8 dB on the first second, measured again on 2026-09-05 and unchanged
+since 2026-09-02. The difference is what the hand retune, the two deleted modes
+and the unrecorded fit command cost together.
+[docs/training.md](../../docs/training.md) has both readings.

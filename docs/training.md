@@ -158,6 +158,10 @@ closest to undoing the hand retune, and the last row is the six-mode preset
 | `recorded-bar.json`         | `glockenspiel_c5.wav` | 60   | 15.1  | 1.8 dB | 0.46 oct | 0.40    | 0.31  | 14.8 dB | 13.7 dB | 0.64 dB  | 0.7 dB/s  | 1.00     | +0.5 dB | −24.8 dB | 0.417 |
 | six modes from the analysis | `glockenspiel_c5.wav` | 60   | 1.5   | 3.5 dB | 0.14 oct | 0.14    | 0.00  | 9.0 dB  | 10.1 dB | 1.08 dB  | 1.4 dB/s  | 0.73     | −6.4 dB | −9.7 dB  | 0.24  |
 
+**The `score` column of this table is superseded**, and its last row is an error; every other
+column still holds. See "The composite objective re-taken, 2026-09-05" below, which reproduces
+every term and reconstructs five of the six scores exactly from the weights of the day.
+
 The norms in `optimizer.DefaultNorms` — 10 cents, 6 dB of level, half an octave of decay, a
 half of the partial weight missing, once the weight extra, 10 dB for either spectral term, 3 dB
 of envelope, 10 dB/s of slope, a residual of one half — were set against these rows: on every
@@ -188,9 +192,134 @@ single-partial render, which is the pairing that should.
 
 The legacy terms, re-taken through the loader for the same rows, for comparison with the
 baseline above: the aligned `rms` of every C5 row moves to 0.12–0.15 because the reference now
-peaks at full scale, the gain columns are unchanged, and `aligned+gain`'s spectral term climbs to
-32–73 dB because a −25 to −65 dB gain shifts every candidate bin under the floor. Nothing there
-changes a reading of the baseline.
+peaks at full scale, and `aligned+gain`'s spectral term climbs to 32–73 dB because a −25 to
+−65 dB gain shifts every candidate bin under the floor. Nothing there changes a reading of the
+baseline.
+
+Two sentences of that paragraph have since been overtaken, and both are corrected in
+"The legacy metrics re-taken, 2026-09-05" below. The gain columns are **not** unchanged — the
+loader's +27.6 dB normalisation moves every C5 row's gain by exactly that much — and
+`aligned+gain`'s spectral term no longer climbs, because Phase 8.10 moved the floor to sit under
+the gained candidate rather than the raw one.
+
+## The legacy metrics re-taken, 2026-09-05
+
+Taken at revision `9704ed4`, `modified false`, Go 1.26.0, mayfly v0.7.1, go-cma-es v0.1.0,
+velocity 100, 44.1 kHz, through `glockenspiel distance --json`. The "first second" rows use
+`--window 1s`, which cuts one second after the onset where the 2026-09-02 rows used a copy of the
+file cut at 1.000 s; the onset sits at frame 303, so the two spans differ by seven milliseconds.
+"Retune undone" is rebuilt the same way, every mode frequency divided by 1.66720, which puts mode
+two on 1053.60 Hz.
+
+| Preset                      | Reference             | Note | `rms`   | `rms+gain` | gain     | residual | `spectral` | `spectral+gain` |
+| --------------------------- | --------------------- | ---- | ------- | ---------- | -------- | -------- | ---------- | --------------- |
+| `default.json`              | `legacy_synth_a4.wav` | 69   | 0.02557 | 0.02557    | +0.00 dB | −17.6 dB | 8.37       | 8.37            |
+| `recorded-bar.json`         | `legacy_synth_a4.wav` | 69   | 0.1259  | 0.1219     | +2.05 dB | −4.0 dB  | 10.13      | 10.24           |
+| `default.json`              | `glockenspiel_c5.wav` | 69   | 0.1518  | 0.1024     | −64.83dB | 0.0 dB   | 15.40      | 14.50           |
+| `recorded-bar.json`         | `glockenspiel_c5.wav` | 69   | 0.1242  | 0.1024     | −33.20dB | 0.0 dB   | 15.30      | 14.55           |
+| `recorded-bar.json`         | `glockenspiel_c5.wav` | 60   | 0.1369  | 0.1022     | −24.76dB | 0.0 dB   | 12.01      | 12.74           |
+| `default.json`              | C5, first second      | 69   | 0.1929  | 0.1286     | −64.80dB | 0.0 dB   | 18.92      | 17.90           |
+| `recorded-bar.json`         | C5, first second      | 69   | 0.1568  | 0.1286     | −33.09dB | 0.0 dB   | 18.55      | 17.91           |
+| `recorded-bar.json`         | C5, first second      | 60   | 0.1715  | 0.1284     | −24.63dB | 0.0 dB   | 15.05      | 15.99           |
+| recorded-bar, retune undone | C5, first second      | 69   | 0.07475 | 0.07393    | +0.96 dB | −4.8 dB  | 15.30      | 15.25           |
+| recorded-bar, retune undone | `glockenspiel_c5.wav` | 69   | 0.06059 | 0.05987    | +1.03 dB | −4.7 dB  | 12.16      | 12.12           |
+
+Three readings, and only one of them is about Phase 8.10.
+
+**The residual is unchanged wherever the compared span is, and that is the column to trust.**
+−17.6 against the baseline's −17.5, −4.0 against −4.0, 0.0 against 0.0, −4.8 against −4.8. The
+residual is the one legacy column that divides out both the reference's level and the candidate's,
+so the loader's normalisation cannot move it, and it did not.
+
+The single exception proves the rule rather than breaking it: the last row reads −4.7 against the
+baseline's −4.4, and the reason is the span, not the arithmetic. That row is the only one where
+"whole file" meant different things on the two days — the baseline scored the raw 7.2 s recording,
+and the loader now cuts to the 1.650 s strike, so six seconds of room tail have left the
+comparison. The other whole-file C5 rows hide the same change behind a residual of 0.0 dB, which
+is saturated either way.
+
+Anything the baseline concluded from the residual still stands, including that the one reproducible
+fit is 4.8 dB rather than the shipping commit's 11.1 dB.
+
+**The `rms` and `gain` columns moved by the loader, not by the objective.** Every C5 row's gain is
+exactly +27.6 dB above its 2026-09-02 value — −92.6 to −64.83, −60.8 to −33.20, −52.5 to −24.76,
+−26.6 to +0.96 — which is the peak normalisation the reference loader applies, entering the path in
+Phase 8.2 after the baseline was taken. The A4 rows, where the loader applies +0.0 dB, are
+unchanged to four figures. So these two columns are stale for an 8.2 reason and were already known
+to be: the paragraph above this section said so, and got the gain half of it backwards.
+
+**`spectral+gain` is where Phase 8.10 shows, and it is the whole point of the fix.** Under the old
+arithmetic that column climbed to 32–73 dB on the C5 rows, because a −25 to −65 dB gain was applied
+_after_ the floor and shifted every candidate bin under it, leaving a flat plateau. It now reads
+14.50 at a gain of −64.83 dB, against 15.40 for the same row without gain normalisation — a
+difference of nine tenths of a decibel where there used to be a difference of fifty. The floor now
+sits under the gained candidate, so normalising the gain no longer flattens the spectrum, and the
+term measures the spectrum at every level instead of measuring the floor.
+
+## The composite objective re-taken, 2026-09-05
+
+All six rows through the composite, against the 2026-09-02 table above. The seed row is rebuilt
+with `PresetFromAnalysis` from `recorded-bar.json` as the template, the C5 measurement, note 60 and
+six modes, which is what that row was.
+
+**Every term is unchanged to the precision that table prints.** `cents`, `level`, `decay`,
+`missing`, `extra`, `fine`, `coarse`, `envelope`, `slope`, `waveform`, `gain` and `wf gain` all
+reproduce on all six rows, the largest discrepancy being 17.6 against 17.5 dB of `fine` on one
+row. That is Phase 8.10's own scope claim holding exactly: both shipped presets render within a
+few decibels of their references, the floor never bit for them, and the fix could not move them.
+
+**The `score` column moved on every row, and 8.10 is not why.**
+
+| Row                                          | 2026-09-02 | reconstructed | 2026-09-05 |
+| -------------------------------------------- | ---------: | ------------: | ---------: |
+| `default.json` vs `legacy_synth_a4.wav`, 69  |      0.135 |        0.1352 |     0.1789 |
+| `recorded-bar.json` vs `legacy_synth_a4`, 69 |      0.431 |        0.4313 |     0.4402 |
+| `default.json` vs `glockenspiel_c5.wav`, 69  |      0.595 |        0.5953 |     0.6113 |
+| `recorded-bar.json` vs `glockenspiel_c5`, 69 |      0.555 |        0.5545 |     0.5669 |
+| `recorded-bar.json` vs `glockenspiel_c5`, 60 |      0.417 |        0.4167 |     0.4404 |
+| six modes from the analysis, 60              |       0.24 |        0.3085 |     0.3331 |
+
+The objective gained an eleventh term after the table was taken. `onset_db` is not in that table's
+header, and `balanced` was reweighted to make room for it, in commit `c7f0ecf`: cents 0.12 to 0.11,
+level and decay 0.08 to 0.07, extra 0.06 to 0.05, each spectral term 0.125 to 0.11, envelope 0.15
+to 0.13, decay slope 0.10 to 0.09, onset in at 0.10, missing and waveform unchanged.
+
+The "reconstructed" column is the 2026-09-05 terms scored under those **old** weights, and it is
+what makes this a demonstration rather than an assertion: five of the six rows come back to the
+digit the 2026-09-02 table printed. Two rules had to be respected to get there. The old weights,
+obviously; and the rule that a term which could not be measured is dropped from the weighted mean
+rather than counted as zero — the `default.json` C5 row matches no partial at all, so its cents,
+level and decay are excluded and the remaining weights renormalise over 0.72, giving 0.5953 against
+the printed 0.595. The current objective still excludes them the same way: 0.4585 over 0.75 is the
+0.6113 it reports today.
+
+So five rows moved for exactly one reason, and it is not Phase 8.10. Every term underneath the
+score reproduced; the score moved because the objective's own definition of `balanced` changed
+underneath it. A score that moves while every term holds is a change in the scoring rule, not a
+change in the model.
+
+**The sixth row was wrong when it was written.** The analysis seed's 0.24 does not reconstruct: the
+same terms under the same old weights give 0.3085, and no exclusion rule closes a gap that large —
+the row matches six of eight partials, so nothing is excluded. The numbers around it in the prose
+are sound and reproduce exactly: the seed scores 0.1875 on the partial terms alone against the
+shipped preset's 0.4246, which is the "0.19 against 0.43" that paragraph quotes. It is the
+`balanced` cell alone that is wrong, and both places it appears hedge it — 0.24 to two decimals
+where every other row carries three, and "≈0.24" in the 8.3 table below.
+
+The correction does not overturn what the row was cited for. The seed still beats the shipped
+preset it was compared against, 0.3085 against 0.4167 under the arithmetic of the day and 0.3331
+against 0.4404 today. It overstated the margin by about a third. It is the one number in this file
+that re-measurement found to be an error rather than a casualty of a changed definition.
+
+## What the references hold, re-measured 2026-09-05
+
+`glockenspiel analyze` reproduces the 2026-09-02 measurement of both references **exactly**: the
+same cut (frame 303 to 73068, 1.650 s, +27.6 dB), the same fundamental at 1053.7 Hz, and all eight
+partials at the same level, attack, half-life and T60 to the digit; `legacy_synth_a4.wav` likewise
+at 1756.5 Hz, −4.6 dB, 166 ms. This is the expected result and is recorded because it is the
+control: the reference side of every measurement in this file is unaffected by anything Phase 8.9
+or 8.10 changed, so a table that moved, moved on the candidate side. The output now also carries an
+`amplitude` column that the 2026-09-02 table does not.
 
 ## The search space after 8.3, 2026-09-02
 
@@ -220,6 +349,12 @@ glockenspiel fit --reference testdata/reference/glockenspiel_c5.wav --note 72 \
 | `recorded-bar.json`, note 60 (8.2) |      0.417 |    0.40 |  0.31 |     6.6 |       8.1 |    1.8 |     1.00 |   4 / 8 |
 | seed from the analysis, note 60    |      ≈0.24 |    0.14 |  0.00 |         |           |        |     0.73 |   6 / 8 |
 | fit from the seed, note 72, 90 s   |      0.180 |    0.44 |  0.00 |     2.0 |       2.9 |    1.0 |     0.67 |   5 / 8 |
+
+**Two of this table's three `balanced` figures are superseded.** The seed's ≈0.24 is an error, and
+should read 0.3085 under the weights of the day; the shipped preset's 0.417 is right for its day
+and reads 0.4404 today. Both are re-taken in "The composite objective re-taken, 2026-09-05" above.
+The 90 s fit's 0.180 is a third case again: it was budgeted in wall clock under mayfly v0.6.0, so
+it cannot be reproduced at all — see the note on budgets below.
 
 The fit halves every spectral and envelope term against the shipped preset and matches the
 partials it does match to 0.2 cents and 0.4 dB. It also says, through the pinned report, where
@@ -300,6 +435,16 @@ glockenspiel fit --reference testdata/reference/glockenspiel_c5.wav --note 72 \
 | `cmaes`, separable (the default) |   0.273463 | `restarts=2`       |      24,583 | 0 of 30 |
 | `cmaes`, block covariance        |   0.261791 | `restarts=1`       |      22,903 | 0 of 30 |
 | `mayfly`, DESMA, population 20   |   0.224395 | one round          |      27,290 | 5 of 30 |
+
+**These three rows are budgeted in wall clock, and that makes them unreproducible in principle.**
+`--time-budget 60s` buys however many evaluations the machine can afford in a minute, so the score
+a row reaches is a reading of the hardware and of what else was running on it as much as of the
+engine. Re-taking them on a different day gives a different number with nothing wrong with either.
+The same applies to the 90 s fit above. This is why 8.5's campaign matches arms on **evaluations**
+instead, and why the campaign tables further down survive re-measurement while these do not: an
+evaluation-budgeted score is a property of the search, a time-budgeted one is a property of the
+afternoon. Re-take these under an evaluation budget or read them as qualitative; they are left as
+they were taken, because refreshing them would only produce a differently unreproducible number.
 
 All three stopped on `time_budget` rather than a convergence criterion, and all three seeded
 eight modes from the recording's partials. The reference was read the same way in every run:

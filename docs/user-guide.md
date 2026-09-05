@@ -361,8 +361,11 @@ The other two profiles weigh the same terms differently:
 The legacy single-term metrics remain for comparison with older runs:
 
 - `rms` is the aligned time-domain difference. Its capture range is a few cents per partial:
-  [training.md](training.md) measured the waveform gain against the recording at −52 to −93 dB
-  for every shipped preset, which is no correlation at all.
+  [training.md](training.md) measured the waveform gain against the recording at −24.6 to −64.8 dB
+  for every shipped preset, which is no correlation at all. (The −52 to −93 dB this line used to
+  quote was the same finding measured before the reference loader peak-normalised the recording;
+  every one of those figures is 27.6 dB lower for that reason alone, and the conclusion is
+  unchanged.)
 - `log` is a monotone transform of `rms` with the same minimiser.
 - `spectral` is the coarse STFT error with every bin counted, which the review found outvoted by
   empty bins.
