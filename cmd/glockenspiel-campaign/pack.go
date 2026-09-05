@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
@@ -36,7 +37,7 @@ func newPackCmd() *cobra.Command {
 			"at a time, and collect writes the tables a note-versus-partial regression reads.",
 	}
 
-	cmd.AddCommand(newPackPlanCmd(), newPackRunCmd(), newPackCollectCmd(), newPackFitJointCmd())
+	cmd.AddCommand(newPackPlanCmd(), newPackRunCmd(), newPackCollectCmd(), newPackFitJointCmd(), newPackScoreCmd(), newPackRegressCmd())
 
 	return cmd
 }
@@ -187,6 +188,83 @@ func newPackFitJointCmd() *cobra.Command {
 		"fit only these MIDI notes (empty fits the whole pack)")
 	_ = cmd.MarkFlagRequired("dir")
 	_ = cmd.MarkFlagRequired("out")
+
+	return cmd
+}
+
+func newPackRegressCmd() *cobra.Command {
+	var dir string
+
+	cmd := &cobra.Command{
+		Use:   "regress",
+		Short: "Regress the fitted modes against pitch",
+		Long: "Reads pack-modes.csv and asks the two questions a generalised preset depends on: does the " +
+			"decay follow the model's key-tracking law, and is the modal structure a fixed ratio-scale " +
+			"of one bar. The scatter each regression leaves is the more useful half of the answer -- it " +
+			"is what no law can remove, because it is the difference between one bar and the next.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			body, err := pack.WriteReport(dir, filepath.Base(dir))
+			if err != nil {
+				return err
+			}
+
+			_, _ = fmt.Fprint(cmd.OutOrStdout(), body)
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&dir, "dir", "", "pack run directory holding pack-modes.csv")
+	_ = cmd.MarkFlagRequired("dir")
+
+	return cmd
+}
+
+func newPackScoreCmd() *cobra.Command {
+	var (
+		dir     string
+		presets []string
+		out     string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "score",
+		Short: "Score presets against every note of a pack",
+		Long: "Writes the transposition matrix: one row per preset, one column per note, plus the row " +
+			"mean. That is the comparison this phase turns on -- a preset fitted to one bar and " +
+			"transposed across the range against one fitted to the range at once -- and the per-note " +
+			"columns are what stop the mean being the only number, since a preset can carry a good " +
+			"mean while being useless at one end of the keyboard.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			rows, notes, err := pack.ScorePresets(dir, presets, 0, 0)
+			if err != nil {
+				return err
+			}
+
+			table := pack.MatrixCSV(rows, notes)
+
+			if out != "" {
+				if err := pack.WriteCSVFile(out, table); err != nil {
+					return err
+				}
+			}
+
+			for _, row := range rows {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%-28s authored %3d  mean %.6f\n",
+					row.Name, row.Note, row.Mean)
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&dir, "dir", "", "planned pack run directory holding manifest.json")
+	cmd.Flags().StringSliceVar(&presets, "preset", nil, "preset files to score (repeatable)")
+	cmd.Flags().StringVar(&out, "out", "", "write the matrix as CSV to this path")
+	_ = cmd.MarkFlagRequired("dir")
+	_ = cmd.MarkFlagRequired("preset")
 
 	return cmd
 }

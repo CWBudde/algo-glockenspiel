@@ -219,6 +219,17 @@ func formatFloat(value float64) string {
 	return strconv.FormatFloat(value, 'g', 17, 64)
 }
 
+// WriteCSVFile writes a rendered table, creating the directory if it is missing.
+func WriteCSVFile(path string, rows [][]string) error {
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create %q: %w", dir, err)
+		}
+	}
+
+	return writeCSV(path, rows)
+}
+
 func writeCSV(path string, rows [][]string) error {
 	file, err := os.Create(path)
 	if err != nil {
