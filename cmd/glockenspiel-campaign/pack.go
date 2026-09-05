@@ -141,6 +141,8 @@ func newPackFitJointCmd() *cobra.Command {
 		workers      int
 		notes        []int
 		keytrack     bool
+		pooledSeed   bool
+		coverage     float64
 	)
 
 	cmd := &cobra.Command{
@@ -165,6 +167,8 @@ func newPackFitJointCmd() *cobra.Command {
 				Workers:      workers,
 
 				SearchDecayKeytrack: keytrack,
+				SeedFromModes:       pooledSeed,
+				SeedCoverage:        coverage,
 			})
 			if err != nil {
 				return err
@@ -196,6 +200,11 @@ func newPackFitJointCmd() *cobra.Command {
 		"fit only these MIDI notes (empty fits the whole pack)")
 	cmd.Flags().BoolVar(&keytrack, "keytrack", false,
 		"search the decay key-tracking exponent instead of holding it at 1 (needs notes an octave apart)")
+	cmd.Flags().BoolVar(&pooledSeed, "pooled-seed", false,
+		"seed the modes from every note's fit at once, by clustering pack-modes.csv, "+
+			"instead of from the single recording at the authored note (needs `pack collect`)")
+	cmd.Flags().Float64Var(&coverage, "seed-coverage", pack.DefaultSeedCoverage,
+		"share of the pack's notes a partial must appear at to be seeded")
 	_ = cmd.MarkFlagRequired("dir")
 	_ = cmd.MarkFlagRequired("out")
 

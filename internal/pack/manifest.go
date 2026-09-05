@@ -10,6 +10,7 @@ import (
 	"github.com/cwbudde/algo-glockenspiel/internal/campaign"
 	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 )
 
 // The three files a pack directory owns. Everything else under it is a fitrun
@@ -18,7 +19,32 @@ const (
 	FileManifest    = "manifest.json"
 	FileResults     = "pack-results.csv"
 	FileModeResults = "pack-modes.csv"
+
+	// FileSeed is the pooled starting preset a joint fit was seeded from, in
+	// the run directory the fit wrote. Only a pooled-seed run writes it.
+	FileSeed = "pooled-seed.json"
 )
+
+// writePresetFile writes a preset as the indented JSON every other document
+// here is written as.
+func writePresetFile(path string, value *preset.Preset) error {
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode %q: %w", path, err)
+	}
+
+	data = append(data, '\n')
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create directory for %q: %w", path, err)
+	}
+
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write %q: %w", path, err)
+	}
+
+	return nil
+}
 
 // Manifest is the pack directory's plan: every note, the file it came from
 // pinned by content hash, and the build that planned it.

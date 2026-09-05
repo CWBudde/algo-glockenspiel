@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
+	embeddedassets "github.com/cwbudde/algo-glockenspiel/assets"
 	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
+	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 )
 
 // JointOptions are what FitJoint needs beyond the planned pack it reads its
@@ -37,6 +39,19 @@ type JointOptions struct {
 
 	// Workers bounds parallel evaluation. Zero follows the machine.
 	Workers int
+
+	// SeedFromModes builds the starting preset from every note of the pack at
+	// once, by clustering pack-modes.csv, instead of from the single recording
+	// at the authored note. Requires a collected pack.
+	//
+	// A partial's ratio to the fundamental is one physical property of the bar,
+	// so twenty fits of it are twenty observations of one number. Seeding from
+	// the authored note alone throws nineteen away.
+	SeedFromModes bool
+
+	// SeedCoverage is the share of the pack's notes a partial must appear at to
+	// be seeded. Zero takes DefaultSeedCoverage. Read only under SeedFromModes.
+	SeedCoverage float64
 
 	// SearchDecayKeytrack searches the decay key-tracking exponent instead of
 	// leaving it at 1, the law every preset before schema v4 was written under.
@@ -112,6 +127,54 @@ func FitJoint(ctx context.Context, packRunDir, outDir string, log io.Writer, opt
 		ReportEvery:         1,
 		GeneratedBy:         "glockenspiel-campaign pack fit-joint",
 		Name:                fmt.Sprintf("pack-joint/%s", filepath.Base(manifest.Pack)),
+	}
+
+	if opts.SeedFromModes {
+		rows, err := ReadModes(filepath.Join(packRunDir, FileModeResults))
+		if err != nil {
+			return nil, nil, fmt.Errorf("seed from the pack's modes: %w (run `pack collect` first)", err)
+		}
+
+		authored := opts.AuthoredNote
+		if authored == 0 {
+			authored = refs[len(refs)/2].Note
+		}
+
+		template, err := embeddedassets.DefaultPreset()
+		if err != nil {
+			return nil, nil, err
+		}
+
+		pooled, dropped, err := PresetFromClusters(
+			template, ByRatioCluster(rows), authored, countNotes(rows), opts.SeedCoverage)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		_, _ = fmt.Fprintf(log, "pooled seed: %d modes from %d notes\n",
+			len(pooled.Parameters.Modes), countNotes(rows))
+
+		for _, drop := range dropped {
+			_, _ = fmt.Fprintf(log, "  dropped %.3f x f0, fitted at %d note(s)\n", drop.Ratio, drop.Notes)
+		}
+
+		// The seed is written into the run directory rather than only logged.
+		// It is the deliverable of the regression step -- the bar's modal
+		// ratios averaged over every note of the pack -- and a run whose
+		// starting point exists only in a terminal is a run nobody can repeat
+		// or audit. It goes in before the search so it survives a fit that is
+		// interrupted.
+		if err := writePresetFile(filepath.Join(outDir, FileSeed), pooled); err != nil {
+			return nil, nil, err
+		}
+
+		spec.Template = pooled
+		spec.AuthoredNote = authored
+
+		// The pooled modes are the seed. Without this, SeedPreset would replace
+		// them with the authored note's own analysis and the pooling would have
+		// been for nothing -- silently, because the fit would still run.
+		spec.Modes = optimizer.KeepTemplateModes
 	}
 
 	fitted := make([]int, 0, len(refs))
