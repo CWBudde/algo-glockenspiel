@@ -1477,8 +1477,10 @@ carrying rather than filing:
   promotion rule refuses the challenger on the second reference, where it materially regresses
   `onset_db` and `envelope_db` over eight seeds of eight. **This is now a live open question**,
   not a settled one: the better arm on the only real recording this project has is not the one
-  it ships, and settling that needs a design measuring both shapes at two or three budgets,
-  because the campaign also showed `mayfly-single` still improving at 98.8% of its budget.
+  it ships. The design that settles it is registered — `rounds-12k`, `rounds-24k` and
+  `rounds-48k`, the two shapes at half the campaign budget, at it and at twice it — because
+  `engine-shape`'s answer is confounded by its cap: `mayfly-single` was still improving at 98.8%
+  of the budget when it won, while `mayfly-r16` had plateaued at 22.4%.
 - **8.10 was not the only thing that had moved.** The objective had gained an eleventh term,
   `onset_db`, and `balanced` was reweighted for it, which is what actually moved the composite
   table's scores — every term underneath them reproduced. The campaign that promoted the current

@@ -259,13 +259,32 @@ winner is cannot be known until `engine-shape` has run, so this is the one desig
 flag: `plan seed-hunt --winner ARM`, where the arm is a CMA-ES arm of `engine-shape`. Without
 the flag the registry's own prediction, `blk-cmaes-r`, is planned.
 
+`rounds-12k`, `rounds-24k` and `rounds-48k` are one design each, and together they are a ladder:
+`mayfly-single` against `mayfly-r16` at half the campaign budget, at it, and at twice it, twelve
+blocks of two arms per rung. They exist because the 2026-09-05 re-run of `engine-shape` left its
+own answer confounded. `mayfly-single` won eleven blocks of twelve there, and it reached its best
+at 98.8% of the budget — still improving when the cap cut it — while `mayfly-r16` had plateaued at
+22.4%. A comparison in which one arm is still climbing and the other has stopped measures the cap
+as much as it measures the shape.
+
+Each rung is a design of its own rather than an arm of a wider one because `Design.Budget` is the
+evaluation cap of every job in a design, and matching arms on evaluations is the property that
+makes two arms comparable at all. A design cannot hold two budgets without giving that up. So each
+rung is a paired test in its own right, and reading across the rungs is descriptive.
+
+The rungs own separate seed bases for a stronger reason than the convention below. A run at half
+the budget is a prefix of a run at twice it from the same seed and arm, so a shared base would
+make the rungs almost perfectly correlated and a reading across them would understate its own
+spread — which is the defect Phase 8.6 found in its first table, arriving by a different route.
+
 `smoke` is four jobs of 1,200 evaluations on the short synthetic reference. It exists so the
 end-to-end path is exercised by a test and by a recipe, and its numbers mean nothing. The budget
 was 300 and is 1,200 because at 300 neither arm left the seeded vector, so every job scored the
 same number and the smoke run rehearsed only the plumbing, never the statistics.
 
-Each design owns a disjoint seed base, 120,000 for `smoke`, 121,000 for `engine-shape` and
-122,000 for `seed-hunt`, and a block's seed is the base plus the block number. A test pins the
+Each design owns a disjoint seed base — 120,000 for `smoke`, 121,000 for `engine-shape`, 122,000
+for `seed-hunt`, and 123,000, 124,000 and 125,000 for the three `rounds` rungs — and a block's seed
+is the base plus the block number. A test pins the
 ranges apart, because two designs sharing a seed would share a search trajectory that the
 analysis would read as agreement.
 
