@@ -36,7 +36,7 @@ func newPackCmd() *cobra.Command {
 			"at a time, and collect writes the tables a note-versus-partial regression reads.",
 	}
 
-	cmd.AddCommand(newPackPlanCmd(), newPackRunCmd(), newPackCollectCmd())
+	cmd.AddCommand(newPackPlanCmd(), newPackRunCmd(), newPackCollectCmd(), newPackFitJointCmd())
 
 	return cmd
 }
@@ -124,6 +124,69 @@ func newPackRunCmd() *cobra.Command {
 	cmd.Flags().IntVar(&limit, "limit", 0, "stop after this many notes have run (0 runs them all)")
 	cmd.Flags().IntVar(&onlyNote, "only-note", 0, "fit only this MIDI note (0 runs every note)")
 	_ = cmd.MarkFlagRequired("dir")
+
+	return cmd
+}
+
+func newPackFitJointCmd() *cobra.Command {
+	var (
+		dir          string
+		out          string
+		budget       int
+		authoredNote int
+		modes        int
+		seed         int64
+		workers      int
+		notes        []int
+	)
+
+	cmd := &cobra.Command{
+		Use:   "fit-joint",
+		Short: "Fit one preset against every note of a planned pack at once",
+		Long: "The candidate is authored at one note and transposed to each recording's own note, and " +
+			"its score is the mean of the per-note composite scores. That is what fitting an " +
+			"instrument means rather than one of its bars: the search looks for the bar whose " +
+			"transposition covers the whole range, not for the bar that best fits any one recording. " +
+			"The budget is for the whole fit, and one evaluation renders every note.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			outcome, fitted, err := pack.FitJoint(ctx, dir, out, cmd.OutOrStdout(), pack.JointOptions{
+				Budget:       budget,
+				AuthoredNote: authoredNote,
+				Notes:        notes,
+				Modes:        modes,
+				Seed:         seed,
+				Workers:      workers,
+			})
+			if err != nil {
+				return err
+			}
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"joint score %.6f over %d notes, authored at %d, %d evaluations, %d/%d pinned\n",
+				outcome.Summary.Score, len(fitted),
+				outcome.Preset.Note, outcome.Summary.Evaluations,
+				outcome.Summary.Pinned, outcome.Summary.Dimension)
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&dir, "dir", "", "planned pack run directory holding manifest.json")
+	cmd.Flags().StringVar(&out, "out", "", "directory to write the joint fit into")
+	cmd.Flags().IntVar(&budget, "budget", 24_000, "evaluation cap for the whole fit")
+	cmd.Flags().IntVar(&authoredNote, "authored-note", 0,
+		"note the preset is authored at (0 takes the median of the pack's notes)")
+	cmd.Flags().IntVar(&modes, "modes", 0, "partials to seed (0 takes every partial at the authored note)")
+	cmd.Flags().Int64Var(&seed, "seed", 1, "random stream")
+	cmd.Flags().IntVar(&workers, "workers", 0, "parallel evaluation width (0 follows the machine)")
+	cmd.Flags().IntSliceVar(&notes, "notes", nil,
+		"fit only these MIDI notes (empty fits the whole pack)")
+	_ = cmd.MarkFlagRequired("dir")
+	_ = cmd.MarkFlagRequired("out")
 
 	return cmd
 }

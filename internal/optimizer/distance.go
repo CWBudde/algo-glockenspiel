@@ -85,7 +85,9 @@ func (o *ObjectiveFunction) Render(encoded []float64) ([]float32, error) {
 
 	state.working.Parameters = *params
 
-	return state.engine.RenderNote(o.note, o.velocity, o.duration), nil
+	ref := o.refs[0]
+
+	return state.engine.RenderNote(ref.note, o.velocity, ref.duration), nil
 }
 
 // Measure scores a candidate under every metric at once.
@@ -99,8 +101,8 @@ func (o *ObjectiveFunction) Measure(encoded []float64) (Measurement, error) {
 		return Measurement{}, err
 	}
 
-	lag := o.align.BestLag(rendered)
-	aligned, target := alignSlices(rendered, o.reference, lag)
+	lag := o.refs[0].align.BestLag(rendered)
+	aligned, target := alignSlices(rendered, o.refs[0].samples, lag)
 	rms := alignedRMSError(aligned, target, o.gain)
 
 	return Measurement{

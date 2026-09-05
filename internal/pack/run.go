@@ -169,11 +169,15 @@ func runJob(ctx context.Context, manifest *Manifest, job Job, dir string, index 
 		Dir:           dir,
 		ReferencePath: job.Reference.Path,
 
-		// The fit renders at the note the bar sounds, and the preset it writes
-		// is authored at that same note. Nothing is transposed in between, so a
+		// The fit renders at the note the bar sounds, and AuthoredNote writes
+		// the preset in that same frame. Nothing is transposed in between, so a
 		// fitted mode frequency is that bar's partial as measured rather than
 		// as converted, which is what the note-versus-partial regression needs.
-		Note: job.Note,
+		// Without the second line the preset would be authored at the embedded
+		// template's note 69 and a C6 bar's 1046 Hz fundamental would be
+		// written as 439.7 Hz -- correct to render, useless to regress.
+		Note:         job.Note,
+		AuthoredNote: job.Note,
 
 		Modes:          manifest.Modes,
 		Metric:         manifest.Profile,

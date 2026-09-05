@@ -105,15 +105,16 @@ type renderState struct {
 // optimizer backends may evaluate candidates in parallel. Every other field is
 // immutable after construction, including the alignment plan.
 type ObjectiveFunction struct {
-	reference  []float32
+	// refs holds one entry per note the candidate is scored at, ascending. It
+	// is never empty; a single-note objective is the one-entry case and every
+	// accessor that used to read a scalar field reads refs[0] instead.
+	refs []*noteReference
+
 	template   preset.Preset
 	codec      *ParamCodec
-	align      *AlignmentPlan
 	states     sync.Pool
 	sampleRate int
-	note       int
 	velocity   int
-	duration   float64
 	metric     Metric
 	gain       GainMode
 	logFloor   float64
@@ -121,17 +122,39 @@ type ObjectiveFunction struct {
 	// profile is the composite profile for a composite metric.
 	profile Profile
 
-	// composite is the reference side of the composite terms. It is built at
-	// construction for a composite metric and on first use for a legacy one,
-	// so EvaluateMetrics works under every metric without every legacy
-	// objective paying for it.
-	composite     *compositeReference
-	compositeOnce sync.Once
-	analysis      *analysis.Measurement
-
 	// config is the configuration the objective was built with, kept so that
 	// WithMetric can rebuild the same objective under another metric.
 	config ObjectiveConfig
+}
+
+// noteReference is one recording and everything derived from it: the note it
+// sounds, the render length that covers it, its alignment plan and the
+// reference side of the composite terms.
+//
+// All four are properties of that recording alone, which is what makes a
+// multi-note objective a slice of these rather than a different kind of object.
+// A one-entry slice behaves exactly as the scalar fields it replaced.
+type noteReference struct {
+	samples  []float32
+	note     int
+	duration float64
+	align    *AlignmentPlan
+	analysis *analysis.Measurement
+
+	// composite is built at construction for a composite metric and on first
+	// use for a legacy one, so EvaluateMetrics works under every metric
+	// without every legacy objective paying for it.
+	composite *compositeReference
+	once      sync.Once
+}
+
+// ReferenceInput is one recording handed to a multi-note objective: the samples,
+// the note they sound, and optionally a measurement to use in place of taking
+// one.
+type ReferenceInput struct {
+	Samples  []float32
+	Note     int
+	Analysis *analysis.Measurement
 }
 
 // newRenderState builds an independent preset/synthesizer pair from the template.
@@ -163,21 +186,86 @@ func NewObjectiveFunctionWithBounds(reference []float32, template *preset.Preset
 // NewObjectiveFunctionWithConfig creates an objective with full control over
 // metric, bounds, time alignment and level normalisation.
 func NewObjectiveFunctionWithConfig(reference []float32, template *preset.Preset, sampleRate, note, velocity int, config ObjectiveConfig) (*ObjectiveFunction, error) {
-	return newObjectiveFunction(reference, template, sampleRate, note, velocity, config, nil)
+	return newObjectiveFunction(
+		[]ReferenceInput{{Samples: reference, Note: note}}, template, sampleRate, velocity, config, nil)
+}
+
+// checkNotesAreDistinct refuses two references at the same note. They would be
+// rendered identically and averaged, which silently doubles that note's weight.
+func checkNotesAreDistinct(refs []ReferenceInput) error {
+	seen := make(map[int]int, len(refs))
+
+	for index, ref := range refs {
+		if first, ok := seen[ref.Note]; ok {
+			return fmt.Errorf(
+				"references %d and %d are both at note %d: the candidate renders once for both, so "+
+					"averaging them would give that note twice the weight of every other",
+				first, index, ref.Note)
+		}
+
+		seen[ref.Note] = index
+	}
+
+	return nil
+}
+
+// NewMultiNoteObjective scores one candidate against several recordings at
+// once, one per note, and returns the mean of their scores.
+//
+// This is what fitting a whole instrument means rather than one of its bars.
+// The candidate is a single preset authored at template.Note; each reference is
+// rendered by transposing it to that reference's own note, so the search is
+// looking for the one bar whose transposition covers the whole range rather
+// than for the bar that best fits any one recording.
+//
+// Only a composite metric is accepted. The legacy metrics return a raw error in
+// units that depend on the recording's own level and length, so averaging them
+// across notes would weight the notes by their loudness; the composite terms are
+// scaled by their norms and saturated first, which is what puts every note on
+// one scale.
+func NewMultiNoteObjective(
+	refs []ReferenceInput,
+	template *preset.Preset,
+	sampleRate, velocity int,
+	config ObjectiveConfig,
+) (*ObjectiveFunction, error) {
+	if len(refs) == 0 {
+		return nil, fmt.Errorf("a multi-note objective needs at least one reference")
+	}
+
+	if !config.Metric.Composite() {
+		return nil, fmt.Errorf(
+			"metric %q is a legacy single-value metric, whose scale depends on the recording's own level "+
+				"and length; averaging it across notes would weight them by loudness, so a multi-note "+
+				"objective needs a composite profile", config.Metric)
+	}
+
+	return newObjectiveFunction(refs, template, sampleRate, velocity, config, nil)
 }
 
 // newObjectiveFunction is the shared constructor. A non-nil shared composite
 // reference is adopted instead of measuring the reference again, which is what
 // WithMetric hands over: the composite reference depends only on the reference
-// signal and is immutable once built.
+// signal and is immutable once built. It is per note, so the slice is parallel
+// to refs.
 func newObjectiveFunction(
-	reference []float32,
+	refs []ReferenceInput,
 	template *preset.Preset,
-	sampleRate, note, velocity int,
+	sampleRate, velocity int,
 	config ObjectiveConfig,
-	shared *compositeReference,
+	shared []*compositeReference,
 ) (*ObjectiveFunction, error) {
-	if err := validateObjectiveInputs(reference, template, sampleRate, note, velocity, config.Metric); err != nil {
+	if len(refs) == 0 {
+		return nil, fmt.Errorf("an objective needs a reference")
+	}
+
+	for _, ref := range refs {
+		if err := validateObjectiveInputs(ref.Samples, template, sampleRate, ref.Note, velocity, config.Metric); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := checkNotesAreDistinct(refs); err != nil {
 		return nil, err
 	}
 
@@ -199,46 +287,67 @@ func newObjectiveFunction(
 		return nil, err
 	}
 
-	// The reference is kept at full precision. Quantising it to 16 bits here
-	// used to throw away eight bits of a 24-bit recording for no benefit
-	// whatsoever, and quantising every candidate made the objective piecewise
-	// constant, so a 1e-8 convergence test compared values below the
-	// quantisation step and declared victory on a plateau.
-	plan := NewAlignmentPlan(reference, sampleRate, config.Alignment, config.Gain, config.MaxLagSamples)
-
-	if config.Metric == MetricSpectral {
-		if err := ValidateSpectralInput(len(reference)-plan.MaxLag(), sampleRate); err != nil {
-			return nil, err
-		}
-	}
-
 	profile, _ := ProfileFor(config.Metric)
 
-	obj := &ObjectiveFunction{
-		reference:  append([]float32(nil), reference...),
-		template:   *template,
-		codec:      codec,
-		align:      plan,
-		sampleRate: sampleRate,
-		note:       note,
-		velocity:   velocity,
-		// Render a little past the reference so that a candidate which the
-		// alignment shifts forward still covers the whole reference.
-		duration: float64(len(reference)+plan.MaxLag()) / float64(sampleRate),
-		metric:   config.Metric,
-		gain:     config.Gain,
-		logFloor: defaultLogErrorFloor,
-		profile:  profile,
-		analysis: config.Analysis,
-		config:   config,
+	built := make([]*noteReference, 0, len(refs))
+
+	for index, ref := range refs {
+		// The reference is kept at full precision. Quantising it to 16 bits
+		// here used to throw away eight bits of a 24-bit recording for no
+		// benefit whatsoever, and quantising every candidate made the objective
+		// piecewise constant, so a 1e-8 convergence test compared values below
+		// the quantisation step and declared victory on a plateau.
+		plan := NewAlignmentPlan(ref.Samples, sampleRate, config.Alignment, config.Gain, config.MaxLagSamples)
+
+		if config.Metric == MetricSpectral {
+			if err := ValidateSpectralInput(len(ref.Samples)-plan.MaxLag(), sampleRate); err != nil {
+				return nil, err
+			}
+		}
+
+		measurement := ref.Analysis
+		if measurement == nil && len(refs) == 1 {
+			// A single-note objective takes its measurement from the config,
+			// which is where the fit command's --analysis flag lands. There is
+			// no config field that could mean "the third note's measurement",
+			// so a multi-note objective carries them on the references.
+			measurement = config.Analysis
+		}
+
+		entry := &noteReference{
+			samples:  append([]float32(nil), ref.Samples...),
+			note:     ref.Note,
+			align:    plan,
+			analysis: measurement,
+			// Render a little past the reference so that a candidate which the
+			// alignment shifts forward still covers the whole reference.
+			duration: float64(len(ref.Samples)+plan.MaxLag()) / float64(sampleRate),
+		}
+
+		if index < len(shared) && shared[index] != nil {
+			entry.once.Do(func() { entry.composite = shared[index] })
+		}
+
+		built = append(built, entry)
 	}
 
-	if shared != nil {
-		obj.compositeOnce.Do(func() { obj.composite = shared })
+	obj := &ObjectiveFunction{
+		refs:       built,
+		template:   *template,
+		codec:      codec,
+		sampleRate: sampleRate,
+		velocity:   velocity,
+		metric:     config.Metric,
+		gain:       config.Gain,
+		logFloor:   defaultLogErrorFloor,
+		profile:    profile,
+		config:     config,
 	}
 
 	if config.Metric.Composite() {
-		obj.compositeReference()
+		for _, ref := range obj.refs {
+			ref.compositeReference(sampleRate)
+		}
 	}
 
 	// Fail here rather than inside a pooled allocation, where there is nowhere
@@ -295,8 +404,21 @@ func (o *ObjectiveFunction) Codec() *ParamCodec {
 }
 
 // Alignment returns the immutable alignment plan derived from the reference.
+// For a multi-note objective it is the lowest note's, which is the one a
+// single-note caller would have got.
 func (o *ObjectiveFunction) Alignment() *AlignmentPlan {
-	return o.align
+	return o.refs[0].align
+}
+
+// Notes lists the notes the objective scores at, in the order it was given
+// them.
+func (o *ObjectiveFunction) Notes() []int {
+	notes := make([]int, 0, len(o.refs))
+	for _, ref := range o.refs {
+		notes = append(notes, ref.note)
+	}
+
+	return notes
 }
 
 // ComputeLogError returns log10 of RMS error with a small floor and optional offset.
@@ -324,13 +446,33 @@ func (o *ObjectiveFunction) Evaluate(encoded []float64) float64 {
 	defer o.states.Put(state)
 
 	state.working.Parameters = *params
-	rendered := state.engine.RenderNote(o.note, o.velocity, o.duration)
 
 	if o.metric.Composite() {
-		return o.metrics(rendered, params).Score(o.profile)
+		// The mean of the per-note scores, not the mean of the per-note terms
+		// scored once. Each Score saturates its own terms first, so one
+		// hopeless note cannot swamp a term's average across the others, and
+		// each renormalises over the terms *it* could measure, so a note whose
+		// recording is too short for a spectral frame is scored on the terms it
+		// has rather than handing its missing term's weight to its neighbours.
+		total := 0.0
+
+		for _, ref := range o.refs {
+			rendered := state.engine.RenderNote(ref.note, o.velocity, ref.duration)
+
+			score := ref.metrics(o, rendered, params).Score(o.profile)
+			if math.IsInf(score, 1) {
+				return math.Inf(1)
+			}
+
+			total += score
+		}
+
+		return total / float64(len(o.refs))
 	}
 
-	aligned, target := o.align.Align(rendered, o.reference)
+	ref := o.refs[0]
+	rendered := state.engine.RenderNote(ref.note, o.velocity, ref.duration)
+	aligned, target := ref.align.Align(rendered, ref.samples)
 
 	switch o.metric {
 	case MetricRMS:
@@ -344,21 +486,22 @@ func (o *ObjectiveFunction) Evaluate(encoded []float64) float64 {
 	}
 }
 
-// compositeReference builds the reference side of the composite terms once.
-func (o *ObjectiveFunction) compositeReference() *compositeReference {
-	o.compositeOnce.Do(func() {
-		o.composite = newCompositeReference(o.reference, o.sampleRate, o.analysis)
+// compositeReference builds this note's reference side of the composite terms
+// once.
+func (r *noteReference) compositeReference(sampleRate int) *compositeReference {
+	r.once.Do(func() {
+		r.composite = newCompositeReference(r.samples, sampleRate, r.analysis)
 	})
 
-	return o.composite
+	return r.composite
 }
 
-// metrics takes every composite term for a render of params.
-func (o *ObjectiveFunction) metrics(rendered []float32, params *model.BarParams) Metrics {
-	composite := o.compositeReference()
+// metrics takes every composite term for a render of params at this note.
+func (r *noteReference) metrics(o *ObjectiveFunction, rendered []float32, params *model.BarParams) Metrics {
+	composite := r.compositeReference(o.sampleRate)
 
-	return composite.measure(rendered, o.reference, o.align,
-		modelPartials(params, o.template.Note, o.note, o.sampleRate, composite.partialFloor))
+	return composite.measure(rendered, r.samples, r.align,
+		modelPartials(params, o.template.Note, r.note, o.sampleRate, composite.partialFloor))
 }
 
 // Profile returns the composite profile the objective scores with, which is
@@ -390,14 +533,23 @@ func (o *ObjectiveFunction) WithMetric(metric Metric) (*ObjectiveFunction, error
 	config := o.config
 	config.Metric = metric
 
-	var shared *compositeReference
+	var shared []*compositeReference
+
 	if o.metric.Composite() || metric.Composite() {
-		shared = o.compositeReference()
+		shared = make([]*compositeReference, 0, len(o.refs))
+		for _, ref := range o.refs {
+			shared = append(shared, ref.compositeReference(o.sampleRate))
+		}
 	}
 
 	template := o.template
+	inputs := make([]ReferenceInput, 0, len(o.refs))
 
-	return newObjectiveFunction(o.reference, &template, o.sampleRate, o.note, o.velocity, config, shared)
+	for _, ref := range o.refs {
+		inputs = append(inputs, ReferenceInput{Samples: ref.samples, Note: ref.note, Analysis: ref.analysis})
+	}
+
+	return newObjectiveFunction(inputs, &template, o.sampleRate, o.velocity, config, shared)
 }
 
 // Metric returns the metric the objective was built with.
@@ -423,9 +575,11 @@ func (o *ObjectiveFunction) EvaluateMetrics(encoded []float64) (Metrics, error) 
 	defer o.states.Put(state)
 
 	state.working.Parameters = *params
-	rendered := state.engine.RenderNote(o.note, o.velocity, o.duration)
 
-	return o.metrics(rendered, params), nil
+	ref := o.refs[0]
+	rendered := state.engine.RenderNote(ref.note, o.velocity, ref.duration)
+
+	return ref.metrics(o, rendered, params), nil
 }
 
 // spectralGainDB converts the least-squares optimal time-domain gain into the

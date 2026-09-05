@@ -3,6 +3,8 @@ package pack_test
 import (
 	"context"
 	"encoding/csv"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/pack"
+	"github.com/cwbudde/algo-glockenspiel/internal/preset"
 )
 
 // hollandm is the pack this phase exists to fit: twenty chromatic semitones,
@@ -270,4 +273,129 @@ func columnOf(t *testing.T, header []string, name string) int {
 	t.Fatalf("header has no %q column: %v", name, header)
 
 	return -1
+}
+
+// TestFitJointProducesOnePresetForEveryNote walks the joint fit end to end at a
+// budget small enough for a test, and asserts the three things that make it a
+// joint fit rather than a single-note one: one preset, a per-note render beside
+// each per-note recording, and no top-level render.wav that could be mistaken
+// for the fit's own.
+func TestFitJointProducesOnePresetForEveryNote(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs a joint fit")
+	}
+
+	_, runDir := planTwoNotes(t, 200)
+
+	outDir := filepath.Join(t.TempDir(), "joint")
+
+	outcome, fitted, err := pack.FitJoint(context.Background(), runDir, outDir, nil, pack.JointOptions{
+		Budget: 400,
+		Seed:   7,
+	})
+	if err != nil {
+		t.Fatalf("FitJoint: %v", err)
+	}
+
+	if len(fitted) != 2 || fitted[0] != 84 || fitted[1] != 103 {
+		t.Fatalf("fitted notes %v, want [84 103]", fitted)
+	}
+
+	// The authored note defaults to the median, which for two notes is the
+	// upper of the pair.
+	if outcome.Preset.Note != 103 {
+		t.Errorf("preset authored at note %d, want the median 103", outcome.Preset.Note)
+	}
+
+	for _, note := range fitted {
+		for _, name := range []string{"analysis.json", "reference.wav", "render.wav"} {
+			path := filepath.Join(outDir, "notes", fmt.Sprintf("%03d", note), name)
+			if _, err := os.Stat(path); err != nil {
+				t.Errorf("note %d has no %s: %v", note, name, err)
+			}
+		}
+	}
+
+	// Nothing at the top level that promises to be the fit's own reference or
+	// render: a consumer reading those by name would compare one note's
+	// recording against a two-note fit and see nothing wrong.
+	for _, name := range []string{"reference.wav", "render.wav", "analysis.json"} {
+		if _, err := os.Stat(filepath.Join(outDir, name)); err == nil {
+			t.Errorf("a multi-note run wrote a top-level %s", name)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(outDir, "preset.json")); err != nil {
+		t.Errorf("the joint fit wrote no preset: %v", err)
+	}
+}
+
+// TestFitJointRefusesASingleNote keeps the command honest: a "joint" fit over
+// one note is a single-note fit under another name, and would silently accept a
+// subset that matched nothing but one recording.
+func TestFitJointRefusesASingleNote(t *testing.T) {
+	_, runDir := planTwoNotes(t, 200)
+
+	_, _, err := pack.FitJoint(context.Background(), runDir, filepath.Join(t.TempDir(), "j"), nil,
+		pack.JointOptions{Budget: 100, Notes: []int{84}})
+	if err == nil {
+		t.Fatal("a joint fit over one note was accepted")
+	}
+
+	if !strings.Contains(err.Error(), "single-note") {
+		t.Errorf("the error does not say what it is: %v", err)
+	}
+}
+
+// TestPerNoteFitIsAuthoredAtItsOwnNote is the property the whole step-1 table
+// depends on, and it was wrong until it was measured.
+//
+// PresetFromAnalysis expresses every measured partial at the *template's* note,
+// so without an explicit authored note a fit of a C6 recording under the
+// embedded note-69 template writes a preset whose fundamental reads 439.7 Hz
+// rather than 1046. The preset renders correctly, because transposition puts
+// the ratio back, which is exactly why nothing downstream would have complained
+// -- but the frequency and decay columns of pack-modes.csv would have been the
+// note-69 equivalents, and a regression of log2(decay) against pitch would have
+// come out a whole exponent off.
+func TestPerNoteFitIsAuthoredAtItsOwnNote(t *testing.T) {
+	if testing.Short() {
+		t.Skip("fits two notes")
+	}
+
+	_, runDir := planTwoNotes(t, 200)
+
+	if err := pack.Run(context.Background(), runDir, nil, pack.RunOptions{}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	manifest, err := pack.ReadManifest(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, job := range manifest.Jobs {
+		fitted, err := preset.Load(filepath.Join(runDir, job.Dir, "preset.json"))
+		if err != nil {
+			t.Fatalf("note %s: %v", job.Name, err)
+		}
+
+		if fitted.Note != job.Note {
+			t.Errorf("note %s: preset authored at %d, want the bar's own note %d",
+				job.Name, fitted.Note, job.Note)
+		}
+
+		// And the numbers really are the bar's: the lowest fitted mode sits
+		// within a semitone of the recording's measured fundamental.
+		lowest := math.Inf(1)
+		for _, mode := range fitted.Parameters.Modes {
+			lowest = math.Min(lowest, mode.Frequency)
+		}
+
+		measured := 440 * math.Pow(2, float64(job.Note-69)/12)
+		if cents := 1200 * math.Log2(lowest/measured); math.Abs(cents) > 100 {
+			t.Errorf("note %s: lowest fitted mode is %.1f Hz, %.0f cents from the bar's %.1f Hz",
+				job.Name, lowest, cents, measured)
+		}
+	}
 }

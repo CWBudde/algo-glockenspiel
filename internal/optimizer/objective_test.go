@@ -502,8 +502,8 @@ func TestObjectiveKeepsReferencePrecision(t *testing.T) {
 		t.Fatalf("NewObjectiveFunction failed: %v", err)
 	}
 
-	if objective.reference[10] != reference[10] {
-		t.Fatalf("reference was quantised: got %v want %v", objective.reference[10], reference[10])
+	if objective.refs[0].samples[10] != reference[10] {
+		t.Fatalf("reference was quantised: got %v want %v", objective.refs[0].samples[10], reference[10])
 	}
 }
 

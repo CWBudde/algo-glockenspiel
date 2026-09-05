@@ -144,10 +144,17 @@ func finish(
 		return nil, err
 	}
 
-	err = renderPreset(filepath.Join(spec.Dir, FileRender), &fitted,
-		spec.SampleRate, spec.Note, spec.Velocity, len(prepared.samples))
-	if err != nil {
-		return nil, err
+	// One render per reference, beside the recording it should be compared
+	// against. For a single reference that is the top-level render.wav it has
+	// always been; for several it is notes/<nnn>/render.wav, and there is no
+	// top-level one, so nothing can compare a twenty-note fit against one
+	// note's recording by reading two files with promising names.
+	for _, note := range prepared.notes {
+		err = renderPreset(filepath.Join(spec.Dir, note.dir, FileRender), &fitted,
+			spec.SampleRate, note.note, spec.Velocity, len(note.samples))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if err := writeJSONFile(filepath.Join(spec.Dir, FileResult), summary); err != nil {
