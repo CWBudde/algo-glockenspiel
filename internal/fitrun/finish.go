@@ -133,6 +133,12 @@ func finish(
 	fitted := *prepared.template
 	fitted.Parameters = *bestParams
 
+	// The search may have given the preset a field its template's version does
+	// not cover -- a keytrack, above all, which only a joint fit can produce.
+	// Stamping here rather than at save time is deliberate: setOutputGain builds
+	// a synthesizer to measure the level, and that validates.
+	preset.Stamp(&fitted)
+
 	if spec.Name != "" {
 		fitted.Name = spec.Name
 	}

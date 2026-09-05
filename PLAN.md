@@ -1598,7 +1598,7 @@ Holm-corrected `p < 0.05` on the paired ablation, a median improvement clearing 
 threshold, and a beta consistent across blocks. The third is the one likely to fail and the
 0.410 -> 0.398 above says it may. If it fails, the preset ships at v3 and this section says so.
 
-Three latent bugs were found on the way, each of which would have shipped:
+Four latent bugs were found on the way, each of which would have shipped:
 
 - `preset.go` read `version != VersionV3 && OutputGainDB != nil` to reject a gain on an older
   document. The moment `CurrentVersion` became v4 that rejected **every calibrated preset a fit
@@ -1612,6 +1612,19 @@ Three latent bugs were found on the way, each of which would have shipped:
   and did not implement it. A zero `Range` is `Min = Max = 0`, which would have clamped the
   exponent to exactly 0 -- a legal, measurable value, and so one that would have read as a search
   result rather than an unset field.
+- **Every preset the repo wrote was stamped `CurrentVersion`**, so the moment v4 existed the fits
+  began emitting v4 documents that carried no keytrack. The version a file claims is a statement
+  about what a reader must understand, and such a file needs nothing beyond v3 -- yet it locked
+  out every v3 reader, the external module that hand-rolls its own decode among them, for a field
+  it does not contain. `preset.MinimumVersion` derives the version from the fields the document
+  actually uses and `preset.Stamp` applies it without ever lowering one, so the outcome this
+  phase is heading for -- **beta unearned, the preset ships at v3** -- falls out of the code
+  rather than out of a manual edit.
+
+  The ordering is the part worth remembering. `Upgrade` cannot know about a field written after
+  it ran, so the repo's habit of upgrading a preset _so that_ it can carry a gain and then
+  writing the gain produces a document whose version does not cover it. Stamping is what a writer
+  does last, after the mutation, not what an upgrade does first.
 
 ### Phase 9.5: Verification and write-up
 

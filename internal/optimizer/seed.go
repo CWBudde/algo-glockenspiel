@@ -26,23 +26,21 @@ const seedFallbackDecayMs = 100.0
 // listed. A partial whose decay could not be fitted takes the median
 // half-life of those that could.
 //
-// The result is a current-version preset whatever the template's version
-// was: a v1 preset holds exactly four modes, and the recording decides how
-// many there are here. A v1 template's implicit defaults are made explicit
-// by preset.Upgrade, so nothing else about it changes.
+// The result carries whatever schema version its fields need and no more: a
+// v1 preset holds exactly four modes and the recording decides how many there
+// are here, so the seed is at least v2, and a v1 template's implicit defaults
+// are made explicit by preset.Upgrade. Nothing else about it changes.
 func PresetFromAnalysis(template *preset.Preset, measurement *analysis.Measurement, note, modes int) (*preset.Preset, error) {
 	if template == nil {
 		return nil, fmt.Errorf("template preset cannot be nil")
 	}
 
-	if template.Version != preset.CurrentVersion {
-		upgraded, err := preset.Upgrade(template)
-		if err != nil {
-			return nil, err
-		}
-
-		template = upgraded
+	upgraded, err := preset.Upgrade(template)
+	if err != nil {
+		return nil, err
 	}
+
+	template = upgraded
 
 	if measurement == nil || len(measurement.Partials) == 0 {
 		return nil, fmt.Errorf("the analysis lists no partials to seed from")

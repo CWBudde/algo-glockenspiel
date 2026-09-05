@@ -55,14 +55,9 @@ func PresetFromClusters(
 		coverage = DefaultSeedCoverage
 	}
 
-	seeded := template.Clone()
-	if seeded.Version != preset.CurrentVersion {
-		upgraded, err := preset.Upgrade(seeded)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		seeded = upgraded
+	seeded, err := preset.Upgrade(template)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	if authoredNote != 0 && authoredNote != seeded.Note {

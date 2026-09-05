@@ -45,7 +45,14 @@ const (
 	// it 2.65 times, with no error anywhere.
 	VersionV4 = "4.0"
 
-	// CurrentVersion is the schema new presets are written in.
+	// CurrentVersion is the newest version on the ladder: the most a reader in
+	// this repo is expected to understand.
+	//
+	// It is deliberately not "the version new presets are written in". A writer
+	// asks MinimumVersion what its document needs, so a preset carrying no v4
+	// field is not a v4 document however new v4 is. Stamping this constant on
+	// everything is what closed every calibrated preset to older readers the
+	// moment v4 landed.
 	CurrentVersion = VersionV4
 
 	// v1ModeCount is the fixed mode count a v1 document carries. It belongs to
@@ -281,19 +288,64 @@ func rejectNewerFields(data []byte, version string) error {
 	return nil
 }
 
-// Upgrade returns an equivalent preset in the current schema version. The v1
-// defaults it makes explicit -- the excitation-stage shaper, no per-mode
-// harmonics -- are exactly the ones the v1 loader applies, so the upgraded
-// preset renders identically to the original. A v2 document needs nothing made
-// explicit: v3 adds a field whose zero value is unity, so restamping it is
-// enough.
+// MinimumVersion is the oldest schema version whose field set can carry these
+// parameters: v4 once a keytrack is present, v3 once an output gain is, and v2
+// otherwise.
+//
+// It is deliberately never v1. v1 is a shape, not just a field set -- exactly
+// four modes, no per-mode harmonics, an implicit shaper stage -- and a writer
+// choosing a version for a document it is about to save should not be able to
+// pick a version that constrains the document's structure.
+//
+// The point of the function is that a document is stamped for what it holds
+// rather than for whenever it was written. A preset carrying no keytrack
+// renders identically under every reader from v3 onwards, so stamping it v4
+// would lock out a v3 reader -- the external module that hand-rolls its own
+// decode among them -- and buy nothing. The schema version a file claims is a
+// statement about what a reader must understand, not a timestamp.
+func MinimumVersion(params *model.BarParams) string {
+	switch {
+	case params.DecayKeytrack != nil:
+		return VersionV4
+	case params.OutputGainDB != 0:
+		return VersionV3
+	default:
+		return VersionV2
+	}
+}
+
+// Stamp sets a preset's version to the oldest one that can carry the fields it
+// now holds, never lowering a version it already claims.
+//
+// It is what a writer calls after mutating a document, and the ordering is the
+// point: Upgrade cannot know about a field set after it ran, so a caller that
+// upgrades and then writes a field has produced a document whose version does
+// not cover it. That sequence is exactly how "output_gain_db needs version 3.0"
+// gets raised about a preset the caller had just upgraded.
+func Stamp(p *Preset) {
+	if minimum := MinimumVersion(&p.Parameters); OlderThan(p.Version, minimum) {
+		p.Version = minimum
+	}
+}
+
+// Upgrade returns an equivalent preset in the oldest schema version that can
+// carry it, never below the version it already claims. The v1 defaults it makes
+// explicit -- the excitation-stage shaper, no per-mode harmonics -- are exactly
+// the ones the v1 loader applies, so the upgraded preset renders identically to
+// the original.
+//
+// It does not stamp CurrentVersion. Restamping a document with a version whose
+// fields it does not use costs it every older reader and gains it nothing, and
+// the cost is real: model/ is imported by an external module that hand-rolls
+// its own decode and cannot follow the ladder. So a v3 preset with no keytrack
+// stays v3, and only a preset that actually carries a keytrack becomes v4.
 func Upgrade(preset *Preset) (*Preset, error) {
 	if err := Validate(preset); err != nil {
 		return nil, err
 	}
 
 	upgraded := preset.Clone()
-	upgraded.Version = CurrentVersion
+	Stamp(upgraded)
 
 	if upgraded.Parameters.Chebyshev.Stage == "" {
 		upgraded.Parameters.Chebyshev.Stage = model.ChebyshevStageExcitation

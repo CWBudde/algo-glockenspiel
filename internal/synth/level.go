@@ -127,16 +127,19 @@ func ApplyOutputGain(p *preset.Preset) (gainDB float64, clamped bool, err error)
 		return 0, false, nil
 	}
 
+	// The upgrade is for the v1 defaults it makes explicit, not for the version
+	// it lands on -- Stamp below is what raises the version to cover the gain.
 	if preset.OlderThan(p.Version, preset.VersionV3) {
 		upgraded, upgradeErr := preset.Upgrade(p)
 		if upgradeErr != nil {
-			return 0, false, fmt.Errorf("upgrade the preset so it can carry an output gain: %w", upgradeErr)
+			return 0, false, fmt.Errorf("normalise the preset before giving it an output gain: %w", upgradeErr)
 		}
 
 		*p = *upgraded
 	}
 
 	p.Parameters.OutputGainDB = gainDB
+	preset.Stamp(p)
 
 	return gainDB, clamped, nil
 }

@@ -114,8 +114,13 @@ func TestUpgradePreservesParameters(t *testing.T) {
 			t.Fatalf("upgrade %s: %v", path, err)
 		}
 
-		if upgraded.Version != preset.CurrentVersion {
-			t.Fatalf("%s: upgraded version = %q, want %q", path, upgraded.Version, preset.CurrentVersion)
+		want := preset.MinimumVersion(&original.Parameters)
+		if preset.OlderThan(want, original.Version) {
+			want = original.Version
+		}
+
+		if upgraded.Version != want {
+			t.Fatalf("%s: upgraded version = %q, want %q", path, upgraded.Version, want)
 		}
 
 		// The upgrade fills in the stage the v1 loader implies; everything else
@@ -175,8 +180,14 @@ func TestV1RejectsV2OnlyFields(t *testing.T) {
 
 			mutate(upgraded)
 
+			// Stamped the way a writer stamps: for the fields the document
+			// ended up holding. The upgrade alone cannot know -- the mutation
+			// happens after it -- and that is the whole point of deriving the
+			// version from the parameters rather than from a constant.
+			upgraded.Version = preset.MinimumVersion(&upgraded.Parameters)
+
 			if err := preset.Validate(upgraded); err != nil {
-				t.Fatalf("the current version should accept this: %v", err)
+				t.Fatalf("a version carrying this field should accept it: %v", err)
 			}
 		})
 	}
@@ -422,10 +433,13 @@ func TestV4StillAcceptsTheOutputGain(t *testing.T) {
 	}
 }
 
-// TestUpgradeToV4LeavesTheSoundAlone is why v4 can be the current version
-// without touching a single shipped file: an older document has no keytrack, a
-// nil keytrack means exactly the law those documents were authored under, so
-// restamping them changes nothing about how they render.
+// TestUpgradeToV4LeavesTheSoundAlone is why v4 can exist without touching a
+// single shipped file: none of them carries a keytrack, so none of them is a v4
+// document, and upgrading one neither restamps it nor changes how it renders.
+//
+// The version a file claims says what a reader must understand to render it
+// correctly. A preset with no keytrack renders identically under a v3 reader,
+// so claiming v4 would lock that reader out and buy nothing.
 func TestUpgradeToV4LeavesTheSoundAlone(t *testing.T) {
 	for _, path := range []string{
 		"../../assets/presets/default.json",
@@ -441,8 +455,14 @@ func TestUpgradeToV4LeavesTheSoundAlone(t *testing.T) {
 			t.Fatalf("upgrade %s: %v", path, err)
 		}
 
-		if upgraded.Version != preset.VersionV4 {
-			t.Errorf("%s upgraded to %q, want %q", path, upgraded.Version, preset.VersionV4)
+		if upgraded.Version == preset.VersionV4 {
+			t.Errorf("%s upgraded to %q; with no keytrack it is not a v4 document",
+				path, upgraded.Version)
+		}
+
+		if want := preset.MinimumVersion(&upgraded.Parameters); upgraded.Version != want {
+			t.Errorf("%s upgraded to %q, want the version its fields need, %q",
+				path, upgraded.Version, want)
 		}
 
 		if upgraded.Parameters.DecayKeytrack != nil {
@@ -453,5 +473,82 @@ func TestUpgradeToV4LeavesTheSoundAlone(t *testing.T) {
 		if got := upgraded.Parameters.ResolvedDecayKeytrack(); got != 1 {
 			t.Errorf("%s resolves its absent keytrack to %v, want 1", path, got)
 		}
+	}
+}
+
+// TestTheVersionIsEarnedByTheFieldsTheDocumentUses pins the rule the ladder was
+// written for, from the writing side rather than the reading side.
+//
+// Every other version test asks what a reader must reject. This one asks what a
+// writer may claim, which is the half that went wrong in practice: a fit that
+// stamps CurrentVersion on everything it writes hands a v3-only reader a
+// document it refuses, over a field the document does not contain and would not
+// have used. The keytrack is the second field to reach this ladder, and the
+// first one the repo shipped before deciding whether it had earned its version.
+func TestTheVersionIsEarnedByTheFieldsTheDocumentUses(t *testing.T) {
+	keytrack := 1.0
+
+	for _, testCase := range []struct {
+		name  string
+		apply func(*model.BarParams)
+		want  string
+	}{
+		{name: "bare parameters", apply: func(*model.BarParams) {}, want: preset.VersionV2},
+		{
+			name:  "an output gain",
+			apply: func(params *model.BarParams) { params.OutputGainDB = -3 },
+			want:  preset.VersionV3,
+		},
+		{
+			// 1.0 is the neutral value, and it still earns v4: the document
+			// carries the key, so a v3 reader would refuse it, and a writer that
+			// pretended otherwise would produce a file no reader agrees about.
+			name:  "a neutral keytrack",
+			apply: func(params *model.BarParams) { params.DecayKeytrack = &keytrack },
+			want:  preset.VersionV4,
+		},
+		{
+			name: "both",
+			apply: func(params *model.BarParams) {
+				params.OutputGainDB = -3
+				params.DecayKeytrack = &keytrack
+			},
+			want: preset.VersionV4,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			params := model.BarParams{
+				InputMix:        0.1,
+				FilterFrequency: 1000,
+				BaseFrequency:   440,
+				Modes: []model.ModeParams{
+					{Amplitude: 0.5, Frequency: 440, DecayMs: 50},
+				},
+			}
+			testCase.apply(&params)
+
+			if got := preset.MinimumVersion(&params); got != testCase.want {
+				t.Errorf("MinimumVersion = %q, want %q", got, testCase.want)
+			}
+
+			// Whatever the minimum is, a document already claiming a newer
+			// version keeps it: downgrading a file is not an upgrade's business,
+			// and a reader that accepted it yesterday must accept it today.
+			candidate := &preset.Preset{
+				Version:    preset.VersionV4,
+				Name:       "ladder",
+				Note:       69,
+				Parameters: params,
+			}
+
+			upgraded, err := preset.Upgrade(candidate)
+			if err != nil {
+				t.Fatalf("upgrade: %v", err)
+			}
+
+			if upgraded.Version != preset.VersionV4 {
+				t.Errorf("upgrading a v4 document produced %q", upgraded.Version)
+			}
+		})
 	}
 }
