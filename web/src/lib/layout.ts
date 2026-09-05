@@ -3,10 +3,22 @@
 // pure, so it can be computed once at module load and rendered by React
 // without any DOM of its own.
 
-export const FIRST_NOTE = 60; // C4
-export const LAST_NOTE = 84; // C6
-export const KEYBOARD_FIRST_NOTE = 36; // C2
-export const KEYBOARD_LAST_NOTE = 96; // C7
+import {
+  KEYBOARD_FIRST_NOTE,
+  KEYBOARD_LAST_NOTE,
+} from "../api/fitSchema.generated";
+
+// The playable rack: the two octaves drawn large and bound to computer keys.
+// C6-C8 is the top two octaves of the instrument's G5-C8 span, which is where a
+// glockenspiel part actually sits.
+export const FIRST_NOTE = 84; // C6
+export const LAST_NOTE = 108; // C8
+
+// The full keyboard span comes from the Go model rather than being typed again
+// here. These two numbers used to be a second copy reading 36 and 96, and when
+// the engine moved to the glockenspiel's real range the copy would have gone on
+// drawing keys whose note-ons the engine refuses to build and drops silently.
+export { KEYBOARD_FIRST_NOTE, KEYBOARD_LAST_NOTE };
 export const MOBILE_WHITE_UNIT_PX = 44;
 export const MOBILE_VIEWPORT_WHITE_UNITS = 7;
 /** Fundamental-mode nodes of an ideal free-free bar, measured from each end. */

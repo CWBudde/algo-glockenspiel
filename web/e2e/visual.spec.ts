@@ -426,14 +426,14 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
     .poll(() => viewport.evaluate((element) => element.scrollLeft))
     .toBe(MOBILE_PLAYFIELD.initialScrollLeft);
 
-  const rackC4 = rack.locator('.bar[data-note="60"]');
-  const pianoC4 = keyboard.locator('.piano-key[data-note="60"]');
-  const [rackC4Box, pianoC4Box] = await Promise.all([
-    rackC4.boundingBox(),
-    pianoC4.boundingBox(),
+  const rackC6 = rack.locator('.bar[data-note="84"]');
+  const pianoC6 = keyboard.locator('.piano-key[data-note="84"]');
+  const [rackC6Box, pianoC6Box] = await Promise.all([
+    rackC6.boundingBox(),
+    pianoC6.boundingBox(),
   ]);
-  expect(rackC4Box).not.toBeNull();
-  expect(pianoC4Box).not.toBeNull();
+  expect(rackC6Box).not.toBeNull();
+  expect(pianoC6Box).not.toBeNull();
   const viewportBox = await viewport.boundingBox();
   expect(viewportBox).not.toBeNull();
   expect(viewportBox!.width).toBeCloseTo(MOBILE_PLAYFIELD.viewportWidth, 1);
@@ -460,24 +460,24 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
       },
     );
   expect(initiallyFramedWhites).toEqual([
-    "C4",
-    "D4",
-    "E4",
-    "F4",
-    "G4",
-    "A4",
-    "B4",
+    "C6",
+    "D6",
+    "E6",
+    "F6",
+    "G6",
+    "A6",
+    "B6",
   ]);
 
-  expect(rackC4Box!.x).toBeGreaterThanOrEqual(viewportBox!.x);
-  expect(rackC4Box!.x + rackC4Box!.width).toBeLessThanOrEqual(
+  expect(rackC6Box!.x).toBeGreaterThanOrEqual(viewportBox!.x);
+  expect(rackC6Box!.x + rackC6Box!.width).toBeLessThanOrEqual(
     viewportBox!.x + viewportBox!.width,
   );
   expect(
     Math.abs(
-      rackC4Box!.x +
-        rackC4Box!.width / 2 -
-        (pianoC4Box!.x + pianoC4Box!.width / 2),
+      rackC6Box!.x +
+        rackC6Box!.width / 2 -
+        (pianoC6Box!.x + pianoC6Box!.width / 2),
     ),
   ).toBeLessThanOrEqual(1);
 
@@ -683,7 +683,7 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
       return (
         keyBox.left >= viewportBox.left && keyBox.right <= viewportBox.right
       );
-    }, '.piano-key[data-note="36"]'),
+    }, '.piano-key[data-note="79"]'),
   ).toBe(true);
   await viewport.evaluate((element) => {
     element.scrollLeft = element.scrollWidth;
@@ -700,7 +700,7 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
       return (
         keyBox.left >= viewportBox.left && keyBox.right <= viewportBox.right
       );
-    }, '.piano-key[data-note="96"]'),
+    }, '.piano-key[data-note="108"]'),
   ).toBe(true);
 
   const mobileMalletOverlap = await rack.evaluate((element) => {
@@ -997,14 +997,14 @@ test("keyboard keeps its full named range and active-state hook", async ({
   const keys = keyboard.getByRole("button");
   const whites = keyboard.locator(".piano-key.white");
   const blacks = keyboard.locator(".piano-key.black");
-  const first = keyboard.locator('.piano-key[data-note="36"]');
-  const last = keyboard.locator('.piano-key[data-note="96"]');
+  const first = keyboard.locator('.piano-key[data-note="79"]');
+  const last = keyboard.locator('.piano-key[data-note="108"]');
 
-  await expect(keys).toHaveCount(61);
-  await expect(whites).toHaveCount(36);
-  await expect(blacks).toHaveCount(25);
-  await expect(first).toHaveAccessibleName("C2");
-  await expect(last).toHaveAccessibleName("C7");
+  await expect(keys).toHaveCount(30);
+  await expect(whites).toHaveCount(18);
+  await expect(blacks).toHaveCount(12);
+  await expect(first).toHaveAccessibleName("G5");
+  await expect(last).toHaveAccessibleName("C8");
 
   const names = await keys.evaluateAll((elements) =>
     elements.map((element) => element.getAttribute("aria-label")),
@@ -1013,18 +1013,18 @@ test("keyboard keeps its full named range and active-state hook", async ({
     elements.map((element) => Number((element as HTMLElement).dataset.note)),
   );
   expect(names.every((name) => name !== null && name.length > 0)).toBe(true);
-  expect(new Set(names).size).toBe(61);
-  expect(new Set(notes).size).toBe(61);
-  expect(Math.min(...notes)).toBe(36);
-  expect(Math.max(...notes)).toBe(96);
+  expect(new Set(names).size).toBe(30);
+  expect(new Set(notes).size).toBe(30);
+  expect(Math.min(...notes)).toBe(79);
+  expect(Math.max(...notes)).toBe(108);
 
-  const pianoC4 = keyboard.locator('.piano-key[data-note="60"]');
-  const restingBackground = await pianoC4.evaluate(
+  const pianoC6 = keyboard.locator('.piano-key[data-note="84"]');
+  const restingBackground = await pianoC6.evaluate(
     (element) => getComputedStyle(element).backgroundImage,
   );
-  await pianoC4.evaluate((element) => element.classList.add("is-active"));
-  await expect(pianoC4).toHaveClass(/\bis-active\b/);
-  const activeBackground = await pianoC4.evaluate(
+  await pianoC6.evaluate((element) => element.classList.add("is-active"));
+  await expect(pianoC6).toHaveClass(/\bis-active\b/);
+  const activeBackground = await pianoC6.evaluate(
     (element) => getComputedStyle(element).backgroundImage,
   );
   expect(activeBackground).not.toBe(restingBackground);

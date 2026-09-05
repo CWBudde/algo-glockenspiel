@@ -31,17 +31,37 @@ at the peak are not matched in loudness — a bar with a taller strike transient
 reaches the same peak at a lower RMS — and that difference is a property of the
 bar rather than something to normalise away.
 
-**Its decays clear the ceiling at the bottom key.** Transposing down divides
-every decay by the frequency ratio, so a preset authored at note 69 may carry at
-most 743 ms; `model.ValidateAuthoredBarParams` enforces this and says so.
+The keyboard is the orchestral glockenspiel's sounding range, **G5 to C8, MIDI
+79 to 108** (`model.KeyboardFirstNote`, `model.KeyboardLastNote`). All three
+constraints below are consequences of transposing across it, so all three moved
+when it did.
 
-**Its modes clear the frequency ceiling at the top key.** This is the mirror
-image and nothing validates it: transposing up multiplies mode frequencies, so a
-preset authored at note 69 may carry no mode above roughly **10.5 kHz** —
-50 kHz, `model.FrequencyMaxHz`, divided by the ratio from note 69 to note 96. A
-preset that breaks it fails `NewBar` at the top of the keyboard and its note-ons
-are discarded without a sound. `TestEveryKeyboardNoteRendersAudio` sweeps every
+**Its decays clear the ceiling at the bottom key.** Transposing down divides
+every decay by the frequency ratio, so a preset authored at note 100 may carry
+at most 1487 ms and one at note 108 only 936 ms; anything at or below note 79
+may use the full 5000 ms. `model.ValidateAuthoredBarParams` enforces this and
+says so.
+
+**Its decays clear the _floor_ at the top key.** The exact mirror, and the one
+that bites a preset authored low: transposing up divides decays, so a preset
+authored at note 69 may carry no mode whose decay falls under
+`model.DecayMsMin × 9.51` — 9.51 being the ratio from note 69 to note 108.
+`default.json`'s shortest mode is 0.5605 ms and lands at 0.0589 ms there, which
+is why the floor is 0.01 ms rather than the 0.1 ms it was.
+
+**Its modes clear the frequency ceiling at the top key.** Nothing validates
+this one: transposing up multiplies mode frequencies, so a preset authored at
+note 69 may carry no mode above roughly **21 kHz** — 200 kHz,
+`model.FrequencyMaxHz`, divided by the ratio from note 69 to note 108. A preset
+that breaks it fails `NewBar` at the top of the keyboard and its note-ons are
+discarded without a sound. `TestEveryKeyboardNoteRendersAudio` sweeps every
 embedded preset across the whole range for exactly this reason.
+
+Both ceilings scale with the same ratio, so **re-authoring a preset at a
+different note changes neither**: `max_mode × 2^((top−note)/12)` and
+`min_decay ÷ 2^((top−note)/12)` are invariant under `model.TransposeToNote`.
+The only levers are the constants themselves, which is why raising the top key
+to C8 moved `FrequencyMaxHz` and `DecayMsMin` rather than the preset files.
 
 ## Provenance
 
@@ -54,7 +74,7 @@ embedded preset across the whole range for exactly this reason.
 fundamental is 1053.6 Hz, and the preset is retuned so that it lands instead on
 the default preset's own first mode, 1756.5243 Hz, making the two sounds a
 unison rather than a sixth apart. Two modes fitted at 8.0 and 9.8 kHz were
-dropped to stay under the 10.5 kHz ceiling once retuned, which cost about 1 dB
+dropped to stay under the then-10.5 kHz ceiling once retuned, which cost about 1 dB
 of fit; the shipping commit records that the retuned fit reaches a residual
 11.1 dB below the reference RMS.
 
