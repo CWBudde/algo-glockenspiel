@@ -20,6 +20,75 @@ type Scored struct {
 	Note   int
 	Scores map[int]float64
 	Mean   float64
+
+	// Joint marks a preset fitted against several recordings at once, read from
+	// its provenance rather than from its name or its authored note.
+	//
+	// It has to be read from somewhere, because the joint preset is authored at
+	// the median of the pack and therefore occupies a diagonal cell exactly as
+	// a per-note preset does. A diagonal that quietly included it would be the
+	// comparison scoring itself, and the number it produced -- the price of one
+	// preset covering the range -- would be smaller than the truth by however
+	// well the joint fit did at that one note.
+	Joint bool
+}
+
+// Comparison is what the matrix was built to answer.
+type Comparison struct {
+	// DiagonalMean is the mean over notes of the score reached by the preset
+	// fitted to that note. It is the unreachable floor: every note fitted to
+	// itself, twenty presets doing the work of one.
+	DiagonalMean float64
+	DiagonalN    int
+
+	// BestSingle is the lowest row mean among the per-note presets -- the best
+	// any one bar's preset manages across the whole range.
+	BestSingle     float64
+	BestSingleName string
+
+	// JointMean is the joint preset's row mean, NaN when none was scored, and
+	// Price is JointMean - DiagonalMean: what one preset covering the range
+	// costs against twenty covering it one note each.
+	JointMean float64
+	Price     float64
+}
+
+// Compare reduces the matrix to the numbers the phase turns on.
+func Compare(rows []Scored) Comparison {
+	out := Comparison{
+		DiagonalMean: math.NaN(),
+		BestSingle:   math.NaN(),
+		JointMean:    math.NaN(),
+		Price:        math.NaN(),
+	}
+
+	diagonal := 0.0
+
+	for _, row := range rows {
+		if row.Joint {
+			out.JointMean = row.Mean
+
+			continue
+		}
+
+		if score, ok := row.Scores[row.Note]; ok && !math.IsInf(score, 1) && !math.IsNaN(score) {
+			diagonal += score
+			out.DiagonalN++
+		}
+
+		if !math.IsNaN(row.Mean) && (math.IsNaN(out.BestSingle) || row.Mean < out.BestSingle) {
+			out.BestSingle = row.Mean
+			out.BestSingleName = row.Name
+		}
+	}
+
+	if out.DiagonalN > 0 {
+		out.DiagonalMean = diagonal / float64(out.DiagonalN)
+	}
+
+	out.Price = out.JointMean - out.DiagonalMean
+
+	return out
 }
 
 // ScorePresets scores every preset against every note of a planned pack.
@@ -95,6 +164,7 @@ func ScorePresets(dir string, paths []string, sampleRate, velocity int) ([]Score
 			Name:   filepath.Base(filepath.Dir(path)),
 			Note:   candidate.Note,
 			Scores: make(map[int]float64, len(loaded)),
+			Joint:  candidate.Provenance != nil && len(candidate.Provenance.References) > 0,
 		}
 
 		total, counted := 0.0, 0

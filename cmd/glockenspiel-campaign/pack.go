@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -261,8 +262,31 @@ func newPackScoreCmd() *cobra.Command {
 			}
 
 			for _, row := range rows {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%-28s authored %3d  mean %.6f\n",
-					row.Name, row.Note, row.Mean)
+				kind := ""
+				if row.Joint {
+					kind = "  (joint)"
+				}
+
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%-28s authored %3d  mean %.6f%s\n",
+					row.Name, row.Note, row.Mean, kind)
+			}
+
+			comparison := pack.Compare(rows)
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"\ndiagonal mean %.6f over %d notes -- every note fitted to itself\n",
+				comparison.DiagonalMean, comparison.DiagonalN)
+
+			if comparison.BestSingleName != "" {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"best single-note preset %s, mean %.6f\n",
+					comparison.BestSingleName, comparison.BestSingle)
+			}
+
+			if !math.IsNaN(comparison.JointMean) {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+					"joint mean %.6f\nprice of one preset covering %d notes: %+.6f\n",
+					comparison.JointMean, comparison.DiagonalN, comparison.Price)
 			}
 
 			return nil

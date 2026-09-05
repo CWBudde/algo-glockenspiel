@@ -544,3 +544,46 @@ func TestTheMatrixScoresThePresetItWasGiven(t *testing.T) {
 		}
 	}
 }
+
+// TestTheDiagonalExcludesTheJointPreset guards the one number this phase
+// exists to produce.
+//
+// The joint preset is authored at the median of the pack, so it occupies a
+// diagonal cell exactly as a per-note preset does. A diagonal that included it
+// would be the comparison scoring itself, and the price of one preset covering
+// the range would come out smaller than the truth by however well the joint fit
+// did at that single note -- with nothing in the output to say so.
+func TestTheDiagonalExcludesTheJointPreset(t *testing.T) {
+	rows := []pack.Scored{
+		{Name: "084", Note: 84, Mean: 0.40, Scores: map[int]float64{84: 0.30, 94: 0.50}},
+		{Name: "094", Note: 94, Mean: 0.44, Scores: map[int]float64{84: 0.58, 94: 0.30}},
+		{Name: "joint", Note: 94, Mean: 0.35, Joint: true, Scores: map[int]float64{84: 0.36, 94: 0.34}},
+	}
+
+	got := pack.Compare(rows)
+
+	// Two per-note presets contribute, at 0.30 each. The joint preset's 0.34 at
+	// note 94 must not be among them.
+	if got.DiagonalN != 2 {
+		t.Errorf("the diagonal spans %d notes, want 2", got.DiagonalN)
+	}
+
+	if math.Abs(got.DiagonalMean-0.30) > 1e-12 {
+		t.Errorf("diagonal mean %.6f, want 0.30 -- the joint preset leaked into it", got.DiagonalMean)
+	}
+
+	if math.Abs(got.JointMean-0.35) > 1e-12 {
+		t.Errorf("joint mean %.6f, want 0.35", got.JointMean)
+	}
+
+	if math.Abs(got.Price-0.05) > 1e-12 {
+		t.Errorf("price %.6f, want +0.05", got.Price)
+	}
+
+	// The best single-note preset is the best row mean among the non-joint
+	// rows, and the joint preset must not win that either -- it is the thing
+	// being compared against them, not one of them.
+	if got.BestSingleName != "084" {
+		t.Errorf("best single-note preset is %q, want %q", got.BestSingleName, "084")
+	}
+}

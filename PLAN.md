@@ -1497,6 +1497,33 @@ Two traps, both found rather than avoided:
   to measure. Found by reading a finished run directory; the first pack run was killed 20 minutes
   in, `Spec.AuthoredNote` added, and the run restarted.
 
+### Phase 9.2: The regression
+
+**Done, run pending.** `pack regress` fits `log2(decay_ms)` and `log2(ratio)` against MIDI note
+and reports the key-tracking exponent each slope implies, the scatter it leaves, and the scatter
+the model's own law leaves.
+
+It groups by **ratio cluster, not by mode index**, and that is the substance of the step rather
+than a detail of it. The fits hold between four and nine modes depending on how many partials the
+analysis found -- g6 came back with four, ds6 with nine -- so "mode 3" is the fourth strongest
+partial of whatever that note happened to have, and at two notes with different mode counts it is
+routinely a different piece of the bar's physics. Regressing within a mode index pools
+measurements of different partials and calls the mixture key tracking. The first five notes show
+it directly: mode 0's ratio to the fundamental runs from 1.001 to 3.531, because c6's fit
+abandoned its own fundamental and the other four did not. Clustering is single-linkage on
+`log2(ratio)` at a gap of 0.04, chosen from the data: a partial's ratio varies about 1% across the
+pack while the closest real partials sit 5% apart.
+
+**This puts a premise of this whole phase in doubt, and it is the premise β was judged on.** The
+table at the top of Phase 9 records 0.33 octaves of "irreducible" bar-to-bar decay scatter, 0.66x
+the objective's norm, and that number is the reason β was called second-order before any code was
+written. Grouped by cluster over the first five notes, the strong partials scatter far less --
+0.088 octaves at the free-free ratio, 0.048 at 5.35x, 0.249 at 8.93x. If that survives the full
+twenty notes, the 0.33 figure was an artefact of pooling different partials and **β is more
+identifiable than this plan assumed**. It does not make β right; it makes the ablation worth
+running rather than a formality, and it is recorded here because the prior was written down first
+and has to be allowed to be wrong.
+
 ### Phase 9.3: The joint fit
 
 **Done, run pending.** `ObjectiveFunction` was extended rather than forked -- `optimizer.Polish`

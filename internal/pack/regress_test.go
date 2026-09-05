@@ -1,7 +1,9 @@
 package pack_test
 
 import (
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/cwbudde/algo-glockenspiel/internal/pack"
@@ -91,5 +93,90 @@ func TestFitLog2RefusesTooFewPoints(t *testing.T) {
 
 	if _, ok := pack.FitLog2([]int{84, 90, 96}, []float64{600, 0, 300}); ok {
 		t.Error("a non-positive decay was accepted into a log regression")
+	}
+}
+
+// TestRatioClustersFollowThePartialNotTheIndex is the whole reason clustering
+// exists. The fits hold different numbers of modes at different notes -- g6
+// came back with four and ds6 with nine -- so a mode index is a position in one
+// note's list, and two notes' "mode 2" are routinely different partials.
+//
+// The fixture is that failure exactly: three notes whose second partial sits at
+// the free-free ratio, one of which additionally found a weak partial below it,
+// pushing everything after it down one index.
+func TestRatioClustersFollowThePartialNotTheIndex(t *testing.T) {
+	rows := []pack.ModeRow{
+		// c6: fundamental, free-free, and a high partial.
+		{Note: 84, Index: 0, Ratio: 1.00, DecayMs: 800},
+		{Note: 84, Index: 1, Ratio: 2.77, DecayMs: 400},
+		{Note: 84, Index: 2, Ratio: 5.36, DecayMs: 200},
+
+		// d6: the same three partials, at the same indices.
+		{Note: 86, Index: 0, Ratio: 1.01, DecayMs: 780},
+		{Note: 86, Index: 1, Ratio: 2.76, DecayMs: 390},
+		{Note: 86, Index: 2, Ratio: 5.33, DecayMs: 195},
+
+		// e6: an extra weak partial at 1.9 shifts every later index by one, so
+		// its free-free partial is "mode 2" where the others' is "mode 1".
+		{Note: 88, Index: 0, Ratio: 1.00, DecayMs: 760},
+		{Note: 88, Index: 1, Ratio: 1.90, DecayMs: 500},
+		{Note: 88, Index: 2, Ratio: 2.74, DecayMs: 380},
+		{Note: 88, Index: 3, Ratio: 5.35, DecayMs: 190},
+	}
+
+	clusters := pack.ByRatioCluster(rows)
+
+	want := []struct {
+		ratio float64
+		notes int
+	}{
+		{1.00, 3}, // the fundamental, at every note
+		{1.90, 1}, // e6's extra partial, alone
+		{2.76, 3}, // the free-free ratio, at every note despite the index shift
+		{5.35, 3},
+	}
+
+	if len(clusters) != len(want) {
+		got := make([]string, 0, len(clusters))
+		for _, cluster := range clusters {
+			got = append(got, fmt.Sprintf("%.2f x%d", cluster.Rows[0].Ratio, cluster.Notes))
+		}
+
+		t.Fatalf("clustered into %d groups (%s), want %d", len(clusters), strings.Join(got, ", "), len(want))
+	}
+
+	for i, expect := range want {
+		mean := 0.0
+		for _, row := range clusters[i].Rows {
+			mean += row.Ratio
+		}
+
+		mean /= float64(len(clusters[i].Rows))
+
+		if math.Abs(mean-expect.ratio) > 0.05 {
+			t.Errorf("cluster %d sits at %.3f, want about %.2f", i, mean, expect.ratio)
+		}
+
+		if clusters[i].Notes != expect.notes {
+			t.Errorf("cluster %d spans %d notes, want %d", i, clusters[i].Notes, expect.notes)
+		}
+	}
+
+	// The index grouping the clustering replaces gets this wrong, and that is
+	// the claim rather than a bit of colour: mode 1 pools e6's 1.90 partial
+	// with the other two notes' free-free partial, and the mixture is what a
+	// regression would have called key tracking.
+	_, byIndex := pack.ByModeIndex(rows)
+
+	spread := 0.0
+	for _, row := range byIndex[1] {
+		if delta := math.Abs(row.Ratio - 2.76); delta > spread {
+			spread = delta
+		}
+	}
+
+	if spread < 0.5 {
+		t.Errorf("mode index 1 holds ratios within %.2f of the free-free partial, so this "+
+			"fixture no longer exercises the failure clustering exists to fix", spread)
 	}
 }

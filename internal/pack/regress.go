@@ -178,6 +178,9 @@ func FitLog2(notes []int, values []float64) (Fit, bool) {
 }
 
 // ByModeIndex groups rows by their mode index, ascending.
+//
+// This is what the fit produced, note by note, and it is the wrong grouping to
+// regress over. See ByRatioCluster.
 func ByModeIndex(rows []ModeRow) ([]int, map[int][]ModeRow) {
 	groups := make(map[int][]ModeRow)
 	for _, row := range rows {
@@ -194,70 +197,168 @@ func ByModeIndex(rows []ModeRow) ([]int, map[int][]ModeRow) {
 	return indices, groups
 }
 
+// clusterGapLog2 is the gap in log2(ratio) that separates one partial from the
+// next, 0.04 -- about 2.8%, or half a semitone.
+//
+// It is chosen from the measurement rather than picked round. Within one
+// partial the ratio varies by about 1% across the pack: the free-free ratio
+// reads 2.77, 2.77, 2.76, 2.76, 2.74 at the first five notes. Between adjacent
+// partials the smallest real gap is much larger: c6's analysis holds 5.36 and
+// 5.66, which are 5.5% apart. A threshold between 1% and 5.5% separates the two
+// cases, and 2.8% sits in the middle of that window on a log scale.
+const clusterGapLog2 = 0.04
+
+// Cluster is one partial of the instrument, gathered across the notes it was
+// fitted at.
+type Cluster struct {
+	Rows []ModeRow
+
+	// Notes is how many distinct notes contributed a mode. A cluster present at
+	// four notes of twenty is not a partial of the instrument, it is four fits
+	// that happened to land near each other, and the report says so rather than
+	// regressing it.
+	Notes int
+}
+
+// ByRatioCluster groups rows by the partial they are, rather than by the
+// position they occupy in their own note's mode list.
+//
+// The distinction is not pedantic and it is why this function exists. The fits
+// hold between four and nine modes depending on how many partials the analysis
+// found -- g6 came back with four, ds6 with nine -- so "mode 3" is the fourth
+// strongest partial of whatever that note happened to have, and at two notes
+// with different mode counts it is very often a different piece of the bar's
+// physics. Regressing decay on pitch within a mode index therefore pools
+// measurements of different partials and calls the mixture key tracking. The
+// first five notes already show it: mode 0's ratio to the fundamental ranges
+// from 1.001 to 3.531, because c6's fit abandoned its fundamental and the
+// others did not.
+//
+// Clustering is single-linkage on log2(ratio) with a fixed gap, which is the
+// right shape for this data rather than a simplification of k-means: the number
+// of partials is not known in advance, the clusters are far narrower than the
+// gaps between them, and a gap rule needs no seeding and gives the same answer
+// every time. Returned in ascending ratio order.
+func ByRatioCluster(rows []ModeRow) []Cluster {
+	usable := make([]ModeRow, 0, len(rows))
+
+	for _, row := range rows {
+		if row.Ratio > 0 && !math.IsInf(row.Ratio, 0) && !math.IsNaN(row.Ratio) {
+			usable = append(usable, row)
+		}
+	}
+
+	if len(usable) == 0 {
+		return nil
+	}
+
+	sort.Slice(usable, func(i, j int) bool { return usable[i].Ratio < usable[j].Ratio })
+
+	clusters := []Cluster{{Rows: []ModeRow{usable[0]}}}
+
+	for _, row := range usable[1:] {
+		current := &clusters[len(clusters)-1]
+		previous := current.Rows[len(current.Rows)-1]
+
+		if math.Log2(row.Ratio)-math.Log2(previous.Ratio) > clusterGapLog2 {
+			clusters = append(clusters, Cluster{Rows: []ModeRow{row}})
+
+			continue
+		}
+
+		current.Rows = append(current.Rows, row)
+	}
+
+	for i := range clusters {
+		clusters[i].Notes = countNotes(clusters[i].Rows)
+	}
+
+	return clusters
+}
+
 // Report renders the note-versus-partial regression as Markdown.
 //
 // Two questions, one table each. Does the decay follow the model's law -- and
 // what would a fitted exponent buy over it. And is the modal structure a
 // ratio-scale of one bar, which is what transposing a single preset assumes.
+//
+// Both tables group by ratio cluster rather than by mode index, for the reason
+// ByRatioCluster gives: the fits hold different numbers of modes at different
+// notes, so a mode index is a position in one note's list and not a partial of
+// the instrument. The `notes` column is the one to read first -- a cluster
+// found at a handful of the pack's notes is not a partial, and every number
+// beside it is a coincidence rather than a measurement.
 func Report(rows []ModeRow, packName string) string {
 	var out strings.Builder
 
-	indices, groups := ByModeIndex(rows)
+	clusters := ByRatioCluster(rows)
+	total := countNotes(rows)
 
 	fmt.Fprintf(&out, "# Note versus partial, %s\n\n", packName)
-	fmt.Fprintf(&out, "%d fitted modes across %d notes.\n\n", len(rows), countNotes(rows))
+	fmt.Fprintf(&out, "%d fitted modes across %d notes, in %d ratio clusters.\n\n",
+		len(rows), total, len(clusters))
+
+	out.WriteString("Clusters are single-linkage on log2 of the ratio to the fundamental, split at a gap of\n")
+	out.WriteString("0.04 (about half a semitone). A partial's ratio varies by about 1% across the pack and\n")
+	out.WriteString("the closest real partials sit 5% apart, so the threshold falls between the two.\n\n")
 
 	out.WriteString("## Decay against pitch\n\n")
 	out.WriteString("`beta` is the key-tracking exponent the slope implies: transposition divides a decay by\n")
 	out.WriteString("`ratio^beta`, and the model hard-codes `beta = 1`. `fitted` and `pinned` are the residual\n")
 	out.WriteString("scatter in octaves around the fitted line and around the model's own law; the objective\n")
 	out.WriteString("scores `partial_decay_octaves` against a norm of 0.5, so an octave of scatter is two norms.\n\n")
-	out.WriteString("| mode | n | beta | R2 | fitted sd (oct) | pinned sd (oct) | what beta buys |\n")
-	out.WriteString("| --- | --- | --- | --- | --- | --- | --- |\n")
+	out.WriteString("| ratio | notes | of | beta | R2 | fitted sd (oct) | pinned sd (oct) | what beta buys |\n")
+	out.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
 
-	for _, index := range indices {
-		group := groups[index]
-		notes, decays := columns(group, func(r ModeRow) float64 { return r.DecayMs })
+	for _, cluster := range clusters {
+		notes, decays := columns(cluster.Rows, func(r ModeRow) float64 { return r.DecayMs })
+		ratios := ratiosOf(cluster.Rows)
 
 		fit, ok := FitLog2(notes, decays)
 		if !ok {
-			fmt.Fprintf(&out, "| %d | %d | — | — | — | — | too few notes |\n", index, fit.N)
+			fmt.Fprintf(&out, "| %.2f | %d | %d | — | — | — | — | too few notes |\n",
+				mean(ratios), cluster.Notes, total)
 
 			continue
 		}
 
-		fmt.Fprintf(&out, "| %d | %d | %+.2f | %.3f | %.3f | %.3f | %.3f |\n",
-			index, fit.N, fit.Exponent(), fit.R2, fit.ResidualSD, fit.PinnedSD,
-			fit.PinnedSD-fit.ResidualSD)
+		fmt.Fprintf(&out, "| %.2f | %d | %d | %+.2f | %.3f | %.3f | %.3f | %.3f |\n",
+			mean(ratios), cluster.Notes, total, fit.Exponent(), fit.R2,
+			fit.ResidualSD, fit.PinnedSD, fit.PinnedSD-fit.ResidualSD)
 	}
 
 	out.WriteString("\n## Modal structure against pitch\n\n")
-	out.WriteString("Each mode's ratio to its note's own fundamental. Transposing one preset across the\n")
-	out.WriteString("keyboard assumes these are constant: every mode is a fixed multiple of the first, at\n")
-	out.WriteString("every note. A ratio that drifts with pitch is structure no single preset can carry.\n\n")
-	out.WriteString("| mode | n | mean ratio | sd | min | max | slope /octave |\n")
+	out.WriteString("Each cluster's ratio to its note's own fundamental. Transposing one preset across the\n")
+	out.WriteString("keyboard assumes these are constant: every partial is a fixed multiple of the\n")
+	out.WriteString("fundamental, at every note. A ratio that drifts with pitch is structure no single preset\n")
+	out.WriteString("can carry, and a cluster that appears at only some notes is structure it cannot even\n")
+	out.WriteString("see.\n\n")
+	out.WriteString("| ratio | notes | of | sd | min | max | slope /octave |\n")
 	out.WriteString("| --- | --- | --- | --- | --- | --- | --- |\n")
 
-	for _, index := range indices {
-		group := groups[index]
-		notes, ratios := columns(group, func(r ModeRow) float64 { return r.Ratio })
-
-		if len(ratios) < 2 {
-			continue
-		}
-
-		fit, ok := FitLog2(notes, ratios)
+	for _, cluster := range clusters {
+		notes, ratios := columns(cluster.Rows, func(r ModeRow) float64 { return r.Ratio })
 
 		slope := "—"
-		if ok {
+		if fit, ok := FitLog2(notes, ratios); ok {
 			slope = fmt.Sprintf("%+.3f", fit.Slope*12)
 		}
 
-		fmt.Fprintf(&out, "| %d | %d | %.3f | %.3f | %.3f | %.3f | %s |\n",
-			index, len(ratios), mean(ratios), stddev(ratios), minOf(ratios), maxOf(ratios), slope)
+		fmt.Fprintf(&out, "| %.3f | %d | %d | %.3f | %.3f | %.3f | %s |\n",
+			mean(ratios), cluster.Notes, total,
+			stddev(ratios), minOf(ratios), maxOf(ratios), slope)
 	}
 
 	return out.String()
+}
+
+func ratiosOf(rows []ModeRow) []float64 {
+	out := make([]float64, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.Ratio)
+	}
+
+	return out
 }
 
 func columns(rows []ModeRow, pick func(ModeRow) float64) ([]int, []float64) {
