@@ -1060,11 +1060,52 @@ func (m *jobManager) recordLocked(job *fitJob) {
 	// condition rather than a slice expression: a queue longer than the cap
 	// would otherwise let the history forget a job that is still going to
 	// report into it.
-	for len(m.jobs) > maxStoredJobs && !m.jobs[0].running() {
+	//
+	// A followed job is the exception, and it has to be. Such a job is a run
+	// directory this server watches, and one that stops being written -- the
+	// process behind it killed, its machine rebooted -- stays running for
+	// good, because nothing on disk will ever say otherwise. Blocking on it
+	// would let a single abandoned directory at the head of the history pin
+	// every job after it in memory for as long as the server lives, which is a
+	// worse failure than forgetting a run that is still on disk and comes back
+	// on the next restart.
+	for len(m.jobs) > maxStoredJobs && (!m.jobs[0].running() || m.jobs[0].followed) {
 		delete(m.byID, m.jobs[0].id)
 
 		m.jobs[0] = nil
 		m.jobs = m.jobs[1:]
+	}
+}
+
+// forget removes a job rebuilt from disk, for a run directory that is being
+// read again because it has become a different run.
+//
+// It is only ever called for a followed job, which is why it can simply drop
+// one: such a job has no goroutine of its own, so there is nothing left
+// reporting into it. Its done channel is closed if it was still open, because
+// anything watching a job that no longer exists would otherwise wait for a
+// report that can never come.
+func (m *jobManager) forget(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	job, ok := m.byID[id]
+	if !ok {
+		return
+	}
+
+	delete(m.byID, id)
+
+	for index, held := range m.jobs {
+		if held == job {
+			m.jobs = append(m.jobs[:index], m.jobs[index+1:]...)
+
+			break
+		}
+	}
+
+	if job.running() {
+		close(job.done)
 	}
 }
 

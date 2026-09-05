@@ -147,8 +147,14 @@ type Server struct {
 	// scan runs from New and then from followRuns' ticker, which are never
 	// concurrent with each other in the ordinary case; the lock is what keeps
 	// that from being an assumption a second Run could break.
-	scanMu    sync.Mutex
-	scanned   map[string]struct{}
+	scanMu sync.Mutex
+	// scanned maps a run directory, relative to the work directory, to the
+	// modification time its config.json had when the directory was adopted.
+	// The time rather than mere presence, because a directory can become a
+	// second run: `glockenspiel fit --resume` deliberately continues into the
+	// work directory it was given, rewriting config.json and result.json, and
+	// a set would have frozen that job at the snapshot the first run ended on.
+	scanned   map[string]time.Time
 	following []*followedRun
 
 	// followInterval overrides how often the work directory is rescanned.

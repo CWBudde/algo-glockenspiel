@@ -388,3 +388,227 @@ func followedSnapshot(t *testing.T, handler http.Handler, jobID string) fitSnaps
 
 	return snapshot
 }
+
+// TestACampaignTreeIsDiscovered pins the descent. A campaign does not put its
+// runs where a served fit does: internal/campaign writes them to
+// jobs/bNN/<arm>, two levels below the root it is given, so a scan of
+// immediate children finds one directory holding no config.json and reports an
+// empty history for a tree full of runs.
+//
+// The nested id is asserted as well, and not for tidiness. A job id is one
+// path segment of /api/fit/jobs/{id}, so a run listed under an id containing a
+// separator would be listed and then answer 404 for everything about it.
+func TestACampaignTreeIsDiscovered(t *testing.T) {
+	workDir := t.TempDir()
+
+	runDir := filepath.Join(workDir, "jobs", "b00", "mayfly-r16")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("create the campaign job directory: %v", err)
+	}
+
+	writeRunConfig(t, runDir)
+	writeRunResult(t, runDir, 0.5)
+
+	handler := newFollowingServer(t, workDir).Handler()
+
+	const jobID = "jobs-b00-mayfly-r16"
+
+	row := waitForListing(t, handler, jobID, func(row fitJobListing) bool {
+		return row.State == fitSucceeded
+	})
+
+	if !row.Followed {
+		t.Error("a campaign job is not marked as followed")
+	}
+
+	// The id has to address the run, not merely name it.
+	snapshot := httptest.NewRecorder()
+	handler.ServeHTTP(snapshot, httptest.NewRequest(http.MethodGet, "/api/fit/jobs/"+jobID, nil))
+
+	if snapshot.Code != http.StatusOK {
+		t.Errorf("GET the campaign job = %d, want 200: %s", snapshot.Code, snapshot.Body.String())
+	}
+}
+
+// TestAResumedRunDirectoryIsReadAgain pins what a resume does to a directory
+// the server has already adopted. `glockenspiel fit --resume` continues into
+// the work directory it was given rather than making a new one, so the same
+// path becomes a second run; a scan that remembered only that it had seen the
+// name would leave the job frozen on the first run's result for as long as the
+// server lived.
+func TestAResumedRunDirectoryIsReadAgain(t *testing.T) {
+	workDir := t.TempDir()
+
+	runDir := filepath.Join(workDir, "run")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("create the run directory: %v", err)
+	}
+
+	writeRunConfig(t, runDir)
+	writeRunResult(t, runDir, 0.75)
+
+	handler := newFollowingServer(t, workDir).Handler()
+
+	waitForListing(t, handler, "run", func(row fitJobListing) bool {
+		return row.State == fitSucceeded && row.Score != nil && *row.Score == 0.75
+	})
+
+	// The resume: the result is taken away, the config rewritten, and the
+	// search continues. The modification time is what the scan compares, so it
+	// is moved forward explicitly rather than left to a filesystem whose
+	// timestamps may not resolve two writes a millisecond apart.
+	if err := os.Remove(filepath.Join(runDir, fitrun.FileResult)); err != nil {
+		t.Fatalf("remove the result: %v", err)
+	}
+
+	writeRunConfig(t, runDir)
+
+	later := time.Now().Add(time.Second)
+	if err := os.Chtimes(filepath.Join(runDir, fitrun.FileConfig), later, later); err != nil {
+		t.Fatalf("age the config: %v", err)
+	}
+
+	row := waitForListing(t, handler, "run", func(row fitJobListing) bool {
+		return row.State == fitRunning
+	})
+
+	if row.Score != nil {
+		t.Errorf("the resumed run still reports the first run's score %v", *row.Score)
+	}
+
+	// And it finishes on the second run's own result rather than the first's.
+	writeRunResult(t, runDir, 0.25)
+
+	waitForListing(t, handler, "run", func(row fitJobListing) bool {
+		return row.State == fitSucceeded && row.Score != nil && *row.Score == 0.25
+	})
+}
+
+// TestAFinishedFollowedRunReportsWhatTheBackendChose pins the second read of
+// config.json. fitrun writes that file twice -- once before the search with an
+// empty resolved block, once after it with the seed the backend drew and the
+// width it sized to the machine -- and a job built from the first copy would
+// otherwise end reporting zeros beside a file that records the real values.
+func TestAFinishedFollowedRunReportsWhatTheBackendChose(t *testing.T) {
+	workDir := t.TempDir()
+
+	runDir := filepath.Join(workDir, "run")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("create the run directory: %v", err)
+	}
+
+	writeRunConfig(t, runDir)
+
+	handler := newFollowingServer(t, workDir).Handler()
+
+	waitForListing(t, handler, "run", func(row fitJobListing) bool {
+		return row.State == fitRunning
+	})
+
+	// The config fitrun rewrites when the run ends, now carrying what the
+	// backend resolved for itself.
+	resolved := `{
+	  "note": 72,
+	  "velocity": 90,
+	  "sample_rate": 8000,
+	  "metric": "rms",
+	  "engine": {"name": "mayfly"},
+	  "reference": {"seconds": 0.2},
+	  "started": "2024-01-02T03:04:05Z",
+	  "resolved": {"seed": 4242, "workers": 7, "population": 10, "variant": "desma"}
+	}`
+
+	configPath := filepath.Join(runDir, fitrun.FileConfig)
+
+	before, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("stat the config: %v", err)
+	}
+
+	if err := os.WriteFile(configPath, []byte(resolved), 0o600); err != nil {
+		t.Fatalf("rewrite the config: %v", err)
+	}
+
+	// The modification time is put back, so that this test is about the second
+	// read of config.json and nothing else. Leaving it to move would let the
+	// scan notice the rewrite, adopt the directory again as if it were a
+	// resumed run, and build a fresh job from the new file -- which produces
+	// the right answer by a route TestAResumedRunDirectoryIsReadAgain already
+	// covers, and would leave this test passing with the finish path still
+	// reporting zeros.
+	if err := os.Chtimes(configPath, before.ModTime(), before.ModTime()); err != nil {
+		t.Fatalf("hold the config's timestamp: %v", err)
+	}
+
+	writeRunResult(t, runDir, 0.5)
+
+	waitForListing(t, handler, "run", func(row fitJobListing) bool {
+		return row.State == fitSucceeded
+	})
+
+	snapshot := followedSnapshot(t, handler, "run")
+
+	if snapshot.Request.Seed != "4242" {
+		t.Errorf("the finished followed run reports seed %q, want the resolved 4242", snapshot.Request.Seed)
+	}
+
+	if snapshot.Request.Workers != 7 {
+		t.Errorf("the finished followed run reports %d workers, want the resolved 7", snapshot.Request.Workers)
+	}
+}
+
+// TestAMalformedResultCountIsConsecutive pins what followedRun.malformed is
+// documented to count. A result.json that exists and will not parse is usually
+// a moment rather than a state -- fitrun writes it with a plain os.WriteFile,
+// so a scan can land between the create and the write -- which is why several
+// ticks have to fail before the run is called broken. The counter is therefore
+// only meaningful if it starts again whenever a tick does not fail, and it did
+// not: it only ever grew, so failures minutes or hours apart accumulated into
+// a verdict that no single episode had earned.
+func TestAMalformedResultCountIsConsecutive(t *testing.T) {
+	dir := t.TempDir()
+
+	job := syntheticJob("run", false)
+	job.dir = dir
+	job.followed = true
+
+	follow := &followedRun{job: job, malformed: followedResultAttempts - 1}
+
+	// No result.json at all: the run is simply not finished, and the count of
+	// consecutive failures is back to none.
+	if follow.finished() {
+		t.Fatal("a run with no result.json was called finished")
+	}
+
+	if follow.malformed != 0 {
+		t.Fatalf("malformed = %d after a tick that found no result.json, want 0", follow.malformed)
+	}
+
+	// One unparseable read is one failure, not the last of a tally that has
+	// been running since the server started, so the run keeps going.
+	if err := os.WriteFile(filepath.Join(dir, fitrun.FileResult), []byte("{ truncated"), 0o600); err != nil {
+		t.Fatalf("write a half-written result: %v", err)
+	}
+
+	if follow.finished() {
+		t.Fatal("a single unparseable result.json ended the run")
+	}
+
+	if follow.malformed != 1 {
+		t.Fatalf("malformed = %d after one unparseable read, want 1", follow.malformed)
+	}
+
+	// It still gives up once the failures really are consecutive. The loop
+	// stops at the first true, because that is the contract advanceFollowed
+	// keeps: a run is retired the tick it reports itself finished, and asking
+	// again afterwards would be asking a job that is already over.
+	for range followedResultAttempts {
+		if follow.finished() {
+			break
+		}
+	}
+
+	if job.state != fitFailed {
+		t.Errorf("a result.json unreadable on every tick left the run %q, want failed", job.state)
+	}
+}

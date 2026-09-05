@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
@@ -46,6 +47,11 @@ const stopReasonInterrupted = "interrupted"
 // is also long enough that the cost is nothing: a tick reads one directory
 // listing and, per followed run, the bytes its trace has actually gained.
 const followInterval = time.Second
+
+// maxRunSearchDepth is how many directory levels below the work directory a run
+// may sit. Zero would be immediate children only; two reaches a campaign's
+// jobs/bNN/<arm> and no further.
+const maxRunSearchDepth = 2
 
 // followedResultAttempts is how many consecutive ticks a result.json may fail
 // to parse before the run is called broken rather than half-written. Five ticks
@@ -231,9 +237,11 @@ func (s *Server) adoptNewRunsLocked() {
 	names := make([]string, 0, len(entries))
 
 	for _, entry := range entries {
-		if entry.IsDir() {
-			names = append(names, entry.Name())
+		if !entry.IsDir() {
+			continue
 		}
+
+		names = append(names, runDirectoriesUnder(s.config.WorkDir, entry.Name())...)
 	}
 
 	// A run directory's name is a fixed-width UTC timestamp followed by a
@@ -251,26 +259,42 @@ func (s *Server) adoptNewRunsLocked() {
 	adopted := 0
 
 	for _, name := range names {
-		// A directory is considered exactly once. The scanned set is what
-		// makes that true even after the history has trimmed a job out of
-		// itself: without it the oldest directory on disk would be adopted
-		// again on the next tick, push the next-oldest out of the history, and
-		// the two would take turns forever. The manager is asked as well,
-		// because every job this server started has a directory here too and
-		// none of them was ever scanned.
-		if _, seen := s.scanned[name]; seen || s.jobs.lookup(name) != nil {
+		jobID := runJobID(name)
+		dir := filepath.Join(s.config.WorkDir, name)
+
+		// A directory is read again only when it has become a different run.
+		// Without the check the oldest directory on disk would be adopted
+		// again on the next tick after the history trimmed it, push the
+		// next-oldest out, and the two would take turns forever; with mere
+		// presence instead of the timestamp, a resumed run would never be read
+		// again at all. The manager is asked as well, because every job this
+		// server started has a directory here too and none of them was ever
+		// scanned.
+		written := configWrittenAt(dir)
+
+		if seen, ok := s.scanned[name]; ok && seen.Equal(written) {
 			continue
 		}
 
-		dir := filepath.Join(s.config.WorkDir, name)
+		if _, ok := s.scanned[name]; !ok && s.jobs.lookup(jobID) != nil {
+			continue
+		}
 
-		job, follow := restoreJob(dir, name)
+		job, follow := restoreJob(dir, jobID)
 		if job == nil {
 			// Not a run directory -- or not yet one: a fit creates its
 			// directory before it writes config.json into it, so this is a
 			// directory that may well be a run by the next tick. It is
 			// deliberately not marked as scanned.
 			continue
+		}
+
+		// A directory that has been read before is being read again because it
+		// was rewritten, so the job standing for its previous life is dropped
+		// rather than left beside the new one under a duplicate id.
+		if _, ok := s.scanned[name]; ok {
+			s.dropFollowedLocked(jobID)
+			s.jobs.forget(jobID)
 		}
 
 		s.jobs.adopt(job)
@@ -280,10 +304,10 @@ func (s *Server) adoptNewRunsLocked() {
 		}
 
 		if s.scanned == nil {
-			s.scanned = make(map[string]struct{})
+			s.scanned = make(map[string]time.Time)
 		}
 
-		s.scanned[name] = struct{}{}
+		s.scanned[name] = written
 
 		adopted++
 	}
@@ -291,6 +315,93 @@ func (s *Server) adoptNewRunsLocked() {
 	if adopted > 0 {
 		s.logf("picked up %d fit(s) from %s", adopted, s.config.WorkDir)
 	}
+}
+
+// configWrittenAt is when a run directory's config.json was last written, or
+// the zero time if there is none.
+//
+// It is what tells one run in a directory from the next. fitrun writes
+// config.json twice, once before the search and once after it, so the value
+// moves within a single run as well -- which costs one extra read of a
+// directory that has just finished and is otherwise harmless, because reading
+// a finished run again produces the same terminal job.
+func configWrittenAt(dir string) time.Time {
+	info, err := os.Stat(filepath.Join(dir, fitrun.FileConfig))
+	if err != nil {
+		return time.Time{}
+	}
+
+	return info.ModTime()
+}
+
+// dropFollowedLocked stops following the run with this id, for a directory
+// that is being adopted again. Caller holds scanMu.
+func (s *Server) dropFollowedLocked(id string) {
+	live := s.following[:0]
+
+	for _, follow := range s.following {
+		if follow.job.id != id {
+			live = append(live, follow)
+		}
+	}
+
+	clear(s.following[len(live):])
+	s.following = live
+}
+
+// runJobID is the job id a run directory gets: its path relative to the work
+// directory, with the separators replaced.
+//
+// A nested run needs the substitution to be addressable at all. The job id is
+// a path segment of /api/fit/jobs/{id}, and net/http's pattern matches exactly
+// one segment, so a campaign job called "jobs/b00/mayfly-r16" would be listed
+// by an id that every endpoint for it then answers 404 for.
+func runJobID(name string) string {
+	return strings.ReplaceAll(name, string(filepath.Separator), "-")
+}
+
+// runDirectoriesUnder returns the run directories at or below one child of the
+// work directory, as paths relative to the work directory.
+//
+// A run directory is usually a child of the work directory, which is what a
+// served fit and a hand-run `glockenspiel fit` both write. A campaign is the
+// reason this descends at all: internal/campaign puts its runs at
+// jobs/bNN/<arm> (manifest.go:69), so a server aimed at a campaign root sees a
+// single "jobs" directory holding no config.json, and reading only immediate
+// children would find nothing at all in a tree full of runs.
+//
+// The descent stops at the first directory that holds a config.json, because a
+// run directory never contains another, and at maxRunSearchDepth, because the
+// work directory is operator-supplied and an unbounded walk of one that was
+// aimed at a home directory by mistake is a hang rather than an error. Two
+// extra levels is the campaign layout with nothing to spare, which is
+// deliberate: this is a rule about the layouts this repository writes, not a
+// general search.
+func runDirectoriesUnder(workDir, name string) []string {
+	if fileExists(filepath.Join(workDir, name, fitrun.FileConfig)) {
+		return []string{name}
+	}
+
+	if strings.Count(name, string(filepath.Separator)) >= maxRunSearchDepth {
+		return nil
+	}
+
+	entries, err := os.ReadDir(filepath.Join(workDir, name))
+	if err != nil {
+		return nil
+	}
+
+	var found []string
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		found = append(found, runDirectoriesUnder(workDir, filepath.Join(name, entry.Name()))...)
+	}
+
+	return found
 }
 
 // advanceFollowedLocked reads what every followed run has written since the
@@ -306,6 +417,15 @@ func (s *Server) advanceFollowedLocked() {
 		follow.readTrace()
 
 		if follow.finished() {
+			continue
+		}
+
+		// A followed job the history has trimmed is no longer anything a
+		// client can ask for, so following it is work with no reader. This is
+		// the other half of recordLocked's exception for followed jobs: that
+		// one lets an abandoned run be evicted, and this one stops the tick
+		// spent on it.
+		if s.jobs.lookup(follow.job.id) != follow.job {
 			continue
 		}
 
@@ -490,6 +610,13 @@ func (f *followedRun) report(line []byte) {
 func (f *followedRun) finished() bool {
 	summary, err := readRestoredSummary(f.job.dir)
 	if errors.Is(err, fs.ErrNotExist) {
+		// The counter below is spent on consecutive failures, so a tick that
+		// finds no result.json at all starts it again. Without this the count
+		// would be a lifetime total, and a run whose directory is rewritten
+		// under it -- a resume, a rerun -- could reach the limit on failures
+		// that were moments apart in the file but hours apart in time.
+		f.malformed = 0
+
 		return false
 	}
 
@@ -516,6 +643,16 @@ func (f *followedRun) finished() bool {
 	}
 
 	f.job.mu.Lock()
+
+	// The config is read again at the end because it is written twice: the
+	// first copy, which the job was built from, has an empty resolved block by
+	// design, and fitrun fills it in only when the run finishes. Without this
+	// a followed run would end reporting the seed and the worker count as
+	// zero, and no variant at all, while the file beside it recorded what the
+	// backend actually chose.
+	if configErr == nil {
+		f.job.resolved = config.Resolved
+	}
 
 	if failure != "" {
 		// The run ended -- result.json is there -- but its record cannot be

@@ -202,3 +202,76 @@ func TestFinishUsesTheSummarysScoreOverTheOptimizersOwnBestCost(t *testing.T) {
 		t.Fatalf("snapshot.CurrentCost = %v, want the summary's %v", snapshot.CurrentCost, postPolishCost)
 	}
 }
+
+// TestHistoryCapEvictsAnAbandonedFollowedJob is the other half of
+// TestHistoryCapStopsAtTheOldestRunningJob, and the exception that keeps that
+// rule from being a leak.
+//
+// A followed job stands for a run directory, not for a search in this process.
+// One whose writer dies without leaving a result.json stays running for good,
+// because following is deliberate about not guessing from a quiet trace -- so
+// if the trim loop stopped at it the way it stops at a job of this server's,
+// a single abandoned directory would pin every job behind it in memory for as
+// long as the process lived. It is evicted instead: it is still on disk and
+// still comes back on a restart, which a real running job cannot say.
+func TestHistoryCapEvictsAnAbandonedFollowedJob(t *testing.T) {
+	manager := &jobManager{}
+
+	abandoned := syntheticJob("abandoned", false)
+	abandoned.followed = true
+	manager.adopt(abandoned)
+
+	const fresh = maxStoredJobs + 20
+	for i := range fresh {
+		manager.adopt(syntheticJob(fmt.Sprintf("fresh-%d", i), true))
+	}
+
+	if got := len(manager.jobs); got != maxStoredJobs {
+		t.Fatalf("history length = %d, want the cap %d: the abandoned followed job blocked the trim", got, maxStoredJobs)
+	}
+
+	if _, ok := manager.byID["abandoned"]; ok {
+		t.Error("the abandoned followed job is still indexed after the history overflowed the cap")
+	}
+
+	// A running job this server started keeps its protection, which is what
+	// makes this an exception rather than a repeal.
+	own := syntheticJob("own", false)
+	manager.adopt(own)
+
+	for i := range fresh {
+		manager.adopt(syntheticJob(fmt.Sprintf("later-%d", i), true))
+	}
+
+	if _, ok := manager.byID["own"]; !ok {
+		t.Error("a running job this server started was trimmed away")
+	}
+}
+
+// TestForgetDropsAFollowedJob pins what a reused run directory does to the job
+// standing for its previous life: it is removed rather than left beside the
+// new one under a duplicate id, and anything waiting on it is released rather
+// than left waiting for a report that can never come.
+func TestForgetDropsAFollowedJob(t *testing.T) {
+	manager := &jobManager{}
+
+	job := syntheticJob("run", false)
+	job.followed = true
+	manager.adopt(job)
+
+	manager.forget("run")
+
+	if manager.lookup("run") != nil {
+		t.Error("a forgotten job is still in the history")
+	}
+
+	select {
+	case <-job.done:
+	default:
+		t.Error("a forgotten job's done channel is still open, so a watcher would wait for good")
+	}
+
+	// Forgetting what is not there is not an error: the scan calls it for a
+	// directory it is re-reading, which the history may already have trimmed.
+	manager.forget("run")
+}

@@ -233,7 +233,18 @@ merely `followed`.
 
 The list is not built once. The work directory is read at startup and then
 again every second, and every directory in it holding a `config.json` becomes a
-job — including one that appeared after the server did. `fitrun` writes
+job — including one that appeared after the server did. A directory holding no
+`config.json` is descended into, up to two levels, because that is where a
+campaign keeps its runs: `internal/campaign` writes them to `jobs/bNN/<arm>`, so
+a server aimed at a campaign root would otherwise see one `jobs` directory and
+report an empty history for a tree full of fits. A nested run's job id is its
+path under the work directory with the separators replaced by `-`, so the
+campaign job above is listed and addressed as `jobs-b00-<arm>`.
+
+A run directory is read again if its `config.json` has been rewritten since,
+which is what makes `glockenspiel fit --resume` visible: a resume continues
+into the work directory it was given rather than making a new one, so the same
+path becomes a second run and the job standing for the first is replaced. `fitrun` writes
 `config.json` before the search and `result.json` after it, so the two shapes on
 disk mean two different things:
 
