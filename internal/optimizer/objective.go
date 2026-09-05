@@ -131,6 +131,57 @@ func DefaultObjectiveConfig(metric Metric) ObjectiveConfig {
 type renderState struct {
 	working *preset.Preset
 	engine  *synth.Synthesizer
+
+	// voice, block and out are the render's working memory, kept for the life
+	// of the state rather than allocated per call. Synthesizer.RenderNote
+	// allocates a voice and two slices every time it is called, and a joint
+	// evaluation calls it once per note, so a twenty-note fit paid for sixty
+	// allocations per candidate -- inside the loop, on every worker, for
+	// twenty-four thousand evaluations.
+	//
+	// out is reused, so the samples a render returns stay valid only until the
+	// next render on the same state. That is exactly what the two callers do:
+	// each renders one note, measures it, and moves on. Anything that wants to
+	// keep a render has to copy it.
+	voice *synth.Voice
+	block []float32
+	out   []float32
+}
+
+// render is RenderNote against the state's own voice and buffers.
+//
+// The returned slice aliases the state's buffer; see renderState.
+func (s *renderState) render(note, velocity int, duration float64) []float32 {
+	if s.voice == nil {
+		voice, err := s.engine.NewVoice(note, velocity, duration, synth.RenderOptions{})
+		if err != nil {
+			return nil
+		}
+
+		s.voice = voice
+	} else if err := s.engine.ResetVoice(s.voice, note, velocity, duration, synth.RenderOptions{}); err != nil {
+		return nil
+	}
+
+	if cap(s.block) < s.engine.BlockSize() {
+		s.block = make([]float32, s.engine.BlockSize())
+	}
+
+	block := s.block[:s.engine.BlockSize()]
+	out := s.out[:0]
+
+	for s.voice.Active() {
+		rendered := s.voice.RenderInto(block)
+		if rendered == 0 {
+			break
+		}
+
+		out = append(out, block[:rendered]...)
+	}
+
+	s.out = out
+
+	return out
 }
 
 // ObjectiveFunction evaluates synthesized audio against a reference signal.
@@ -567,7 +618,7 @@ func (o *ObjectiveFunction) Evaluate(encoded []float64) float64 {
 		total := 0.0
 
 		for _, ref := range o.refs {
-			rendered := state.engine.RenderNote(ref.note, o.velocity, ref.duration)
+			rendered := state.render(ref.note, o.velocity, ref.duration)
 
 			score := ref.metrics(o, rendered, params).Score(o.profile)
 			if math.IsInf(score, 1) {
@@ -581,7 +632,7 @@ func (o *ObjectiveFunction) Evaluate(encoded []float64) float64 {
 	}
 
 	ref := o.refs[0]
-	rendered := state.engine.RenderNote(ref.note, o.velocity, ref.duration)
+	rendered := state.render(ref.note, o.velocity, ref.duration)
 	aligned, target := ref.align.Align(rendered, ref.samples)
 
 	switch o.metric {
@@ -720,7 +771,7 @@ func (o *ObjectiveFunction) EvaluatePerNote(encoded []float64) ([]NoteMetrics, e
 	perNote := make([]NoteMetrics, 0, len(o.refs))
 
 	for _, ref := range o.refs {
-		rendered := state.engine.RenderNote(ref.note, o.velocity, ref.duration)
+		rendered := state.render(ref.note, o.velocity, ref.duration)
 		metrics := ref.metrics(o, rendered, params)
 
 		perNote = append(perNote, NoteMetrics{
