@@ -158,6 +158,10 @@ closest to undoing the hand retune, and the last row is the six-mode preset
 | `recorded-bar.json`         | `glockenspiel_c5.wav` | 60   | 15.1  | 1.8 dB | 0.46 oct | 0.40    | 0.31  | 14.8 dB | 13.7 dB | 0.64 dB  | 0.7 dB/s  | 1.00     | +0.5 dB | −24.8 dB | 0.417 |
 | six modes from the analysis | `glockenspiel_c5.wav` | 60   | 1.5   | 3.5 dB | 0.14 oct | 0.14    | 0.00  | 9.0 dB  | 10.1 dB | 1.08 dB  | 1.4 dB/s  | 0.73     | −6.4 dB | −9.7 dB  | 0.24  |
 
+**The `score` column of this table is superseded**, and its last row is an error; every other
+column still holds. See "The composite objective re-taken, 2026-09-05" below, which reproduces
+every term and reconstructs five of the six scores exactly from the weights of the day.
+
 The norms in `optimizer.DefaultNorms` — 10 cents, 6 dB of level, half an octave of decay, a
 half of the partial weight missing, once the weight extra, 10 dB for either spectral term, 3 dB
 of envelope, 10 dB/s of slope, a residual of one half — were set against these rows: on every
@@ -188,9 +192,134 @@ single-partial render, which is the pairing that should.
 
 The legacy terms, re-taken through the loader for the same rows, for comparison with the
 baseline above: the aligned `rms` of every C5 row moves to 0.12–0.15 because the reference now
-peaks at full scale, the gain columns are unchanged, and `aligned+gain`'s spectral term climbs to
-32–73 dB because a −25 to −65 dB gain shifts every candidate bin under the floor. Nothing there
-changes a reading of the baseline.
+peaks at full scale, and `aligned+gain`'s spectral term climbs to 32–73 dB because a −25 to
+−65 dB gain shifts every candidate bin under the floor. Nothing there changes a reading of the
+baseline.
+
+Two sentences of that paragraph have since been overtaken, and both are corrected in
+"The legacy metrics re-taken, 2026-09-05" below. The gain columns are **not** unchanged — the
+loader's +27.6 dB normalisation moves every C5 row's gain by exactly that much — and
+`aligned+gain`'s spectral term no longer climbs, because Phase 8.10 moved the floor to sit under
+the gained candidate rather than the raw one.
+
+## The legacy metrics re-taken, 2026-09-05
+
+Taken at revision `9704ed4`, `modified false`, Go 1.26.0, mayfly v0.7.1, go-cma-es v0.1.0,
+velocity 100, 44.1 kHz, through `glockenspiel distance --json`. The "first second" rows use
+`--window 1s`, which cuts one second after the onset where the 2026-09-02 rows used a copy of the
+file cut at 1.000 s; the onset sits at frame 303, so the two spans differ by seven milliseconds.
+"Retune undone" is rebuilt the same way, every mode frequency divided by 1.66720, which puts mode
+two on 1053.60 Hz.
+
+| Preset                      | Reference             | Note | `rms`   | `rms+gain` | gain      | residual | `spectral` | `spectral+gain` |
+| --------------------------- | --------------------- | ---- | ------- | ---------- | --------- | -------- | ---------- | --------------- |
+| `default.json`              | `legacy_synth_a4.wav` | 69   | 0.02557 | 0.02557    | +0.00 dB  | −17.6 dB | 8.37       | 8.37            |
+| `recorded-bar.json`         | `legacy_synth_a4.wav` | 69   | 0.1259  | 0.1219     | +2.05 dB  | −4.0 dB  | 10.13      | 10.24           |
+| `default.json`              | `glockenspiel_c5.wav` | 69   | 0.1518  | 0.1024     | −64.83 dB | 0.0 dB   | 15.40      | 14.50           |
+| `recorded-bar.json`         | `glockenspiel_c5.wav` | 69   | 0.1242  | 0.1024     | −33.20 dB | 0.0 dB   | 15.30      | 14.55           |
+| `recorded-bar.json`         | `glockenspiel_c5.wav` | 60   | 0.1369  | 0.1022     | −24.76 dB | 0.0 dB   | 12.01      | 12.74           |
+| `default.json`              | C5, first second      | 69   | 0.1929  | 0.1286     | −64.80 dB | 0.0 dB   | 18.92      | 17.90           |
+| `recorded-bar.json`         | C5, first second      | 69   | 0.1568  | 0.1286     | −33.09 dB | 0.0 dB   | 18.55      | 17.91           |
+| `recorded-bar.json`         | C5, first second      | 60   | 0.1715  | 0.1284     | −24.63 dB | 0.0 dB   | 15.05      | 15.99           |
+| recorded-bar, retune undone | C5, first second      | 69   | 0.07475 | 0.07393    | +0.96 dB  | −4.8 dB  | 15.30      | 15.25           |
+| recorded-bar, retune undone | `glockenspiel_c5.wav` | 69   | 0.06059 | 0.05987    | +1.03 dB  | −4.7 dB  | 12.16      | 12.12           |
+
+Three readings, and only one of them is about Phase 8.10.
+
+**The residual is unchanged wherever the compared span is, and that is the column to trust.**
+−17.6 against the baseline's −17.5, −4.0 against −4.0, 0.0 against 0.0, −4.8 against −4.8. The
+residual is the one legacy column that divides out both the reference's level and the candidate's,
+so the loader's normalisation cannot move it, and it did not.
+
+The single exception proves the rule rather than breaking it: the last row reads −4.7 against the
+baseline's −4.4, and the reason is the span, not the arithmetic. That row is the only one where
+"whole file" meant different things on the two days — the baseline scored the raw 7.2 s recording,
+and the loader now cuts to the 1.650 s strike, so six seconds of room tail have left the
+comparison. The other whole-file C5 rows hide the same change behind a residual of 0.0 dB, which
+is saturated either way.
+
+Anything the baseline concluded from the residual still stands, including that the one reproducible
+fit is 4.8 dB rather than the shipping commit's 11.1 dB.
+
+**The `rms` and `gain` columns moved by the loader, not by the objective.** Every C5 row's gain is
+exactly +27.6 dB above its 2026-09-02 value — −92.6 to −64.83, −60.8 to −33.20, −52.5 to −24.76,
+−26.6 to +0.96 — which is the peak normalisation the reference loader applies, entering the path in
+Phase 8.2 after the baseline was taken. The A4 rows, where the loader applies +0.0 dB, are
+unchanged to four figures. So these two columns are stale for an 8.2 reason and were already known
+to be: the paragraph above this section said so, and got the gain half of it backwards.
+
+**`spectral+gain` is where Phase 8.10 shows, and it is the whole point of the fix.** Under the old
+arithmetic that column climbed to 32–73 dB on the C5 rows, because a −25 to −65 dB gain was applied
+_after_ the floor and shifted every candidate bin under it, leaving a flat plateau. It now reads
+14.50 at a gain of −64.83 dB, against 15.40 for the same row without gain normalisation — a
+difference of nine tenths of a decibel where there used to be a difference of fifty. The floor now
+sits under the gained candidate, so normalising the gain no longer flattens the spectrum, and the
+term measures the spectrum at every level instead of measuring the floor.
+
+## The composite objective re-taken, 2026-09-05
+
+All six rows through the composite, against the 2026-09-02 table above. The seed row is rebuilt
+with `PresetFromAnalysis` from `recorded-bar.json` as the template, the C5 measurement, note 60 and
+six modes, which is what that row was.
+
+**Every term is unchanged to the precision that table prints.** `cents`, `level`, `decay`,
+`missing`, `extra`, `fine`, `coarse`, `envelope`, `slope`, `waveform`, `gain` and `wf gain` all
+reproduce on all six rows, the largest discrepancy being 17.6 against 17.5 dB of `fine` on one
+row. That is Phase 8.10's own scope claim holding exactly: both shipped presets render within a
+few decibels of their references, the floor never bit for them, and the fix could not move them.
+
+**The `score` column moved on every row, and 8.10 is not why.**
+
+| Row                                          | 2026-09-02 | reconstructed | 2026-09-05 |
+| -------------------------------------------- | ---------: | ------------: | ---------: |
+| `default.json` vs `legacy_synth_a4.wav`, 69  |      0.135 |        0.1352 |     0.1789 |
+| `recorded-bar.json` vs `legacy_synth_a4`, 69 |      0.431 |        0.4313 |     0.4402 |
+| `default.json` vs `glockenspiel_c5.wav`, 69  |      0.595 |        0.5953 |     0.6113 |
+| `recorded-bar.json` vs `glockenspiel_c5`, 69 |      0.555 |        0.5545 |     0.5669 |
+| `recorded-bar.json` vs `glockenspiel_c5`, 60 |      0.417 |        0.4167 |     0.4404 |
+| six modes from the analysis, 60              |       0.24 |        0.3085 |     0.3331 |
+
+The objective gained an eleventh term after the table was taken. `onset_db` is not in that table's
+header, and `balanced` was reweighted to make room for it, in commit `c7f0ecf`: cents 0.12 to 0.11,
+level and decay 0.08 to 0.07, extra 0.06 to 0.05, each spectral term 0.125 to 0.11, envelope 0.15
+to 0.13, decay slope 0.10 to 0.09, onset in at 0.10, missing and waveform unchanged.
+
+The "reconstructed" column is the 2026-09-05 terms scored under those **old** weights, and it is
+what makes this a demonstration rather than an assertion: five of the six rows come back to the
+digit the 2026-09-02 table printed. Two rules had to be respected to get there. The old weights,
+obviously; and the rule that a term which could not be measured is dropped from the weighted mean
+rather than counted as zero — the `default.json` C5 row matches no partial at all, so its cents,
+level and decay are excluded and the remaining weights renormalise over 0.72, giving 0.5953 against
+the printed 0.595. The current objective still excludes them the same way: 0.4585 over 0.75 is the
+0.6113 it reports today.
+
+So five rows moved for exactly one reason, and it is not Phase 8.10. Every term underneath the
+score reproduced; the score moved because the objective's own definition of `balanced` changed
+underneath it. A score that moves while every term holds is a change in the scoring rule, not a
+change in the model.
+
+**The sixth row was wrong when it was written.** The analysis seed's 0.24 does not reconstruct: the
+same terms under the same old weights give 0.3085, and no exclusion rule closes a gap that large —
+the row matches six of eight partials, so nothing is excluded. The numbers around it in the prose
+are sound and reproduce exactly: the seed scores 0.1875 on the partial terms alone against the
+shipped preset's 0.4246, which is the "0.19 against 0.43" that paragraph quotes. It is the
+`balanced` cell alone that is wrong, and both places it appears hedge it — 0.24 to two decimals
+where every other row carries three, and "≈0.24" in the 8.3 table below.
+
+The correction does not overturn what the row was cited for. The seed still beats the shipped
+preset it was compared against, 0.3085 against 0.4167 under the arithmetic of the day and 0.3331
+against 0.4404 today. It overstated the margin by about a third. It is the one number in this file
+that re-measurement found to be an error rather than a casualty of a changed definition.
+
+## What the references hold, re-measured 2026-09-05
+
+`glockenspiel analyze` reproduces the 2026-09-02 measurement of both references **exactly**: the
+same cut (frame 303 to 73068, 1.650 s, +27.6 dB), the same fundamental at 1053.7 Hz, and all eight
+partials at the same level, attack, half-life and T60 to the digit; `legacy_synth_a4.wav` likewise
+at 1756.5 Hz, −4.6 dB, 166 ms. This is the expected result and is recorded because it is the
+control: the reference side of every measurement in this file is unaffected by anything Phase 8.9
+or 8.10 changed, so a table that moved, moved on the candidate side. The output now also carries an
+`amplitude` column that the 2026-09-02 table does not.
 
 ## The search space after 8.3, 2026-09-02
 
@@ -220,6 +349,12 @@ glockenspiel fit --reference testdata/reference/glockenspiel_c5.wav --note 72 \
 | `recorded-bar.json`, note 60 (8.2) |      0.417 |    0.40 |  0.31 |     6.6 |       8.1 |    1.8 |     1.00 |   4 / 8 |
 | seed from the analysis, note 60    |      ≈0.24 |    0.14 |  0.00 |         |           |        |     0.73 |   6 / 8 |
 | fit from the seed, note 72, 90 s   |      0.180 |    0.44 |  0.00 |     2.0 |       2.9 |    1.0 |     0.67 |   5 / 8 |
+
+**Two of this table's three `balanced` figures are superseded.** The seed's ≈0.24 is an error, and
+should read 0.3085 under the weights of the day; the shipped preset's 0.417 is right for its day
+and reads 0.4404 today. Both are re-taken in "The composite objective re-taken, 2026-09-05" above.
+The 90 s fit's 0.180 is a third case again: it was budgeted in wall clock under mayfly v0.6.0, so
+it cannot be reproduced at all — see the note on budgets below.
 
 The fit halves every spectral and envelope term against the shipped preset and matches the
 partials it does match to 0.2 cents and 0.4 dB. It also says, through the pinned report, where
@@ -301,6 +436,16 @@ glockenspiel fit --reference testdata/reference/glockenspiel_c5.wav --note 72 \
 | `cmaes`, block covariance        |   0.261791 | `restarts=1`       |      22,903 | 0 of 30 |
 | `mayfly`, DESMA, population 20   |   0.224395 | one round          |      27,290 | 5 of 30 |
 
+**These three rows are budgeted in wall clock, and that makes them unreproducible in principle.**
+`--time-budget 60s` buys however many evaluations the machine can afford in a minute, so the score
+a row reaches is a reading of the hardware and of what else was running on it as much as of the
+engine. Re-taking them on a different day gives a different number with nothing wrong with either.
+The same applies to the 90 s fit above. This is why 8.5's campaign matches arms on **evaluations**
+instead, and why the campaign tables further down survive re-measurement while these do not: an
+evaluation-budgeted score is a property of the search, a time-budgeted one is a property of the
+afternoon. Re-take these under an evaluation budget or read them as qualitative; they are left as
+they were taken, because refreshing them would only produce a differently unreproducible number.
+
 All three stopped on `time_budget` rather than a convergence criterion, and all three seeded
 eight modes from the recording's partials. The reference was read the same way in every run:
 `channel first of 2, cut 303..73068 (1.650 s, tail reached floor), gain +27.59 dB`. Both CMA-ES
@@ -344,6 +489,12 @@ count, budget, profile and contrast family; the manifest is the frozen record of
 not consulted by `analyze`.
 
 ## Engine shape, 2026-09-03
+
+**This campaign has been re-run and its ranking did not survive.** It was taken under a ten-term
+objective — its `results.csv` has no `onset_db` column at all — and before Phase 8.10 corrected
+the floor. "Engine shape re-taken, 2026-09-05" below has the current numbers and the decision they
+force; what follows is kept because the mechanisms it identifies are still sound and because it is
+the evidence the shipped default was chosen on.
 
 The registered `engine-shape` campaign, run from commit `4389279` on twelve hardware threads:
 twelve paired seed blocks of five arms at 24,000 evaluations each, on the C5 recording at note 72
@@ -407,9 +558,12 @@ Holm step-down over 3 paired contrasts at a family-wise alpha of 0.05.
 the registered primary contrast is blk-cmaes-r against mayfly-r16.
 ```
 
-The rows are committed as [data/engine-shape-results.csv](data/engine-shape-results.csv), so the
-table above rebuilds without rerunning the campaign:
-`glockenspiel-campaign analyze --csv docs/data/engine-shape-results.csv`.
+The rows are committed as
+[data/engine-shape-2026-09-03-results.csv](data/engine-shape-2026-09-03-results.csv), so the table
+above rebuilds without rerunning the campaign:
+`glockenspiel-campaign analyze --csv docs/data/engine-shape-2026-09-03-results.csv`. The
+unqualified `data/engine-shape-results.csv` is always the current run, which is now the
+2026-09-05 one.
 
 **The registered primary contrast fails, and so does the secondary one.** Block-covariance CMA-ES
 is not better than the mayfly arm the project ships; it is worse by 0.062 of score in twelve
@@ -482,6 +636,12 @@ already lists λ as a null not to re-derive. The design stays registered and `--
 takes an arm, so it runs the day a CMA-ES arm wins something.
 
 ## The default shape, and what the refits found, 2026-09-03
+
+**Both halves of this section have been overtaken.** The promotion it records was decided on the
+2026-09-03 campaign, whose ranking did not survive re-measurement, and the reason the refit did not
+ship — that the schema had no output gain — was removed by Phase 8.9. Both are re-decided in
+"Engine shape re-taken, 2026-09-05" and "The second reference re-taken, 2026-09-05" below. What
+stands here unchanged is the materiality threshold, which is a rule rather than a measurement.
 
 ### The second reference
 
@@ -561,6 +721,387 @@ exactly one partial, so a fit against it seeds one mode and writes a one-mode pr
 against the shipped preset's 0.135, and correct, and useless as the instrument's general-purpose
 sound. Choosing a default sound is not a fit against a single-partial synthetic render. Refitting
 it needs a multi-partial reference at A4, which this repository does not have.
+
+## Engine shape re-taken, 2026-09-05
+
+The same registered `engine-shape` design, re-run from revision `9704ed4` with `modified false`:
+twelve paired seed blocks of five arms at 24,000 evaluations each, on the C5 recording at note 72
+under `balanced`. The same four preconditions hold — every row stopped on `max_evaluations`, no two
+blocks of any arm share a score or a parameter vector, and the build is stamped. The design hash is
+unchanged, so the arms, the seeds and the budget are the same ones; what changed underneath is the
+objective.
+
+The full report is [data/engine-shape-report.md](data/engine-shape-report.md) and the rows are
+[data/engine-shape-results.csv](data/engine-shape-results.csv). The 2026-09-03 run is kept beside
+them under its own date.
+
+**The elapsed-time column of this run is not comparable to the 2026-09-03 one.** The machine was
+shared while it ran, at a load average around 30 on twelve threads, so a job took 1m26s against the
+earlier run's 63s. Nothing else is affected: the budget is 24,000 evaluations, not a stopwatch,
+which is exactly the property the smoke run further up this file does not have.
+
+### The ranking inverted
+
+| arm              | 2026-09-03 mean | rank | 2026-09-05 mean | rank |
+| ---------------- | --------------: | ---: | --------------: | ---: |
+| `mayfly-single`  |        0.220173 |    2 |        0.287040 |    1 |
+| `sep-cmaes-r`    |        0.253491 |    3 |        0.309507 |    2 |
+| `sep-cmaes-ipop` |        0.279348 |    5 |        0.310222 |    3 |
+| `mayfly-r16`     |    **0.213820** |    1 |        0.314557 |    4 |
+| `blk-cmaes-r`    |        0.275572 |    4 |        0.326868 |    5 |
+
+`mayfly-r16` — the arm 8.6 promoted, and what a bare `glockenspiel fit` runs today — goes from
+first of five to fourth of five. This is the reordering Phase 8.10 warned was possible, arriving on
+the one table a shipped decision rests on.
+
+Every score rose, by 0.05 to 0.10. Two things changed between these runs, though, and only one of
+them is Phase 8.10: the objective also gained `onset_db` and `balanced` was reweighted for it, which
+is exactly what "The composite objective re-taken" above shows moving scores on fixed presets. The
+rise and the reordering cannot be attributed to the floor by inspection.
+
+**So the reweighting is ablated rather than argued away.** Every job of this run is rescored from
+its own term columns under the ten-term weights the 2026-09-03 run was scored with — `balanced` at
+`c7f0ecf^`, partials 0.4 / spectrum 0.25 / envelope and slope 0.25 / waveform 0.1 — dropping
+`onset_db` entirely. The reconstruction is checked first against the run it can be checked on: the
+2026-09-03 published `score` column reproduces from its own terms under those weights to 8e-06, and
+this run's published column reproduces under the eleven-term weights to 6e-06, so the arithmetic
+below is the shipped arithmetic and not a re-derivation of it.
+
+| arm              | 2026-09-03 (10 terms) | 2026-09-05 rescored (10 terms) | 2026-09-05 as published (11 terms) |
+| ---------------- | --------------------: | -----------------------------: | ---------------------------------: |
+| `mayfly-single`  |              0.220173 |                   **0.263272** |                       **0.287040** |
+| `sep-cmaes-r`    |              0.253491 |                       0.283831 |                           0.309507 |
+| `sep-cmaes-ipop` |              0.279348 |                       0.287276 |                           0.310222 |
+| `mayfly-r16`     |          **0.213820** |                       0.290354 |                           0.314557 |
+| `blk-cmaes-r`    |              0.275572 |                       0.290258 |                           0.326868 |
+
+**Under identical weights, on identical terms, the inversion is still there.** `mayfly-single` is
+first and `mayfly-r16` fourth of five with the eleventh term removed; the decisive contrast reads
++0.0271 at t = +5.69 winning twelve blocks of twelve, against +0.0275, t = +5.18 and eleven of
+twelve as published. The scores still rise by 0.04 to 0.08 with the weights held fixed. Whatever
+the reweighting did to the composite table on fixed presets, it is not what moved this campaign.
+
+Two limits on that, both real. Rescoring cannot undo the fact that the 2026-09-05 arms _searched_
+the eleven-term objective, so their trajectories differ for a reason no rescore can remove — the
+ablation shows the ranking is not an artefact of how the results were scored, not that the two runs
+optimised the same thing. And it isolates the weights, not the floor: what remains after the
+weights are held fixed is 8.10 together with that trajectory difference. What the floor is known
+independently to have done is the plateau — Phase 8.10 records `spectral_fine_db` reporting the
+height of a constant for candidates far from level, and the sorted column below shows that plateau
+present in the old run and absent from the new one.
+
+The arms were not being flattered equally, which is why the order moved rather than merely the
+level: fits against this peak-normalised recording landed far enough from its level for the old
+floor to bite, and how far was arm-dependent — the gain table below spreads from −33.4 to +60.0 dB
+across the arms of this very run, so "far from level" is a tendency with exceptions, not a property
+of every fit.
+
+### The contrasts, all three
+
+| contrast                                | 2026-09-03                                  | 2026-09-05                                |
+| --------------------------------------- | ------------------------------------------- | ----------------------------------------- |
+| `blk-cmaes-r` vs `mayfly-r16` (primary) | −0.0618, t −10.68, p < 0.0001, 0/12, reject | −0.0123, t −2.66, p 0.0224, 4/12, reject  |
+| `sep-cmaes-r` vs `mayfly-r16`           | −0.0397, t −4.00, p 0.0021, 2/12, reject    | +0.0050, t +1.70, p 0.1167, 8/12, retain  |
+| `mayfly-single` vs `mayfly-r16`         | +0.0064, t +0.49, p 0.6368, 5/12, retain    | +0.0275, t +5.18, p 0.0003, 11/12, reject |
+
+**The registered primary contrast fails again, in the same direction.** Block-covariance CMA-ES is
+still worse than the mayfly arm, so the conclusion 8.6 drew from it stands and the reasoning under
+"That block covariance loses is worth recording" above is unaffected. It fails by a fifth of the
+margin, though: t = −2.66 where it was −10.68, and it now wins four blocks of twelve where it won
+none. Most of what looked like a decisive loss was the floor.
+
+**One secondary contrast reversed outright.** Separable CMA-ES was worse than `mayfly-r16` by
+0.0397 at p = 0.002, winning two blocks of twelve. It is now ahead on the mean, winning eight of
+twelve, at p = 0.117 — not significant, so the reading is "no difference worth calling one" where
+it used to be "clearly worse". An arm the project had written off is level with the default.
+
+**The other secondary contrast reversed and became significant, and it is the one that decides
+something.** `mayfly-single` and `mayfly-r16` were indistinguishable — p = 0.64, five blocks of
+twelve, and 8.6 chose `mayfly-r16` on its lower spread rather than on its mean. The single long run
+now beats sixteen rounds by 0.0275 of score in **eleven blocks of twelve**, t = 5.18, p = 0.0003,
+surviving Holm at a family-wise 0.05.
+
+The spread argument that decided it in 8.6 has also gone. The standard deviations were 0.0133 for
+`mayfly-r16` against 0.0476 for `mayfly-single` — a factor of 3.6, and the whole case for the
+restarting arm. They are now 0.0103 against 0.0144, a factor of 1.4. `mayfly-single` is no longer
+the erratic arm; most of its apparent volatility was the floor rewarding whichever of its runs
+happened to drift quietest.
+
+There is a mechanism for this rather than just a number. Phase 8.10 records that the old
+`spectral_fine_db` was reporting the height of a floor plateau — a constant — for candidates far
+from level, so a twelfth of the balanced weight was spent on something that could not tell two
+candidates apart. That is a flatter, less informative landscape, and restarts are worth most
+exactly there. Sharpen the term and a single long anneal has something to follow. The sorted
+`spectral_fine_db` column says the same thing directly: the 2026-09-03 run is bimodal, with 41 of
+its 60 jobs compressed into the band 1.93 to 4.66 and a gap before the rest, while the 2026-09-05
+run spreads over 8.67 to 18.03 with no such cluster.
+
+### What this does to the default
+
+Under 8.6's promotion rule, with the materiality threshold it gained, `mayfly-single` wins a
+registered contrast against the shipped default decisively. The rule's second clause — that the
+challenger regress no term of `balanced` on **either** reference — is settled in
+"The second reference re-taken" below, and the default is decided there rather than here.
+
+`seed-hunt` remains unrunnable. It refines a winning CMA-ES arm and there is still no CMA-ES arm
+that wins: separable CMA-ES reached parity, not victory.
+
+### Level is now a two-sided drift, and 8.9's clamp earns its warning
+
+Every job in this run wrote an `output_gain_db`, which Phase 8.9 solves at write time from the
+render's peak. Across the sixty presets the mean absolute gain is **19.6 dB**, so level is still
+entirely unconstrained by the search — as designed, since the objective is gain-invariant and the
+gain is solved rather than searched.
+
+What changed is the direction. The old objective paid for quiet, and 8.9 measured every Morphagene
+seed drifting about 37 dB down. With the floor corrected the drift is two-sided and arm-dependent:
+
+| arm              | mean `output_gain_db` | range          | negative |
+| ---------------- | --------------------: | -------------- | -------- |
+| `mayfly-single`  |                  +8.9 | −15.4 to +29.2 | 1 of 12  |
+| `mayfly-r16`     |                  −9.0 | −30.4 to +18.0 | 8 of 12  |
+| `sep-cmaes-ipop` |                  −1.7 | −27.0 to +60.0 | 9 of 12  |
+| `blk-cmaes-r`    |                 −23.1 | −33.3 to +0.2  | 11 of 12 |
+| `sep-cmaes-r`    |                 −26.1 | −33.4 to −11.3 | 12 of 12 |
+
+A negative gain means the render came out louder than the −3 dBFS target, so both CMA-ES restart
+arms now overshoot by about 25 dB as consistently as the old fits undershot. The bias 8.10 removed
+was real and one-directional; what is left is the free ridge 8.9 described, and 8.9's solved gain
+is what makes any of these presets usable.
+
+One job of sixty bound the clamp — `b07-sep-cmaes-ipop`, whose log reads
+`output gain: +60.00 dB, clamped at the bound; the fit renders far enough from the target that the
+preset stays off it`. Its score, 0.3164, is unremarkable, so this is an ordinary fit that landed
+more than 63 dB below full scale rather than a degenerate one. That is the warning 8.9 added doing
+the job it was added for, at a rate of one in sixty.
+
+## The second reference re-taken, 2026-09-05
+
+The promotion rule asks about both references, and the C5 campaign above puts a challenger in
+front of it, so the same three shapes were run on `legacy_synth_a4.wav` over eight paired seeds at
+the campaign's 24,000-evaluation budget. Twenty-four fits, all stopping on `max_evaluations`. The
+arm settings are copied from the campaign's own job configs, so these are the same three shapes the
+campaign ran and not an approximation of them.
+
+| seed | `mayfly-single` | `mayfly-r16` | `sep-cmaes-r` |
+| ---- | --------------- | ------------ | ------------- |
+| 1    | 0.172141        | 0.170350     | 0.172168      |
+| 2    | 0.172141        | 0.170933     | 0.172144      |
+| 3    | 0.170593        | 0.170324     | 0.170531      |
+| 4    | 0.172147        | 0.169934     | 0.172177      |
+| 5    | 0.172139        | 0.170848     | 0.172528      |
+| 6    | 0.172524        | 0.170470     | 0.170961      |
+| 7    | 0.172151        | 0.170442     | 0.170491      |
+| 8    | 0.172140        | 0.169936     | 0.172142      |
+| mean | 0.171997        | **0.170405** | 0.171643      |
+| sd   | 0.000583        | 0.000365     | 0.000834      |
+
+**`mayfly-r16` wins here, and it wins every seed.** Against `mayfly-single` the paired difference is
+0.001592 with t = 6.86, eight blocks of eight; against `sep-cmaes-r` it is 0.001238 with t = 3.95,
+again eight of eight. The arm that lost eleven of twelve blocks on the recording wins all eight on
+the synthetic render.
+
+That is not a contradiction, it is what two references are for. The A4 file holds a single partial
+and every shape solves it to within 0.002 of score; the recording holds eight partials in a room
+and the shapes separate by fifty times as much. The second reference is not a tie-breaker of equal
+weight, it is a check that a change good for the hard case is not paid for on the easy one.
+
+**The old outlier was an artifact too.** The 2026-09-03 table recorded `sep-cmaes-r` with an sd of
+0.006696 against `mayfly-r16`'s 0.000925, and named seed 3 — which scored 0.083878 where its
+siblings scored about 0.0648 — as "the whole of its mean's disadvantage". Seed 3 now scores
+0.170531, in line with every other seed, and the sd is 0.000834 against 0.000365. The bad seed was
+the floor, not the engine. The variance argument that section makes does not survive, though its
+conclusion — no difference worth calling one between the two shapes on this reference — does.
+
+### The decision: the default does not change
+
+Phase 8.6's rule is that a default changes only when it wins a registered contrast and regresses no
+term of `balanced` on either reference, where a term counts as regressed when the paired difference
+is both real and larger than one percent of the term's norm in `optimizer.DefaultNorms`.
+
+`mayfly-single` passes the first clause on the recording, decisively. It fails the second on A4,
+paired over the eight seeds, `mayfly-single` minus `mayfly-r16`:
+
+| term                    | difference | % of norm | t     | worse in |
+| ----------------------- | ---------- | --------- | ----- | -------- |
+| `onset_db`              | +0.85989   | +5.73%    | +5.40 | 8/8      |
+| `envelope_db`           | +0.05612   | +1.87%    | +6.37 | 8/8      |
+| `partial_decay_octaves` | +0.00101   | +0.20%    | +3.90 | 8/8      |
+| `spectral_coarse_db`    | +0.00229   | +0.02%    | +0.73 | 1/8      |
+| `partial_cents`         | −0.00044   | −0.00%    | −1.24 | 3/8      |
+| `decay_slope_dbps`      | −0.00599   | −0.06%    | −1.62 | 2/8      |
+| `spectral_fine_db`      | −0.00052   | −0.01%    | −4.39 | 0/8      |
+| `waveform`              | −0.01353   | −2.71%    | −6.68 | 0/8      |
+
+`onset_db` and `envelope_db` are unanimous, significant, and above the one percent threshold. Two
+material regressions on the second reference, so the rule refuses the promotion.
+
+**`mayfly-r16` remains the CLI default, now on evidence rather than on inheritance.** It is worth
+being exact about what that sentence is worth: the arm is retained having been beaten on the
+primary reference, by a rule written before the result was known. Exactly two terms save it,
+`onset_db` and `envelope_db`, because the rule vetoes on material _regressions_ only — `waveform`
+is the challenger's largest term movement on this reference, −2.71% of its norm in eight seeds of
+eight, and it counts for nothing here. And `onset_db` did not exist when this default was chosen,
+which makes the term that decided the rematch one the original campaign could not have measured.
+
+Two things follow. `mayfly-single` is now the better arm on the only real recording this project
+has, by a margin no seed disputes, so the case for it is open rather than closed and wants a design
+that measures both shapes at two or three budgets — the campaign already showed `mayfly-single`
+reaching its best at 98.8% of its budget, still improving when the cap cut it. That design is the
+`rounds-*` ladder, run the same day; "The round schedule at three budgets" below is its result, and
+it does not promote the arm either. And `sep-cmaes-r` reached parity on the recording, which is not
+a win, so `seed-hunt` stays unrunnable for the second campaign running.
+
+## The refit re-taken, 2026-09-05
+
+The `recorded-bar` refit is re-run with the current binary at the same recipe the 2026-09-03 one
+used — the promoted mayfly shape, 120,000 evaluations with the clock off, `--polish cmaes`,
+`--seed 1`, note 72 — so this is a rerun rather than a new experiment. It stopped on
+`max_evaluations` at 120,021 evaluations, the same count as before, and its polish stage was
+rejected again for the same reason, having lowered the polish profile while raising the primary
+score.
+
+| preset                      | `balanced` at 69 | at 72      | modes | render peak   | waveform | wf gain     |
+| --------------------------- | ---------------- | ---------- | ----- | ------------- | -------- | ----------- |
+| shipped `recorded-bar.json` | 0.5669           | 0.5536     | 12    | −3.0 dBFS     | 1.000    | −47.3 dB    |
+| refit `recorded-bar.json`   | 0.4916           | **0.2937** | 8     | **−2.7 dBFS** | 0.714    | **+4.4 dB** |
+
+**The level problem is gone.** The 2026-09-03 refit rendered at −27.5 dBFS and could not be
+shipped, because nothing in the schema could correct it. This one renders at −2.7 dBFS against the
+shipped preset's −3.0. Its solved `output_gain_db` is **−0.93 dB**: the fit landed within a
+decibel of the target on its own, and the gain Phase 8.9 added barely has to do anything. What was
+a 24.5 dB blocker is a rounding correction.
+
+That is worth separating into its two causes, because only one of them is 8.9. Phase 8.9 made the
+level **representable** — a schema field the fit writes, so a preset can carry its own level at
+all. Phase 8.10 removed the reason the level was wrong in the first place: the old floor paid a
+candidate for being quiet, and this fit is the same recipe run without that incentive. The
+campaign above shows the drift is now two-sided and still large in general, mean absolute 19.6 dB,
+so landing at −0.93 dB is this run's luck rather than a new guarantee. The guarantee is 8.9's:
+whatever the fit drifts to, the written preset carries the correction.
+
+**The refit is better by 47%, not 62%.** At its own note it scores 0.2937 against the shipped
+preset's 0.5536. The 2026-09-03 figures were 0.2043 against 0.5365, a 62% improvement, and most of
+the difference between the two margins is the old floor flattering a −27.5 dBFS candidate. The
+refit is still far better, and it still needs no hand retune, having been fitted at note 72 — the
+recording's own pitch — so the ×1.667 hand multiplication that produced the shipped file has
+nothing left to do.
+
+**A fit against this recording now correlates in the time domain, which has not happened before.**
+This file's baseline recorded that "against the recording, the time-domain objective sees nothing":
+every shipped preset's waveform gain sat tens of decibels down, meaning zero correlation, and only
+the spectral term ordered candidates at all. The shipped preset still reads −47.3 dB with a
+waveform residual of 1.000, recovering none of the reference's energy. The refit reads **+4.4 dB**
+with a residual of 0.714 — real correlation, and 29% of the recording's energy recovered by a
+model that had recovered none of it. The analysis seed's 0.73 was called "the first number in this
+repository that says the model can reach the recording"; this is that claim from a fit rather than
+from a seed.
+
+Every other term moves the same way: `spectral_fine_db` 17.5 to 13.1, `spectral_coarse_db` 21.6 to
+16.0, `envelope_db` 2.22 to 0.60, `onset_db` 29.1 to 9.6, `partial_extra` 0.50 to 0.15. The refit
+finishes with **one of thirty dimensions on a bound**, against the 2026-09-03 refit's pinned
+amplitude, so the search is no longer fighting the box.
+
+**`default.json` is still not refitted**, and that reason is unchanged by any of this:
+`legacy_synth_a4.wav` holds exactly one partial, so a fit against it writes a one-mode preset.
+Choosing a default sound is not a fit against a single-partial synthetic render, and it needs a
+multi-partial reference at A4 that this repository does not have.
+
+### Shipping it is a separate decision
+
+The blocker 8.6 recorded is discharged: the refit is better on the recording by every term, and it
+now carries a correct level. Promotion is still a judgement about the instrument's sound rather
+than about a score, and the preset is left in `out/` for that decision to be taken deliberately.
+Two things the decision should weigh. It matches one of the recording's eight partials where the
+shipped preset also matches one, so the improvement is in shape and level rather than in partial
+placement. And `calibrateNoteTrims` normalises the whole instrument to the preset's own note, so
+shipping a preset changes the level of every key, which is exactly why the level had to be right
+before this could be considered at all.
+
+## The round schedule at three budgets, 2026-09-05
+
+The section above left the `mayfly-single` case open rather than closed, and named what would
+settle it: the arm reached its best at 98.8% of its budget, still improving when the cap cut it, so
+the comparison might have been budget-limited rather than decided. `rounds-12k`, `rounds-24k` and
+`rounds-48k` are that measurement — the same two shapes, the same twelve-block paired design, the
+same C5 reference, at 12,000, 24,000 and 48,000 evaluations.
+
+They are three registered designs rather than one, because `Design.Budget` is the evaluation cap
+for every job in a design, and matching arms on evaluations is the single property that makes two
+arms comparable at all. A design holding two budgets would give that up. They also take **disjoint
+seed bases** (123,000 / 124,000 / 125,000), and here that is substantive rather than conventional:
+a 12k run is a _prefix_ of a 48k run at the same seed and arm, so a shared base would make the
+rungs nearly perfectly correlated and any cross-budget reading would understate its own spread.
+The consequence is the reverse of the usual one — each rung is a paired test carrying its own
+p-value, and reading _across_ the rungs is descriptive, not inferential.
+
+Revision `bfc780b`, go1.26.0, mayfly v0.7.1, go-cma-es v0.1.0, binary SHA-256 `50877d53…`,
+reference `testdata/reference/glockenspiel_c5.wav` SHA-256 `635f898e…`, 12 workers, manifests
+recording `modified: false`. Design hashes `d391edd5…`, `f3996cfb…`, `405e377f…`. 72 jobs, 1 h 36 m
+of compute. The per-job data is
+[`docs/data/rounds-12k-results.csv`](data/rounds-12k-results.csv),
+[`-24k`](data/rounds-24k-results.csv) and [`-48k`](data/rounds-48k-results.csv), with the reports
+beside them.
+
+| budget | `mayfly-single` mean (sd) | `mayfly-r16` mean (sd) | gain    | t (df=11) | p       | blocks won | single spent at best | r16 spent at best |
+| ------ | ------------------------- | ---------------------- | ------- | --------- | ------- | ---------- | -------------------- | ----------------- |
+| 12,000 | 0.288232 (0.011945)       | 0.339007 (0.011012)    | +0.0508 | +15.12    | 0.00000 | 12/12      | 99.7%                | 50.0%             |
+| 24,000 | 0.272037 (0.013052)       | 0.310140 (0.005242)    | +0.0381 | +8.44     | 0.00000 | 12/12      | 98.3%                | 23.5%             |
+| 48,000 | 0.279863 (0.021281)       | 0.302503 (0.008634)    | +0.0226 | +3.47     | 0.00522 | 10/12      | 97.2%                | 30.7%             |
+
+**The win is not a budget artifact.** `mayfly-single` is ahead at every rung, and at the two lower
+rungs no seed dissents. Quadrupling the budget does not reverse the engine-shape re-take; whatever
+that result was, it was not an artefact of stopping the search early.
+
+**But the margin narrows monotonically**, +0.0508 → +0.0381 → +0.0226, and the narrowing comes
+almost entirely from `mayfly-r16` improving (0.3390 → 0.3101 → 0.3025) while `mayfly-single` gains
+from 12k to 24k and then gives some of it back (0.2882 → 0.2720 → 0.2799). A single-run arm has
+nothing to spend a larger budget on but a longer run, and a longer run of one population is a
+better search only while the population is still moving.
+
+**The variance goes the other way from the mean.** `mayfly-single`'s spread grows with budget
+(sd 0.0119 → 0.0131 → 0.0213) while `mayfly-r16`'s falls (0.0110 → 0.0052 → 0.0086). At 48k
+`mayfly-single` loses blocks 8 and 9 — the first blocks either arm has lost anywhere in this
+ladder — and its interquartile range, 0.263 to 0.296, is more than three times `mayfly-r16`'s. That
+is the restart schedule doing exactly what a restart schedule is for: sixteen rounds average away
+the seed, and one long run does not. The two arms are not "better and worse" so much as
+**lower-median and wider** against **higher-median and tight**.
+
+**The mechanism is in the last two columns.** `mayfly-single` reaches its best at 97–99.7% of its
+budget at _every_ rung, 48k included, so it is still improving when the cap cuts it and no budget
+tested here is enough to converge it. `mayfly-r16` reaches its best between 23.5% and 50% and
+spends the rest not improving: quadrupling its budget bought it more restarts that recover ground
+it had already covered, not four times the search. Their curves are shaped differently enough that
+"which is better" is a question about the budget, and the honest answer over this range is that
+`mayfly-single` wins the median at all three and buys it with spread that grows as the cap rises.
+
+### What this does to the promotion rule
+
+The per-term half of the rule is measured here too, paired within each rung. On C5, at a
+one-percent-of-norm materiality threshold:
+
+| budget | terms `mayfly-single` materially regresses on C5 |
+| ------ | ------------------------------------------------ |
+| 12,000 | `partial_level_db`, +32.6% of norm, 11/12 blocks |
+| 24,000 | none                                             |
+| 48,000 | none                                             |
+
+At the tight budget `mayfly-single` buys its spectral win with partial level error, and by 24,000
+evaluations it has stopped doing so — `partial_level_db` swings from +32.6% of norm to −31.4%, and
+at 48k it reads +0.77%, inside the threshold. **On the primary reference, at both the campaign
+budget and above it, `mayfly-single` regresses no term of `balanced`.**
+
+**`mayfly-r16` is still the default, and for the same reason as before**: the rule requires no
+material regression on _either_ reference, and the A4 block found `onset_db` at +5.73% of norm and
+`envelope_db` at +1.87%, both unanimous over eight seeds. Nothing in this ladder touches A4, so
+nothing here promotes anything.
+
+What the ladder does change is the standing of that blocker. It shows a material regression
+**dissolving with budget on this very comparison** — `partial_level_db` was material at 12k and
+gone at 24k — and the A4 block was run at 24,000 evaluations, the middle rung. So the A4 regression
+is now a candidate for the same explanation rather than a settled property of the arm, and the
+follow-on is an A4 ladder rung at 48,000 evaluations. That is a new measurement and is not taken
+here; until it is, the rule refuses the promotion and the refusal stands on evidence.
 
 ## What the baseline is for
 

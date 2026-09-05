@@ -119,9 +119,12 @@ perfect term, one half at the norm, never above one — and takes the weighted m
 that could be measured, so a reference too short for a spectral frame is scored on the same
 scale as a long one. The norms in `DefaultNorms` were set against the shipped presets on both
 references so that no term of `balanced` saturates there; [training.md](training.md) has the
-table. Three profiles exist: `balanced` (partials 0.4, spectrum 0.25, envelope 0.25, waveform
-0.1), `placement` (partial-heavy, for a global stage) and `polish` (waveform-heavy, for a local
-one). `Contributions` breaks a score down term by term for a report.
+table. Three profiles exist: `balanced` (partials 0.36, spectrum 0.22, the envelope group 0.32 —
+envelope 0.13, onset 0.10, decay slope 0.09 — and waveform 0.10), `placement` (partial-heavy, for
+a global stage) and `polish` (waveform-heavy, for a local one). `Contributions` breaks a score
+down term by term for a report. The weights live in `ProfileBalanced`
+(`internal/optimizer/metrics.go`); they were last reweighted when the onset term joined the
+objective, which is why an older reading of `balanced` does not reproduce from the same terms.
 
 `PresetFromAnalysis` writes the preset the partial term would call a perfect answer — one mode
 per measured partial, at its frequency, attack level and half-life, authored at the template's

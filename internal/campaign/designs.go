@@ -39,6 +39,23 @@ const (
 	fullBudget  = 24_000
 )
 
+// The round-schedule ladder's budgets. The 2026-09-05 engine-shape re-run left
+// one question open that its own design cannot answer: mayfly-single beat
+// mayfly-r16 on the recording in eleven blocks of twelve, and it reached its
+// best at 98.8% of the budget, still improving when the cap cut it, while
+// mayfly-r16 plateaued at 22.4%. A comparison where one arm is still climbing
+// and the other has stopped measures the cap as much as the shape.
+//
+// So the ladder is the campaign budget halved, kept, and doubled. Halving asks
+// whether restarts win when neither arm can finish; doubling asks whether the
+// single run's lead widens once it has room. Powers of two of the budget every
+// other number in this file is derived from, rather than three round numbers
+// chosen independently.
+const (
+	halfBudget   = fullBudget / 2
+	doubleBudget = fullBudget * 2
+)
+
 // The seed bases. Each design owns a disjoint range, because a block's seed is
 // SeedBase+block and two designs sharing a seed would silently share a search
 // trajectory that the analysis would then read as agreement.
@@ -46,6 +63,16 @@ const (
 	smokeSeedBase       = 120_000
 	engineShapeSeedBase = 121_000
 	seedHuntSeedBase    = 122_000
+
+	// The three rungs of the round-schedule ladder own separate ranges for a
+	// stronger reason than the convention. A run at half the budget is a
+	// prefix of a run at twice it from the same seed and arm, so sharing a
+	// base would make the rungs almost perfectly correlated and a reading
+	// across them would understate its own spread -- the same defect 8.6
+	// found in its first table, arriving by a different route.
+	roundsHalfSeedBase   = 123_000
+	roundsFullSeedBase   = 124_000
+	roundsDoubleSeedBase = 125_000
 )
 
 // The per-run evaluation cap of the restarting CMA-ES arms: five cold restarts
@@ -284,7 +311,14 @@ func SeedHunt(winner Arm) (Design, error) {
 
 // Registered returns every design, in registration order.
 func Registered() []Design {
-	return []Design{smokeDesign(), engineShapeDesign(), defaultSeedHunt()}
+	return []Design{
+		smokeDesign(),
+		engineShapeDesign(),
+		defaultSeedHunt(),
+		roundsDesign("rounds-12k", halfBudget, roundsHalfSeedBase),
+		roundsDesign("rounds-24k", fullBudget, roundsFullSeedBase),
+		roundsDesign("rounds-48k", doubleBudget, roundsDoubleSeedBase),
+	}
 }
 
 // defaultSeedHunt is seed-hunt around the default winner. The winner is an arm
@@ -303,6 +337,67 @@ func defaultSeedHunt() Design {
 	}
 
 	return design
+}
+
+// roundsDesign is one rung of the round-schedule ladder: mayfly-single against
+// mayfly-r16 at a single budget, twelve blocks of two arms.
+//
+// It exists because the budget is a confound in engine-shape's answer, not
+// because the answer was close. The two arms differ only in their round
+// schedule -- one long run against sixteen rounds of a sixteenth the length --
+// so the contrast isolates the schedule at a fixed budget, and the three rungs
+// together say whether the winner depends on how much budget there is.
+//
+// A rung is a design of its own rather than an arm of a wider one because
+// Design.Budget is the evaluation cap of every job in a design: matching arms
+// on evaluations is what makes two arms comparable, so a design cannot hold two
+// budgets without giving up the property the comparison rests on. Reading
+// across the rungs is therefore descriptive, and each rung is a paired test in
+// its own right.
+func roundsDesign(name string, budget int, seedBase int64) Design {
+	return Design{
+		Name: name,
+		Description: fmt.Sprintf(
+			"Round schedule on the C5 recording: one long run against sixteen rounds, twelve blocks of two arms at %d evaluations.",
+			budget),
+		Reference: referenceC5,
+		Note:      72,
+		Profile:   optimizer.MetricBalanced,
+		Budget:    budget,
+		Blocks:    12,
+		SeedBase:  seedBase,
+		Arms: []Arm{
+			{
+				Name: "mayfly-single",
+				Engine: fitrun.Engine{
+					Name:   fitrun.EngineMayfly,
+					Mayfly: fitrun.MayflySettings{Variant: variantDESMA, Population: mayflyPopulation},
+				},
+				MaxIterations:   mayflyIterations(budget),
+				RestartsPlanned: 1,
+			},
+			{
+				Name: "mayfly-r16",
+				Engine: fitrun.Engine{
+					Name: fitrun.EngineMayfly,
+					Mayfly: fitrun.MayflySettings{
+						Variant:    variantDESMA,
+						Population: mayflyPopulation,
+						Epochs:     1,
+						Restarts:   mayflyR16Rounds - 1,
+					},
+				},
+				MaxIterations:   mayflyIterations(budget),
+				RestartsPlanned: mayflyR16Rounds,
+			},
+		},
+		// mayfly-r16 is the control because it is what the CLI ships; the
+		// contrast asks whether the challenger unseats it, which is the
+		// question the promotion rule is written to answer.
+		Contrasts: []Contrast{
+			{Control: "mayfly-r16", Candidate: "mayfly-single", Primary: true},
+		},
+	}
 }
 
 // Lookup returns a registered design by name.

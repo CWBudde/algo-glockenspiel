@@ -45,7 +45,7 @@ func TestRegisteredDesignsAreClosedAndValid(t *testing.T) {
 
 	designs := campaign.Registered()
 
-	want := []string{"smoke", "engine-shape", "seed-hunt"}
+	want := []string{"smoke", "engine-shape", "seed-hunt", "rounds-12k", "rounds-24k", "rounds-48k"}
 	if len(designs) != len(want) {
 		t.Fatalf("registered %d designs, want %d", len(designs), len(want))
 	}
@@ -328,5 +328,71 @@ func TestEngineShapeIsTheDesignThePhaseArgued(t *testing.T) {
 
 	if !reflect.DeepEqual(design.Contrasts, wantContrasts) {
 		t.Fatalf("contrasts are %+v, want %+v", design.Contrasts, wantContrasts)
+	}
+}
+
+// TestTheRoundScheduleLadderVariesOnlyItsBudget is what makes the ladder a
+// measurement of the budget rather than of three unrelated designs. The rungs
+// exist because engine-shape's answer is confounded by its cap -- mayfly-single
+// was still improving at 98.8% of the budget when it beat mayfly-r16 -- so a
+// rung that differed from its siblings in anything but the budget would
+// reintroduce exactly the confound the ladder is built to remove.
+//
+// The iteration cap is the one thing that must move with the budget: it is
+// derived from it, and a rung carrying another rung's cap would anneal on a
+// schedule sized for a run it never has.
+func TestTheRoundScheduleLadderVariesOnlyItsBudget(t *testing.T) {
+	t.Chdir(repoRoot(t))
+
+	rungs := []string{"rounds-12k", "rounds-24k", "rounds-48k"}
+	budgets := make(map[int]string, len(rungs))
+
+	var first campaign.Design
+
+	for index, name := range rungs {
+		design, err := campaign.Lookup(name)
+		if err != nil {
+			t.Fatalf("lookup %q: %v", name, err)
+		}
+
+		if other, taken := budgets[design.Budget]; taken {
+			t.Errorf("rungs %q and %q share the budget %d, so the ladder has a rung that measures nothing",
+				other, name, design.Budget)
+		}
+
+		budgets[design.Budget] = name
+
+		if index == 0 {
+			first = design
+
+			continue
+		}
+
+		if design.Reference != first.Reference || design.Note != first.Note ||
+			design.Profile != first.Profile || design.Blocks != first.Blocks {
+			t.Errorf("rung %q differs from %q in something other than its budget", name, first.Name)
+		}
+
+		if len(design.Arms) != len(first.Arms) {
+			t.Fatalf("rung %q has %d arms, want the %d every rung carries", name, len(design.Arms), len(first.Arms))
+		}
+
+		for i, arm := range design.Arms {
+			if arm.Name != first.Arms[i].Name {
+				t.Errorf("rung %q arm %d is %q, want %q", name, i, arm.Name, first.Arms[i].Name)
+			}
+
+			if arm.Engine != first.Arms[i].Engine {
+				t.Errorf("rung %q arm %q is configured differently from the same arm of %q",
+					name, arm.Name, first.Name)
+			}
+
+			// The cap has to be this rung's own, or the arm anneals on a
+			// schedule sized for a different run.
+			if arm.MaxIterations <= first.Arms[i].MaxIterations {
+				t.Errorf("rung %q arm %q caps iterations at %d, which is not above %q's %d at a smaller budget",
+					name, arm.Name, arm.MaxIterations, first.Name, first.Arms[i].MaxIterations)
+			}
+		}
 	}
 }

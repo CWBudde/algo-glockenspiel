@@ -160,10 +160,11 @@ func TestHeaderIsTheContractsColumnSet(t *testing.T) {
 }
 
 // TestResultsWrittenBeforeATermExistedStillRead is what the phase 8.6 evidence
-// needs from the format. docs/data/engine-shape-results.csv was written when
-// the objective had ten terms; adding an eleventh must not make the campaign
-// that promoted the default unreadable, and the term it never measured has to
-// read back as unmeasured rather than as a zero the tables would average in.
+// needs from the format. docs/data/engine-shape-2026-09-03-results.csv was
+// written when the objective had ten terms -- it carries 36 columns and no
+// onset_db; adding an eleventh must not make the campaign that promoted the
+// default unreadable, and the term it never measured has to read back as
+// unmeasured rather than as a zero the tables would average in.
 func TestResultsWrittenBeforeATermExistedStillRead(t *testing.T) {
 	full := campaign.Header()
 	dropped := optimizer.TermOnset
