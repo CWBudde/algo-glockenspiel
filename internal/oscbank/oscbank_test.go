@@ -429,3 +429,110 @@ func TestBankPacksRotorsIntoLanes(t *testing.T) {
 		}
 	}
 }
+
+// TestBankCullsRotorsAboveNyquist is the test the frequency ceiling needed
+// before it was raised to 200 kHz.
+//
+// The model's ceiling calls a mode above Nyquist "a wasted oscillator rather
+// than an invalid one", which was a statement about the validator and never
+// about this bank: a resonator handed a frequency above Nyquist does not go
+// quiet, it produces the alias at full amplitude. The concrete case is the
+// shipped recorded-bar preset, whose 9791.5 Hz mode reaches 93.15 kHz at the
+// keyboard's top key -- 4.95 kHz at 44.1 kHz and 2.85 kHz at 48 kHz, so the
+// same preset would sound different on two soundcards.
+//
+// Silence is the assertion, and it is checked at both rates: a cull that only
+// attenuated would still be rate-dependent.
+func TestBankCullsRotorsAboveNyquist(t *testing.T) {
+	const aliasing = 93150.0
+
+	for _, rate := range []float64{44100, 48000} {
+		bank := New(rate)
+		if err := bank.SetOscillators([]Oscillator{
+			{Amplitude: 1, Frequency: aliasing, DecayMs: 500},
+		}); err != nil {
+			t.Fatalf("SetOscillators at %g Hz: %v", rate, err)
+		}
+
+		input := strikeInput(512)
+		out := make([]float32, len(input))
+		bank.ProcessBlock(input, out)
+
+		for i, v := range out {
+			if v != 0 {
+				t.Fatalf("at %g Hz, a %g Hz mode sounded %g at sample %d instead of being culled",
+					rate, aliasing, v, i)
+			}
+		}
+	}
+
+	// And the boundary is exclusive on the audible side: a rotor just under
+	// Nyquist still sounds, or the cull would be eating the top octave.
+	bank := New(44100)
+	if err := bank.SetOscillators([]Oscillator{
+		{Amplitude: 1, Frequency: 22049, DecayMs: 500},
+	}); err != nil {
+		t.Fatalf("SetOscillators: %v", err)
+	}
+
+	input := strikeInput(512)
+	out := make([]float32, len(input))
+	bank.ProcessBlock(input, out)
+
+	sounded := false
+
+	for _, v := range out {
+		if v != 0 {
+			sounded = true
+
+			break
+		}
+	}
+
+	if !sounded {
+		t.Fatal("a mode just below Nyquist was culled too")
+	}
+}
+
+// TestBankCullsHarmonicsAboveNyquist covers the same rule one level down. The
+// cull is per rotor rather than per oscillator because harmonic k carries
+// (k+1) times the frequency, so a perfectly audible fundamental can still own
+// harmonics that alias -- and culling by the fundamental alone would either
+// keep those or silence the whole oscillator.
+func TestBankCullsHarmonicsAboveNyquist(t *testing.T) {
+	const rate = 48000
+
+	bank := New(rate)
+
+	// 9 kHz at 48 kHz: harmonics 1 and 2 (18 kHz, 27 kHz) straddle Nyquist.
+	if err := bank.SetOscillators([]Oscillator{
+		{Amplitude: 1, Frequency: 9000, DecayMs: 500, Harmonics: []float64{0, 0, 1, 1}},
+	}); err != nil {
+		t.Fatalf("SetOscillators: %v", err)
+	}
+
+	input := strikeInput(512)
+	withAliasing := make([]float32, len(input))
+	bank.ProcessBlock(input, withAliasing)
+
+	// The same oscillator carrying only the harmonic that fits must render
+	// identically: whatever the culled 36 kHz rotor would have contributed is
+	// exactly what a listener would have heard as an alias.
+	reference := New(rate)
+
+	if err := reference.SetOscillators([]Oscillator{
+		{Amplitude: 1, Frequency: 9000, DecayMs: 500, Harmonics: []float64{0, 0, 1, 0}},
+	}); err != nil {
+		t.Fatalf("SetOscillators: %v", err)
+	}
+
+	want := make([]float32, len(input))
+	reference.ProcessBlock(input, want)
+
+	for i := range want {
+		if withAliasing[i] != want[i] {
+			t.Fatalf("sample %d: %g with the aliasing harmonic, %g without it -- it was not culled",
+				i, withAliasing[i], want[i])
+		}
+	}
+}
