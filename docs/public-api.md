@@ -78,7 +78,7 @@ the decays in the file.
 **The authoring ceiling is not in that table, because it is not a constant.**
 How much decay a preset file may carry depends on its base note, since that is
 what decides how far the bottom key transposes it down. `AuthoredDecayMsMax`
-computes it — 5000 ms at note 36, 743 ms at note 69, 156 ms at note 96 — and
+computes it — 5000 ms at or below the bottom key, 2102 ms at note 94, 936 ms at note 108 — and
 `ValidateAuthoredBarParams` is the check. It is strictly stronger than
 `ValidateBarParams`, and it decides by transposing the preset for real rather
 than by comparing against a restated bound, so validation and the synthesizer
@@ -92,7 +92,7 @@ Anything that produces or accepts a preset file wants those two. Reaching for
   is the dead low register, and collapsing these ceilings into one 500 ms
   constant is what silenced MIDI 36–52 once already; see Phase 5.1 in
   `PLAN.md`. The box is two seconds since Phase 8.3, so the authoring ceiling
-  sits below it everywhere above note 51 — 743 ms at note 69 — and the
+  sits below it everywhere above note 94 — 1487 ms at note 100 — and the
   optimizer narrows its box to `AuthoredDecayMsMax` for the note it fits at
   rather than trusting the constant.
 - **Too strict.** Below note 52 the ceiling is above the box, so a preset
