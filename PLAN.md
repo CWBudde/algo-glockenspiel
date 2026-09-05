@@ -1697,6 +1697,13 @@ million while reporting a plausible number; and NaN is not JSON, so a fit that h
 anything yet made the encoder fail _after_ the handler had written its 200, serving a blank page
 instead of an error. Absent scores are `null` now, the mapping `trace.go` had already chosen.
 
+**Written up.** `docs/training.md` gains "The hollandm pack, 2026-09-05": the pack and the
+note each file actually sounds, the transposition matrix and its row means, the falsified
+prediction, what the joint fit did with its seed, and the reproducibility check -- each with
+the arithmetic it was read under, the binary SHA-256 and revision behind it, every reference
+SHA-256, and the worker width, which belongs in the provenance because the search is
+reproducible at a fixed seed _and_ width rather than at a fixed seed alone.
+
 Still owed:
 
 - Promotion of the joint preset from `out/` to `assets/presets/` stays a separate decision, as it
@@ -1704,8 +1711,17 @@ Still owed:
 - The beta ablation, >=12 paired blocks, under the three-part rule above. Report whether beta
   pinned on its box edge: if it sits at 1.0 in most blocks the box is binding and the honest
   conclusion is "beta cannot be evaluated here", not "beta does not help".
-- The write-up in `docs/training.md` with the date, the arithmetic each table was taken under,
-  the design hash, the binary SHA-256 and every reference SHA-256.
+
+  It is running as this is written: 12 blocks, both arms of a block sharing a seed (140000 + k),
+  all twenty notes, `mayfly/desma` at twelve workers. It runs at **6,000 evaluations rather than
+  24,000** -- 24 joint fits at the full budget is 22 hours on this machine, and this plan's own
+  cost estimate already assumed the reduced one. The consequence has to be stated with the
+  result: at a quarter of the budget neither arm has converged, so the ablation asks whether beta
+  helps _at a fixed budget_ rather than whether it reaches a better optimum. That reading is
+  biased against beta, which carries an extra dimension and pays for it early, so a pass is
+  strong evidence and a failure on criteria 1 or 2 is weak. Criterion 3 -- whether the fitted
+  beta is consistent across blocks -- is the one that does not turn on convergence, and it is the
+  one the twenty-note regression already predicts will fail.
 
 ### What this phase will not do, stated up front
 
