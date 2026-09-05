@@ -34,9 +34,17 @@ const (
 
 	// FrequencyMinHz and FrequencyMaxHz bound ModeParams.Frequency and
 	// BarParams.BaseFrequency. The ceiling sits above any audible rate on
-	// purpose: a mode above Nyquist is a wasted oscillator rather than an
-	// invalid one, and refusing it would make a preset's validity depend on the
-	// sample rate it happens to be rendered at. Enforced by ValidateBarParams.
+	// purpose: refusing a mode above Nyquist here would make a preset's
+	// validity depend on the sample rate it happens to be rendered at.
+	// Enforced by ValidateBarParams.
+	//
+	// That is a statement about validity and not about sound. A mode above
+	// Nyquist is *not* a wasted oscillator -- a resonator handed one produces
+	// the alias at full amplitude -- so the renderer culls it instead, at the
+	// rate it is actually rendering at. See rotorCoefficients in
+	// internal/oscbank. Validity is rate-independent, audibility is not, and
+	// keeping the two apart is what lets this constant be a guard against
+	// nonsense rather than a band limit.
 	//
 	// The ceiling is 200 kHz rather than 50 kHz because the keyboard's top key
 	// moved to MIDI 108. Transposition multiplies every mode frequency by the
@@ -47,8 +55,8 @@ const (
 	// the shipped recorded-bar.json (a 9792 Hz mode, 93 kHz at the top key)
 	// outside it. The alternative was deleting two of that preset's modes for
 	// the second time in its history. Following this constant's own reasoning
-	// instead: a 93 kHz mode is a wasted oscillator, not an invalid one, and
-	// the number is a guard against nonsense rather than a band limit.
+	// instead: a 93 kHz mode is not something to refuse at authoring time. It
+	// is something the renderer must not sound, which is where it is handled.
 	FrequencyMinHz = 0.01
 	FrequencyMaxHz = 200000.0
 
