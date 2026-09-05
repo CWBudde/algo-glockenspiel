@@ -1669,6 +1669,34 @@ transient on the fundamental rather than a partial -- and one at 5.306x. Fitting
 notes at once, the search preferred a well-shaped fundamental envelope over a real second
 mode. Nothing pinned (0 of 15 dimensions), so the box did not force this.
 
+**Reproducibility, checked rather than assumed.** The joint fit was re-run from scratch on a
+binary carrying the version-stamping fix, at the same seed and the same worker width. The two
+runs agree on every one of the 473 iterations the second reached -- identical `current`, `best`
+and `evaluations` at each -- including the final `best` of 0.428765. The second run was then
+killed by the machine for memory at evaluation 20147 and was not restarted, because a run that
+has already reached the same best by the same path has nothing left to demonstrate. So the
+version-stamping change is numerically inert, as a change to a version string ought to be, and
+the run is reproducible at a fixed seed and width in the sense phase 8 pinned.
+
+The consequence to remember: `out/pack/hollandm-joint/preset.json` was written by the binary that
+predates the fix, so the file says v4 while carrying no keytrack. Its parameters are right and
+its version is not, and it is regenerated the next time the fit runs -- which the beta ablation
+does anyway. Nothing ships from `out/`.
+
+**Following a run while it runs.** `pack status --dir <run>` reports where a fit has got to,
+read from the run directory rather than from the process: once, `--watch` in a terminal, or
+`--serve` at a URL. It works from another shell, after the shell that started the run is gone,
+and on a run someone else started, and it never writes. A manifest means a pack run and all
+twenty notes are reported; no manifest means the directory is itself one fit's output, which is
+how it follows a joint fit. The states are the ones `run` already resumes by, so a note it calls
+finished is exactly a note the next run would skip.
+
+Two bugs it found about itself, both pinned by tests, and both of the kind that look fine:
+`time.Duration` marshals as nanoseconds, so a field named `elapsed_ms` was wrong by a factor of a
+million while reporting a plausible number; and NaN is not JSON, so a fit that had not scored
+anything yet made the encoder fail _after_ the handler had written its 200, serving a blank page
+instead of an error. Absent scores are `null` now, the mapping `trace.go` had already chosen.
+
 Still owed:
 
 - Promotion of the joint preset from `out/` to `assets/presets/` stays a separate decision, as it
