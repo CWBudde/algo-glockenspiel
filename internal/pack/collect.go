@@ -156,20 +156,32 @@ func longHeader() []string {
 
 // longRows renders one row per fitted mode.
 //
-// ratio_to_fundamental divides by the fitted preset's own lowest mode rather
-// than by the recording's measured fundamental, so the column describes the
-// model's modal structure rather than mixing the model's numerator with the
-// measurement's denominator. The modes arrive sorted ascending by frequency --
-// the codec holds them that way to kill the permutation symmetry -- so mode k
-// is the k-th partial at every note, which is what makes a regression over the
-// index meaningful.
+// ratio_to_fundamental divides by the preset's own base_frequency, which is the
+// note's fundamental and is a model number rather than a measured one, so the
+// column mixes no measurement into the model's modal structure.
+//
+// It divided by the lowest fitted mode until this was checked against real
+// output, and that was wrong for the one thing this table exists for. The
+// lowest fitted mode is whichever partial that note's fit happened to place
+// lowest: c6 put it at 3695 Hz, 3.53x the fundamental, while the free-free bar
+// ratio the analysis actually found at that note sits at 2.77x. Two notes whose
+// fits made different choices there would each report ratio 1.0 for a different
+// physical partial, and every ratio above it scaled differently -- and a
+// regression over the mode index would read that mismatch as key tracking.
+// base_frequency is the same thing at every note by construction, which is what
+// makes ratios comparable down the table at all.
+//
+// The modes arrive sorted ascending by frequency -- the codec holds them that
+// way to kill the permutation symmetry -- so mode k is the k-th fitted partial
+// at every note. That is what makes a regression over the index meaningful, and
+// it is true whatever the ratios are divided by.
 func longRows(job Job, fitted *preset.Preset) [][]string {
 	modes := fitted.Parameters.Modes
 	if len(modes) == 0 {
 		return nil
 	}
 
-	fundamental := modes[0].Frequency
+	fundamental := fitted.Parameters.BaseFrequency
 	rows := make([][]string, 0, len(modes))
 
 	for i, mode := range modes {

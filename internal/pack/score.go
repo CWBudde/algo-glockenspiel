@@ -35,6 +35,14 @@ type Scored struct {
 // divides the level out of every term in closed form, which is what phase 8.10
 // made true and 8.9's clamp depends on. A preset that renders 20 dB quiet
 // scores exactly what the same preset at unity scores.
+//
+// StrictBounds stays false, and that is load-bearing rather than incidental.
+// Evaluate scores the *decoded* vector, and DecodeParams clamps into the
+// codec's box -- so a preset with a mode outside the default box would be
+// scored as a different preset, quietly, with a plausible number. The
+// non-strict codec widens its box until it contains the template, and the
+// template here is the candidate itself, so nothing is ever clamped.
+// TestTheMatrixScoresThePresetItWasGiven pins it.
 func ScorePresets(dir string, paths []string, sampleRate, velocity int) ([]Scored, []int, error) {
 	manifest, err := ReadManifest(dir)
 	if err != nil {

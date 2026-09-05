@@ -7,12 +7,15 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/cwbudde/algo-glockenspiel/internal/optimizer"
 	"github.com/cwbudde/algo-glockenspiel/internal/pack"
 	"github.com/cwbudde/algo-glockenspiel/internal/preset"
+	"github.com/cwbudde/algo-glockenspiel/model"
 )
 
 // hollandm is the pack this phase exists to fit: twenty chromatic semitones,
@@ -176,17 +179,52 @@ func TestRunAndCollectProduceBothTables(t *testing.T) {
 		t.Fatalf("long table holds %d lines, want a header and at least one mode per note", len(long))
 	}
 
-	// mode 0 is the lowest mode of its note, so its ratio to the fundamental is
-	// exactly 1 and every later mode is above it. That ordering is what makes
-	// "mode k" the same thing at every note.
+	// The ratio is against the note's fundamental, not against the note's own
+	// lowest fitted mode. The difference is the whole comparability of the
+	// table: a ratio of 1 for mode 0 would mean the denominator moved with the
+	// fit, and two notes' "mode 0" rows would then denote different partials.
 	index := columnOf(t, long[0], "mode_index")
 	ratio := columnOf(t, long[0], "ratio_to_fundamental")
+	hz := columnOf(t, long[0], "frequency_hz")
+	noteAt := columnOf(t, long[0], "note")
+
+	// Ascending order within each note is what makes "mode k" the k-th partial
+	// everywhere, and it holds under either denominator -- so it is asserted
+	// here rather than inferred from a ratio of 1.
+	previous := map[string]float64{}
 
 	for _, row := range long[1:] {
-		if row[index] == "0" && row[ratio] != "1" {
-			t.Errorf("mode 0 has ratio %q, want exactly 1", row[ratio])
+		frequency := parseFloat(t, row[hz])
+		got := parseFloat(t, row[ratio])
+
+		fundamental := frequency / got
+		if fundamental < model.FrequencyMinHz || fundamental > model.FrequencyMaxHz {
+			t.Errorf("note %s mode %s implies a fundamental of %g Hz", row[noteAt], row[index], fundamental)
 		}
+
+		if row[index] == "0" && got == 1 {
+			t.Errorf("note %s mode 0 has ratio exactly 1, which is the lowest mode dividing itself",
+				row[noteAt])
+		}
+
+		if last, seen := previous[row[noteAt]]; seen && frequency <= last {
+			t.Errorf("note %s mode %s is at %g Hz, not above the mode before it at %g",
+				row[noteAt], row[index], frequency, last)
+		}
+
+		previous[row[noteAt]] = frequency
 	}
+}
+
+func parseFloat(t *testing.T, text string) float64 {
+	t.Helper()
+
+	value, err := strconv.ParseFloat(text, 64)
+	if err != nil {
+		t.Fatalf("parse %q: %v", text, err)
+	}
+
+	return value
 }
 
 // TestRunSkipsAFinishedNote is the resume rule: an interrupted run continues
@@ -396,6 +434,113 @@ func TestPerNoteFitIsAuthoredAtItsOwnNote(t *testing.T) {
 		if cents := 1200 * math.Log2(lowest/measured); math.Abs(cents) > 100 {
 			t.Errorf("note %s: lowest fitted mode is %.1f Hz, %.0f cents from the bar's %.1f Hz",
 				job.Name, lowest, cents, measured)
+		}
+	}
+}
+
+// TestTheMatrixScoresThePresetItWasGiven pins the property ScorePresets rests
+// on: nothing it scores is clamped on the way in.
+//
+// optimizer.Evaluate scores the decoded vector and DecodeParams clamps into the
+// codec's box, so a preset carrying a mode outside that box would be scored as
+// a different preset -- silently, with a number that looks like every other
+// number in the matrix. The non-strict codec widens its box until it contains
+// the template, and ScorePresets passes the candidate as its own template, so
+// the encode/decode round trip is exact. Setting StrictBounds there would break
+// this and nothing else would say so.
+func TestTheMatrixScoresThePresetItWasGiven(t *testing.T) {
+	fitted, err := preset.Load(filepath.Join("..", "..", "assets", "presets", "default.json"))
+	if err != nil {
+		t.Fatalf("load the default preset: %v", err)
+	}
+
+	// A mode deliberately outside the box on both axes it can leave. The search
+	// frequency ceiling is 20 kHz and the search decay ceiling is 2 s, narrowed
+	// further by the authored note; the model's own limits are far wider, so
+	// these are values a preset can legally carry and the codec cannot hold.
+	//
+	// Both matter and the decay is the one that bites in practice: the ceiling
+	// is narrowed per authored note, so a preset authored near the top of the
+	// keyboard has a box under a second and a long-tailed bar leaves it easily.
+	last := &fitted.Parameters.Modes[len(fitted.Parameters.Modes)-1]
+	last.Frequency = 25000
+	last.DecayMs = 3000
+
+	config := optimizer.DefaultObjectiveConfig(optimizer.MetricBalanced)
+	config.Bounds = optimizer.DefaultParamBounds
+
+	objective, err := optimizer.NewObjectiveFunctionWithConfig(
+		make([]float32, 44100), fitted, 44100, fitted.Note, 100, config)
+	if err != nil {
+		t.Fatalf("build objective: %v", err)
+	}
+
+	// The same preset under a strict codec, which is what ScorePresets would be
+	// doing if StrictBounds were ever set there. It must clamp, or the values
+	// above are inside the box after all and this test proves nothing.
+	strict := config
+	strict.StrictBounds = true
+
+	strictObjective, err := optimizer.NewObjectiveFunctionWithConfig(
+		make([]float32, 44100), fitted, 44100, fitted.Note, 100, strict)
+	if err != nil {
+		t.Fatalf("build the strict objective: %v", err)
+	}
+
+	strictEncoded, err := strictObjective.Codec().EncodeParams(&fitted.Parameters)
+	if err != nil {
+		t.Fatalf("strict encode: %v", err)
+	}
+
+	strictDecoded, err := strictObjective.Codec().DecodeParams(strictEncoded)
+	if err != nil {
+		t.Fatalf("strict decode: %v", err)
+	}
+
+	clamped := false
+
+	for i, want := range fitted.Parameters.Modes {
+		if strictDecoded.Modes[i].Frequency != want.Frequency || strictDecoded.Modes[i].DecayMs != want.DecayMs {
+			clamped = true
+		}
+	}
+
+	if !clamped {
+		t.Fatal("the strict codec changed nothing, so the mode is inside the box and this test is vacuous")
+	}
+
+	encoded, err := objective.Codec().EncodeParams(&fitted.Parameters)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	decoded, err := objective.Codec().DecodeParams(encoded)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// EncodeParams sorts the modes ascending by frequency to kill the
+	// permutation symmetry, and default.json does not store them that way, so
+	// the comparison has to be against the same order the codec used.
+	wanted := append([]model.ModeParams(nil), fitted.Parameters.Modes...)
+	sort.Slice(wanted, func(i, j int) bool { return wanted[i].Frequency < wanted[j].Frequency })
+
+	for i, want := range wanted {
+		got := decoded.Modes[i]
+
+		for _, pair := range []struct {
+			name     string
+			got, exp float64
+		}{
+			{"frequency", got.Frequency, want.Frequency},
+			{"decay", got.DecayMs, want.DecayMs},
+			{"amplitude", got.Amplitude, want.Amplitude},
+		} {
+			// The log10/pow round trip costs an ulp or two; a clamp costs
+			// orders of magnitude, so the tolerance separates them cleanly.
+			if math.Abs(pair.got-pair.exp) > 1e-9*math.Max(math.Abs(pair.exp), 1) {
+				t.Errorf("mode %d %s was clamped: %.10g scored as %.10g", i, pair.name, pair.exp, pair.got)
+			}
 		}
 	}
 }
