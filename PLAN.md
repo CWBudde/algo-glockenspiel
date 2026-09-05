@@ -1477,10 +1477,16 @@ carrying rather than filing:
   promotion rule refuses the challenger on the second reference, where it materially regresses
   `onset_db` and `envelope_db` over eight seeds of eight. **This is now a live open question**,
   not a settled one: the better arm on the only real recording this project has is not the one
-  it ships. The design that settles it is registered — `rounds-12k`, `rounds-24k` and
-  `rounds-48k`, the two shapes at half the campaign budget, at it and at twice it — because
-  `engine-shape`'s answer is confounded by its cap: `mayfly-single` was still improving at 98.8%
-  of the budget when it won, while `mayfly-r16` had plateaued at 22.4%.
+  it ships. The design that settles the budget half of it is registered and **has now been run**,
+  2026-09-05: `rounds-12k`, `rounds-24k` and `rounds-48k`, the two shapes at half the campaign
+  budget, at it and at twice it, 72 jobs. `mayfly-single` wins all three — +0.0508, +0.0381,
+  +0.0226, the last at p = 0.005 — so the inversion is not an artefact of the cap. But its margin
+  narrows monotonically as the budget rises and its spread nearly doubles, and it is still
+  improving at 97% of even the 48,000-evaluation budget, so no rung converges it. On C5 it
+  materially regresses no term at 24k or 48k; `partial_level_db`, material at 12k, dissolves by
+  24k. **The default is unchanged**, still refused on A4 — but that A4 block was run at 24,000
+  evaluations, and the ladder has just shown a material regression dissolving with budget on this
+  same comparison, so the named follow-on is an A4 rung at 48,000.
 - **8.10 was not the only thing that had moved.** The objective had gained an eleventh term,
   `onset_db`, and `balanced` was reweighted for it, which is what actually moved the composite
   table's scores — every term underneath them reproduced. The campaign that promoted the current

@@ -906,12 +906,13 @@ primary reference, by a rule written before the result was known. The three term
 was chosen, which makes the term that decided the rematch one the original campaign could not have
 measured.
 
-Two things follow, and neither is taken here. `mayfly-single` is now the better arm on the only
-real recording this project has, by a margin no seed disputes, so the case for it is open rather
-than closed and wants a design that measures both shapes at two or three budgets — the campaign
-already showed `mayfly-single` reaching its best at 98.8% of its budget, still improving when the
-cap cut it. And `sep-cmaes-r` reached parity on the recording, which is not a win, so `seed-hunt`
-stays unrunnable for the second campaign running.
+Two things follow. `mayfly-single` is now the better arm on the only real recording this project
+has, by a margin no seed disputes, so the case for it is open rather than closed and wants a design
+that measures both shapes at two or three budgets — the campaign already showed `mayfly-single`
+reaching its best at 98.8% of its budget, still improving when the cap cut it. That design is the
+`rounds-*` ladder, run the same day; "The round schedule at three budgets" below is its result, and
+it does not promote the arm either. And `sep-cmaes-r` reached parity on the recording, which is not
+a win, so `seed-hunt` stays unrunnable for the second campaign running.
 
 ## The refit re-taken, 2026-09-05
 
@@ -978,6 +979,91 @@ shipped preset also matches one, so the improvement is in shape and level rather
 placement. And `calibrateNoteTrims` normalises the whole instrument to the preset's own note, so
 shipping a preset changes the level of every key, which is exactly why the level had to be right
 before this could be considered at all.
+
+## The round schedule at three budgets, 2026-09-05
+
+The section above left the `mayfly-single` case open rather than closed, and named what would
+settle it: the arm reached its best at 98.8% of its budget, still improving when the cap cut it, so
+the comparison might have been budget-limited rather than decided. `rounds-12k`, `rounds-24k` and
+`rounds-48k` are that measurement — the same two shapes, the same twelve-block paired design, the
+same C5 reference, at 12,000, 24,000 and 48,000 evaluations.
+
+They are three registered designs rather than one, because `Design.Budget` is the evaluation cap
+for every job in a design, and matching arms on evaluations is the single property that makes two
+arms comparable at all. A design holding two budgets would give that up. They also take **disjoint
+seed bases** (123,000 / 124,000 / 125,000), and here that is substantive rather than conventional:
+a 12k run is a _prefix_ of a 48k run at the same seed and arm, so a shared base would make the
+rungs nearly perfectly correlated and any cross-budget reading would understate its own spread.
+The consequence is the reverse of the usual one — each rung is a paired test carrying its own
+p-value, and reading _across_ the rungs is descriptive, not inferential.
+
+Revision `bfc780b`, go1.26.0, mayfly v0.7.1, go-cma-es v0.1.0, binary SHA-256 `50877d53…`,
+reference `testdata/reference/glockenspiel_c5.wav` SHA-256 `635f898e…`, 12 workers, manifests
+recording `modified: false`. Design hashes `d391edd5…`, `f3996cfb…`, `405e377f…`. 72 jobs, 1 h 36 m
+of compute. The per-job data is
+[`docs/data/rounds-12k-results.csv`](data/rounds-12k-results.csv),
+[`-24k`](data/rounds-24k-results.csv) and [`-48k`](data/rounds-48k-results.csv), with the reports
+beside them.
+
+| budget | `mayfly-single` mean (sd) | `mayfly-r16` mean (sd) | gain    | t (df=11) | p       | blocks won | single spent at best | r16 spent at best |
+| ------ | ------------------------- | ---------------------- | ------- | --------- | ------- | ---------- | -------------------- | ----------------- |
+| 12,000 | 0.288232 (0.011945)       | 0.339007 (0.011012)    | +0.0508 | +15.12    | 0.00000 | 12/12      | 99.7%                | 50.0%             |
+| 24,000 | 0.272037 (0.013052)       | 0.310140 (0.005242)    | +0.0381 | +8.44     | 0.00000 | 12/12      | 98.3%                | 23.5%             |
+| 48,000 | 0.279863 (0.021281)       | 0.302503 (0.008634)    | +0.0226 | +3.47     | 0.00522 | 10/12      | 97.2%                | 30.7%             |
+
+**The win is not a budget artifact.** `mayfly-single` is ahead at every rung, and at the two lower
+rungs no seed dissents. Quadrupling the budget does not reverse the engine-shape re-take; whatever
+that result was, it was not an artefact of stopping the search early.
+
+**But the margin narrows monotonically**, +0.0508 → +0.0381 → +0.0226, and the narrowing comes
+almost entirely from `mayfly-r16` improving (0.3390 → 0.3101 → 0.3025) while `mayfly-single` gains
+from 12k to 24k and then gives some of it back (0.2882 → 0.2720 → 0.2799). A single-run arm has
+nothing to spend a larger budget on but a longer run, and a longer run of one population is a
+better search only while the population is still moving.
+
+**The variance goes the other way from the mean.** `mayfly-single`'s spread grows with budget
+(sd 0.0119 → 0.0131 → 0.0213) while `mayfly-r16`'s falls (0.0110 → 0.0052 → 0.0086). At 48k
+`mayfly-single` loses blocks 8 and 9 — the first blocks either arm has lost anywhere in this
+ladder — and its interquartile range, 0.263 to 0.296, is more than three times `mayfly-r16`'s. That
+is the restart schedule doing exactly what a restart schedule is for: sixteen rounds average away
+the seed, and one long run does not. The two arms are not "better and worse" so much as
+**lower-median and wider** against **higher-median and tight**.
+
+**The mechanism is in the last two columns.** `mayfly-single` reaches its best at 97–99.7% of its
+budget at _every_ rung, 48k included, so it is still improving when the cap cuts it and no budget
+tested here is enough to converge it. `mayfly-r16` reaches its best between 23.5% and 50% and
+spends the rest not improving: quadrupling its budget bought it more restarts that recover ground
+it had already covered, not four times the search. Their curves are shaped differently enough that
+"which is better" is a question about the budget, and the honest answer over this range is that
+`mayfly-single` wins the median at all three and buys it with spread that grows as the cap rises.
+
+### What this does to the promotion rule
+
+The per-term half of the rule is measured here too, paired within each rung. On C5, at a
+one-percent-of-norm materiality threshold:
+
+| budget | terms `mayfly-single` materially regresses on C5 |
+| ------ | ------------------------------------------------ |
+| 12,000 | `partial_level_db`, +32.6% of norm, 11/12 blocks |
+| 24,000 | none                                             |
+| 48,000 | none                                             |
+
+At the tight budget `mayfly-single` buys its spectral win with partial level error, and by 24,000
+evaluations it has stopped doing so — `partial_level_db` swings from +32.6% of norm to −31.4%, and
+at 48k it reads +0.77%, inside the threshold. **On the primary reference, at both the campaign
+budget and above it, `mayfly-single` regresses no term of `balanced`.**
+
+**`mayfly-r16` is still the default, and for the same reason as before**: the rule requires no
+material regression on _either_ reference, and the A4 block found `onset_db` at +5.73% of norm and
+`envelope_db` at +1.87%, both unanimous over eight seeds. Nothing in this ladder touches A4, so
+nothing here promotes anything.
+
+What the ladder does change is the standing of that blocker. It shows a material regression
+**dissolving with budget on this very comparison** — `partial_level_db` was material at 12k and
+gone at 24k — and the A4 block was run at 24,000 evaluations, the middle rung. So the A4 regression
+is now a candidate for the same explanation rather than a settled property of the arm, and the
+follow-on is an A4 ladder rung at 48,000 evaluations. That is a new measurement and is not taken
+here; until it is, the rule refuses the promotion and the refusal stands on evidence.
 
 ## What the baseline is for
 

@@ -272,6 +272,9 @@ evaluation cap of every job in a design, and matching arms on evaluations is the
 makes two arms comparable at all. A design cannot hold two budgets without giving that up. So each
 rung is a paired test in its own right, and reading across the rungs is descriptive.
 
+All three rungs were run on 2026-09-05; "The round schedule at three budgets" in
+[docs/training.md](training.md) is the result, and `docs/data/rounds-*` the data.
+
 The rungs own separate seed bases for a stronger reason than the convention below. A run at half
 the budget is a prefix of a run at twice it from the same seed and arm, so a shared base would
 make the rungs almost perfectly correlated and a reading across them would understate its own
