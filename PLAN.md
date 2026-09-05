@@ -1514,15 +1514,43 @@ abandoned its own fundamental and the other four did not. Clustering is single-l
 `log2(ratio)` at a gap of 0.04, chosen from the data: a partial's ratio varies about 1% across the
 pack while the closest real partials sit 5% apart.
 
-**This puts a premise of this whole phase in doubt, and it is the premise β was judged on.** The
-table at the top of Phase 9 records 0.33 octaves of "irreducible" bar-to-bar decay scatter, 0.66x
-the objective's norm, and that number is the reason β was called second-order before any code was
-written. Grouped by cluster over the first five notes, the strong partials scatter far less --
-0.088 octaves at the free-free ratio, 0.048 at 5.35x, 0.249 at 8.93x. If that survives the full
-twenty notes, the 0.33 figure was an artefact of pooling different partials and **β is more
-identifiable than this plan assumed**. It does not make β right; it makes the ablation worth
-running rather than a formality, and it is recorded here because the prior was written down first
-and has to be allowed to be wrong.
+**Measured over all twenty notes, 2026-09-05, and the earlier reading was wrong.** Partway through
+the run, over the first five notes, the strong clusters scattered by 0.088 and 0.048 octaves and it
+looked as though the 0.33 octaves in the table above had been an artefact of grouping by index --
+which would have made β _more_ identifiable than this plan assumed. It was the opposite. Those tight
+clusters held three notes that happened to agree. With every note in, the well-populated clusters
+scatter far more than the plan's own figure:
+
+| partial                    | notes    | β     | fitted sd (oct) | pinned sd (oct) | what β buys |
+| -------------------------- | -------- | ----- | --------------- | --------------- | ----------- |
+| 1.00x f0 (the fundamental) | 14 of 20 | +1.60 | 1.541           | 1.563           | **0.021**   |
+| 2.72x f0 (free-free)       | 13 of 20 | +1.46 | 0.988           | 1.015           | **0.026**   |
+| 5.33x f0                   | 8 of 20  | −0.50 | 0.895           | 1.013           | 0.118       |
+| 8.93x f0                   | 6 of 20  | −2.82 | 0.486           | 1.167           | 0.681       |
+
+**β is not earned, and the decision rule already registered says so.** Its third clause -- that the
+fitted exponent be consistent -- fails outright: across clusters β reads +1.60, +10.20, +11.70,
++1.46, +2.24, −0.50, −7.37, +8.25, −44.13, +9.67, −2.82, +3.33. Every cluster where β appears to buy
+something is one of the thin ones, where three to six points and an absurd exponent are fitting
+noise; the two clusters carrying most of the pack both land near the model's own 1.0 and buy about
+0.02 octaves against one to one and a half octaves of scatter. The ablation should still be run,
+because it is registered and because a negative result stated from data is worth more than one
+inferred from a table -- but **the preset ships at v3 unless it says otherwise.**
+
+**The modal structure, though, generalises almost perfectly**, and that is the finding this phase was
+actually looking for:
+
+| partial     | notes    | mean ratio | sd        | min   | max   | drift /octave |
+| ----------- | -------- | ---------- | --------- | ----- | ----- | ------------- |
+| fundamental | 14 of 20 | 1.002      | **0.002** | 1.000 | 1.009 | +0.000        |
+| free-free   | 13 of 20 | 2.723      | **0.037** | 2.619 | 2.779 | −0.016        |
+| third       | 8 of 20  | 5.330      | 0.025     | —     | 5.374 | −0.017        |
+| fourth      | 6 of 20  | 8.932      | 0.094     | —     | 9.136 | +0.012        |
+
+A transposed preset assumes exactly this: every partial a fixed multiple of the fundamental at every
+note. The ratios hold to 0.2% at the fundamental and 1.4% at the free-free partial, with drift
+indistinguishable from zero. **So one preset can carry this instrument's modal structure and cannot
+carry its decays** -- and that split, not β, is the answer to what depends on the MIDI note.
 
 ### Phase 9.3: The joint fit
 
