@@ -258,6 +258,43 @@ func TestThePaceIgnoresAFitThatWasSuspended(t *testing.T) {
 	}
 }
 
+// TestTheFirstFitIsReportedBeforeItWritesAConfig covers the window a review
+// found open: a driver has created the run directory and its log, and fitrun
+// is still seeding and analysing, so no config.json exists anywhere in the
+// ablation yet. Reporting nothing there is worse than useless -- the reader
+// fails, the served page answers 503, and it does so for the first minute of
+// every ablation, which is exactly when someone is watching to see that the
+// thing they just started is running.
+//
+// The pending fit has no config, so it carries no note, budget or arm; that
+// is the point of listing it anyway. What it does carry is that it exists.
+func TestTheFirstFitIsReportedBeforeItWritesAConfig(t *testing.T) {
+	dir := t.TempDir()
+
+	for _, name := range []string{"b00-beta", "b00-fixed"} {
+		writeAblationChild(t, dir, name, "", "", "", "")
+	}
+
+	status, err := pack.ReadStatus(dir)
+	if err != nil {
+		t.Fatalf("ReadStatus: %v", err)
+	}
+
+	if got, want := len(status.Notes), 2; got != want {
+		t.Fatalf("read %d fits, want %d before either has written a config", got, want)
+	}
+
+	for _, note := range status.Notes {
+		if note.State != pack.StatePending {
+			t.Errorf("%s is %q, want %q", note.Name, note.State, pack.StatePending)
+		}
+	}
+
+	if got, want := status.Notes[0].Name, "b00-beta"; got != want {
+		t.Errorf("first fit is %q, want %q: pending fits sort with the rest", got, want)
+	}
+}
+
 // TestADirectoryOfNothingIsNotARun. An empty directory, a directory of logs
 // with no fit behind any of them, and a joint fit's own notes/ folder mistaken
 // for a sibling all have to be refused rather than reported as a run with

@@ -72,15 +72,26 @@ func readAblationStatus(dir string) (*Status, error) {
 }
 
 // ablationChildren lists the fits, sorted by name: every subdirectory that is
-// a run directory, and every "<name>.log" whose directory is not one yet.
+// a run directory, and every "<name>.log" whose directory exists but is not
+// one yet.
 //
-// A log with nothing else is a fit that has been started and has not written
-// its config, so it is listed as pending rather than left out -- a monitor
-// that showed 0 of 24 with nothing running for the first minute of every fit
-// would look broken exactly when someone has just started it. A directory
-// that is not a run and has no log is skipped: the joint fits keep their
-// per-note analysis under notes/, and nothing under an ablation is a fit
-// unless a search wrote there or a driver logged there.
+// A log beside a directory with no config in it is a fit that has been
+// started and has not written one, so it is listed as pending rather than
+// left out -- a monitor that showed 0 of 24 with nothing running for the
+// first minute of every fit would look broken exactly when someone has just
+// started it. fitrun creates the run directory before it seeds and analyses,
+// so the directory is there for the whole of that window, which is what makes
+// "a directory exists" the test rather than "a config exists".
+//
+// A log with no directory at all is not a fit but a stray file, and a
+// directory of those is not an ablation. That distinction is the whole point
+// of reading the directory rather than the log: "the first fit is still
+// starting" and "this is the wrong directory" look the same in a table, so
+// they have to be told apart here.
+//
+// A directory that is not a run and has no log is skipped: the joint fits
+// keep their per-note analysis under notes/, and nothing under an ablation is
+// a fit unless a search wrote there or a driver logged there.
 //
 // The error is only for a directory that cannot be listed; a listable
 // directory with no fits in it returns no names, and the caller decides what
@@ -92,6 +103,7 @@ func ablationChildren(dir string) ([]string, error) {
 	}
 
 	runs := map[string]bool{}
+	dirs := map[string]bool{}
 	logged := map[string]bool{}
 
 	for _, entry := range entries {
@@ -101,17 +113,15 @@ func ablationChildren(dir string) ([]string, error) {
 		}
 
 		switch {
-		case entry.IsDir() && isRunDir(filepath.Join(dir, name)):
-			runs[name] = true
-		case !entry.IsDir() && strings.HasSuffix(name, ablationLogSuffix):
+		case entry.IsDir():
+			dirs[name] = true
+
+			if isRunDir(filepath.Join(dir, name)) {
+				runs[name] = true
+			}
+		case strings.HasSuffix(name, ablationLogSuffix):
 			logged[strings.TrimSuffix(name, ablationLogSuffix)] = true
 		}
-	}
-
-	// A log alone is a fit that has been started; a log beside a run directory
-	// is the same fit, listed once.
-	if len(runs) == 0 {
-		return nil, nil
 	}
 
 	names := make([]string, 0, len(runs)+len(logged))
@@ -120,8 +130,10 @@ func ablationChildren(dir string) ([]string, error) {
 		names = append(names, name)
 	}
 
+	// A log beside a run directory is the same fit, listed once; a log beside
+	// a directory nothing has been written to yet is a fit that is starting.
 	for name := range logged {
-		if !runs[name] {
+		if !runs[name] && dirs[name] {
 			names = append(names, name)
 		}
 	}
