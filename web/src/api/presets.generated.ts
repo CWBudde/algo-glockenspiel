@@ -31,6 +31,13 @@ export const SOUND_PRESETS: readonly SoundPreset[] = [
       '{"version":"1.0","name":"Default Glockenspiel","note":69,"parameters":{"input_mix":2,"filter_frequency":1303.6960400974592,"base_frequency":440.0,"modes":[{"amplitude":2,"frequency":1756.5243235169935,"decay_ms":170.44361397312102},{"amplitude":2,"frequency":4516.145411643994,"decay_ms":3.4763848726009345},{"amplitude":2,"frequency":1328.9984749886657,"decay_ms":0.5604835696794853},{"amplitude":-2,"frequency":1855.0239239312777,"decay_ms":1.7888034585370858}],"chebyshev":{"enabled":true,"harmonic_gains":[1.3710558525404255,0.0,0.20036314305373643,0.0]}}}',
   },
   {
+    id: "morphagene-glockenspiel",
+    label: "Morphagene Glockenspiel",
+    note: 84,
+    document:
+      '{"version":"4.0","name":"Morphagene Glockenspiel","note":84,"parameters":{"input_mix":1.42630900701629,"filter_frequency":131.0282709873997,"base_frequency":1046.5022612023945,"modes":[{"amplitude":-1.9839259467947812,"frequency":1047.224183739988,"decay_ms":495.73913954874706}],"chebyshev":{"enabled":true,"stage":"excitation","harmonic_gains":[1.7014108574095639,0.8513080339357507,1.8233379775839165,0.34930810112027166]},"output_gain_db":14.63664550927405,"decay_keytrack":0.6491630350154589}}',
+  },
+  {
     id: "recorded-bar",
     label: "Recorded Bar",
     note: 69,

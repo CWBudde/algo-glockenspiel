@@ -13,11 +13,12 @@ just gen-presets      # writes web/src/api/presets.generated.ts
 just check-presets    # what CI runs
 ```
 
-| File                     | Sound                | Note | Modes | Schema |
-| ------------------------ | -------------------- | ---- | ----- | ------ |
-| `default.json`           | Default Glockenspiel | 69   | 4     | 2.0    |
-| `recorded-bar.json`      | Recorded Bar         | 69   | 12    | 2.0    |
-| `toy-glockenspiel.json`  | Toy Glockenspiel     | 94   | 3     | 3.0    |
+| File                           | Sound                   | Note | Modes | Schema |
+| ------------------------------ | ----------------------- | ---- | ----- | ------ |
+| `default.json`                 | Default Glockenspiel    | 69   | 4     | 2.0    |
+| `morphagene-glockenspiel.json` | Morphagene Glockenspiel | 84   | 1     | 4.0    |
+| `recorded-bar.json`            | Recorded Bar            | 69   | 12    | 2.0    |
+| `toy-glockenspiel.json`        | Toy Glockenspiel        | 94   | 3     | 3.0    |
 
 ## What a preset here has to satisfy
 
@@ -114,3 +115,24 @@ without it. Lowering the gain to fix the raw path is not available and should
 not be attempted -- `TestBuiltinPresetsRenderNearMinusThreeDBFS` pins the
 authored note at -3 dBFS, which is the headroom rule the trims are measured
 against.
+
+`morphagene-glockenspiel.json` is the joint fit over all fifteen notes of
+`testdata/reference/packs/radiohummingbird-morphagene-glockenspiel`, authored at
+note 84, and it is **the first v4 document anywhere in this repository**: it is
+the only preset that carries `decay_keytrack`. Its exponent is **0.6492**, and
+that number was earned rather than assumed -- twelve paired ablation blocks put
+it at 0.6241 +- 0.0435, and this full-budget fit landed inside that range. A v3
+reader will accept the file, ignore the key and divide by the full frequency
+ratio, which renders correctly at note 84 and drifts further from it with
+distance; that is the ladder rule, and it is why the version is 4.0.
+
+**It has one mode, and that is the recording rather than a truncated fit.** The
+pack is effectively single-partial -- its second partial is 39 to 67 dB down,
+and thirteen of its fifteen notes measure one partial -- so a richer preset
+fitted here would be fitting noise. It sounds like a struck bell rather than
+like `toy-glockenspiel.json`'s three modes, and the difference between the two
+is the difference between the two instruments, not between two fits.
+
+It shares the level behaviour described above for the same reason: -3 dBFS at
+its own note, and about 27 samples at full scale at the bottom key through the
+raw `synth` path, which the realtime trim table removes.

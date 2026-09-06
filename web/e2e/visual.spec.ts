@@ -1103,6 +1103,7 @@ test("performance deck keeps native controls and live engine status", async ({
   // that stops reaching the picker, which a length check would not.
   await expect(sound.locator("option")).toHaveText([
     "Default Glockenspiel",
+    "Morphagene Glockenspiel",
     "Recorded Bar",
     "Toy Glockenspiel",
   ]);
