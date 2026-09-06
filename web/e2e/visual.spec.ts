@@ -1097,9 +1097,14 @@ test("performance deck keeps native controls and live engine status", async ({
   const sound = deck.getByRole("combobox", { name: "Sound" });
   await expect(sound).toBeVisible();
   await expect(sound).toHaveValue("default");
+  // Every embedded preset, in the order assets.IDs sorts them -- by filename
+  // stem, not by display name. Adding a file to assets/presets adds a sound,
+  // so this list is maintained by hand on purpose: it is what catches a preset
+  // that stops reaching the picker, which a length check would not.
   await expect(sound.locator("option")).toHaveText([
     "Default Glockenspiel",
     "Recorded Bar",
+    "Toy Glockenspiel",
   ]);
 
   await sound.selectOption("recorded-bar");
