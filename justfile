@@ -182,6 +182,10 @@ campaign-run DESIGN *ARGS:
 campaign-status DESIGN:
     ./out/campaign/bin/glockenspiel-campaign status --dir out/campaign/{{ DESIGN }}
 
+# Report a pack run, a joint fit, or a directory of fit directories; add --serve :8099 for the page
+pack-status DIR *ARGS: campaign-build
+    ./out/campaign/bin/glockenspiel-campaign pack status --dir {{ DIR }} {{ ARGS }}
+
 # Write out/campaign/DESIGN/results.csv from the run directories
 campaign-collect DESIGN *ARGS:
     ./out/campaign/bin/glockenspiel-campaign collect --dir out/campaign/{{ DESIGN }} {{ ARGS }}

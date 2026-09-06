@@ -1424,8 +1424,10 @@ reweighted for it, which is what actually moved the composite table's scores.
 
 ## Phase 9: Presets from the sample packs
 
-**In progress.** The code is written and gated; the measurements are not taken. Branch
-`phase-9-sample-packs`, PR #53, deliberately a draft until the numbers exist.
+**Measured, and the beta ablation was run twice.** The code is written and gated and every
+number the phase registered has been taken: the transposition matrix, the price of one preset
+over twenty notes, and the beta ablation on two packs. Branch `phase-9-sample-packs`, PR #53.
+The one thing outstanding is promotion, which is a decision rather than a measurement.
 
 `testdata/reference/packs/` has held four Freesound packs -- 56 recorded notes -- since phase 8,
 referenced by no Go code. The ask was threefold: fit each sample, find what depends on the MIDI
@@ -1577,9 +1579,16 @@ Those per-note scores are not bookkeeping: a preset whose mean is good because i
 notes and abandons seventeen is a different object from one that fits all twenty adequately, and
 the mean alone cannot tell them apart.
 
-### Phase 9.4: The decay key-tracking exponent, at schema v4
+### Phase 9.4: The decay key-tracking exponent, measured, and earned on the second pack
 
-**Done, unearned.** `BarParams.DecayKeytrack` is a `*float64` because the neutral value is 1.0: a
+**Done, and the answer is "it depends on the instrument".** On hollandm beta failed all three
+criteria; on radiohummingbird it passed all three, decisively. The two are not in conflict --
+hollandm's own bars already track the model's built-in law -- and 9.5 carries both tables. The
+code is unchanged by either result, because the version follows the fields: a fit run with
+`--keytrack` writes v4 and one without writes v3. **The hollandm joint preset carries no
+keytrack and remains a v3 document.**
+
+`BarParams.DecayKeytrack` is a `*float64` because the neutral value is 1.0: a
 bare `float64`'s zero would mean an exponent of 0, which is legal and measured (mooncube is near
 it), so every existing struct literal here and in the external VST3 module would have switched
 laws with no compile error. `nil` means 1.0, and every v1/v2/v3 document renders bit-identically
@@ -1593,10 +1602,17 @@ two references or an octave of span, plain `fit` has no flag for it, and only
 
 Schema v4 by the rule 8.9 wrote: a v3 reader accepts the document, ignores the key and divides by
 the full ratio, so it renders correctly at exactly one note and diverges monotonically from
-there. **But the version is not yet earned.** The registered rule needs all three of a
-Holm-corrected `p < 0.05` on the paired ablation, a median improvement clearing a materiality
-threshold, and a beta consistent across blocks. The third is the one likely to fail and the
-0.410 -> 0.398 above says it may. If it fails, the preset ships at v3 and this section says so.
+there. **The version was never earned.** The registered rule needed all three of a Holm-corrected
+`p < 0.05` on the paired ablation, a median improvement clearing a materiality threshold, and a
+beta consistent across blocks. All three failed, the third decisively -- the fitted exponent is
+1.0010 +- 0.0711 with nothing pinned, so the search declined the free dimension twelve times out
+of twelve. The 0.410 -> 0.398 above had said it would.
+
+So this section says what it promised to say: **the preset ships at v3.** `CurrentVersion` stays
+v4 because it is the newest version a reader here understands, not the version a writer stamps --
+`preset.MinimumVersion` decides that from the fields, and reports v3 for a document with no
+keytrack. The 24 ablation runs are the evidence it works: every fixed arm wrote a 3.0 document
+and every beta arm a 4.0 one, asserted per fit.
 
 Four latent bugs were found on the way, each of which would have shipped:
 
@@ -1679,17 +1695,28 @@ version-stamping change is numerically inert, as a change to a version string ou
 the run is reproducible at a fixed seed and width in the sense phase 8 pinned.
 
 The consequence to remember: `out/pack/hollandm-joint/preset.json` was written by the binary that
-predates the fix, so the file says v4 while carrying no keytrack. Its parameters are right and
-its version is not, and it is regenerated the next time the fit runs -- which the beta ablation
-does anyway. Nothing ships from `out/`.
+predates the fix, so the file said v4 while carrying no keytrack. Its parameters were right and
+its version was not. It now reads 3.0, re-derived through `preset.MinimumVersion` with the
+parameters untouched and then revalidated -- deliberately, because lowering a version is
+something `preset.Stamp` refuses to do and this is a document a buggy build over-stamped rather
+than one whose fields changed. Nothing ships from `out/` regardless.
 
 **Following a run while it runs.** `pack status --dir <run>` reports where a fit has got to,
 read from the run directory rather than from the process: once, `--watch` in a terminal, or
 `--serve` at a URL. It works from another shell, after the shell that started the run is gone,
 and on a run someone else started, and it never writes. A manifest means a pack run and all
-twenty notes are reported; no manifest means the directory is itself one fit's output, which is
-how it follows a joint fit. The states are the ones `run` already resumes by, so a note it calls
-finished is exactly a note the next run would skip.
+twenty notes are reported; a config or a result at the top means the directory is itself one
+fit's output, which is how it follows a joint fit; and a directory holding neither, whose
+children are fit directories, is an ablation, reported fit by fit with the arm each ran (from
+its config, not its name) and the exponent the beta arm found (from its preset). The states are
+the ones `run` already resumes by, so a note it calls finished is exactly a note the next run
+would skip. One state the files can add: a running fit whose trace and config have not been
+touched for over two minutes is _stale_, which is what a suspended or dead process looks like
+from disk -- the eighty minutes a `SIGSTOP`ped fit once read as healthy are the reason. The
+pace is a median with wall-clock outliers dropped, for the same fit's sake. The served page
+draws itself from the JSON it embeds and polls `/status.json` in place rather than reloading,
+follows the web app's theme contract (the stored choice, then the system preference; storage
+is per origin, so the choice carries over only on the app's own origin), and wears its palette.
 
 Two bugs it found about itself, both pinned by tests, and both of the kind that look fine:
 `time.Duration` marshals as nanoseconds, so a field named `elapsed_ms` was wrong by a factor of a
@@ -1708,20 +1735,73 @@ Still owed:
 
 - Promotion of the joint preset from `out/` to `assets/presets/` stays a separate decision, as it
   does for the recorded-bar refit.
-- The beta ablation, >=12 paired blocks, under the three-part rule above. Report whether beta
-  pinned on its box edge: if it sits at 1.0 in most blocks the box is binding and the honest
-  conclusion is "beta cannot be evaluated here", not "beta does not help".
 
-  It is running as this is written: 12 blocks, both arms of a block sharing a seed (140000 + k),
-  all twenty notes, `mayfly/desma` at twelve workers. It runs at **6,000 evaluations rather than
-  24,000** -- 24 joint fits at the full budget is 22 hours on this machine, and this plan's own
-  cost estimate already assumed the reduced one. The consequence has to be stated with the
-  result: at a quarter of the budget neither arm has converged, so the ablation asks whether beta
-  helps _at a fixed budget_ rather than whether it reaches a better optimum. That reading is
-  biased against beta, which carries an extra dimension and pays for it early, so a pass is
-  strong evidence and a failure on criteria 1 or 2 is weak. Criterion 3 -- whether the fitted
-  beta is consistent across blocks -- is the one that does not turn on convergence, and it is the
-  one the twenty-note regression already predicts will fail.
+**The beta ablation is done, 2026-09-06, on two packs, and the answer differs between them.**
+Twelve paired blocks each, both arms of a block sharing a seed, `mayfly/desma` at twelve
+workers, 6,000 evaluations.
+
+**Pack one, hollandm** -- seeds 140000 + k, all twenty notes,
+`docs/data/pack-hollandm-beta-ablation.csv`. **Beta is not earned.**
+
+| criterion                                | result                                     | verdict |
+| ---------------------------------------- | ------------------------------------------ | ------- |
+| 1, Holm-corrected `p < 0.05`             | gain -0.001319, t = -0.662, **p = 0.5214** | fails   |
+| 2, median improvement clears materiality | median **-0.000253**, -0.06% of the score  | fails   |
+| 3, beta consistent across blocks         | **1.0010 +- 0.0711**, 0 of 12 pinned       | fails   |
+
+Beta won 6 of 12 blocks, which is what a coin returns. The third criterion is the one that
+decides it, and it decides it the strong way: **nothing pinned on the box edge**, so this is a
+statement about the exponent rather than about the bounds. Given a free dimension and twelve
+independent chances, the search returned the neutral 1.0 every time -- the mean sits 0.01
+standard deviations off it. The plan reserved "beta cannot be evaluated here" for a pinned box
+and that reading is not needed: **beta does not help here**, and the note-dependent decay law it
+was meant to capture is not there in these recordings to be captured.
+
+It ran at **6,000 evaluations rather than 24,000**, as the registered budget said it would: 24
+joint fits at the full budget is 22 hours on this machine, which had already killed one fit for
+memory. Neither arm converged, so the ablation asks whether beta helps _at a fixed budget_ and
+that reading is biased against beta, which carries the extra dimension and pays for it early. A
+pass would have been strong evidence and this failure on criteria 1 and 2 is weak on its own --
+which is why criterion 3 was written. It does not turn on convergence: an under-converged search
+that had found real key tracking would still point the same way twelve times, and this one does
+not point anywhere.
+
+**That verdict was taken on the one pack that could not test it.** Screening all four packs'
+own measured half-lives -- regressing `log2(half-life)` on MIDI note, which costs nothing and
+needs no fitting -- shows hollandm at **beta = 1.220 +- 0.163, one and a half standard errors
+from the model's hard-coded 1.0**. The first ablation gave beta a free dimension and nothing to
+find with it. radiohummingbird sits at **0.547 +- 0.104**, 4.4 standard errors below neutral,
+over the widest span here (24 semitones) and the cleanest source, so the replication was run
+there.
+
+**Pack two, radiohummingbird** -- seeds 160000 + k, all fifteen notes,
+`docs/data/pack-morphagene-beta-ablation.csv`. **Beta is earned, on all three criteria.**
+
+| criterion                                | result                                       | verdict |
+| ---------------------------------------- | -------------------------------------------- | ------- |
+| 1, Holm-corrected `p < 0.05`             | gain +0.018599, t = +26.10, **p = 3.02e-11** | passes  |
+| 2, median improvement clears materiality | median **+0.018366**, +5.36% of the score    | passes  |
+| 3, beta consistent across blocks         | **0.6241 +- 0.0435**, 0 of 12 pinned         | passes  |
+
+Beta won **12 of 12** blocks. The fitted exponent agrees with the 0.547 +- 0.104 the recordings'
+own half-lives predicted before any fitting, which is what separates a fitted parameter from a
+fitted artefact, and the fixed arm is nearly seed-independent (0.3418 to 0.3454) so the
+separation is five to six times the paired noise.
+
+Three limits on how far that generalises, all recorded rather than discovered later. **Beta is a
+property of an instrument**, not a constant this phase discovered: the two packs disagree because
+their bars do, 1.22 against 0.55. **The second pack is nearly single-mode** -- thirteen of
+fifteen notes fitted to one partial, against hollandm's 5.2 per note -- which makes it the
+cleaner beta test and the weaker instrument test. **Four of its fifteen notes sit below the
+keyboard's new bottom at 79**, which does not affect fitting but would put part of a
+transposition matrix outside the playable range.
+
+So the phase ends with the exponent measured rather than assumed. **The hollandm preset ships at
+v3**, the code is unchanged by either result, and the version follows the fields rather than the
+calendar -- a `--keytrack` fit writes v4, one without writes v3, and the 48 fits across the two
+ablations are the evidence that it does. Written up in `docs/training.md`, "The decay
+key-tracking exponent on hollandm, measured and not earned" and "The same exponent on a second
+pack, and this time it is earned", both 2026-09-06, with the per-block tables and provenance.
 
 ### What this phase will not do, stated up front
 

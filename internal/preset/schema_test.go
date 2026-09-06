@@ -53,6 +53,12 @@ func shippedPresets(t *testing.T) []string {
 // point of the two versions is that a v1 file which quietly grew a variable
 // mode count or an output-stage shaper is a bug, and that check has to survive
 // the arrival of files that legitimately use both.
+//
+// The v4 arm is the sharpest of them, because v4's claim is checkable from one
+// field: the version must be v4 exactly when the document carries a decay
+// keytrack, in both directions. A build that stamped v4 onto a keytrack-free
+// preset has already shipped once, and that file locks out a v3 reader -- the
+// external VST3 module among them -- for a key it does not contain.
 func TestShippedPresetsMatchTheirDeclaredSchema(t *testing.T) {
 	for _, path := range shippedPresets(t) {
 		loaded, err := preset.Load(path)
@@ -74,9 +80,28 @@ func TestShippedPresetsMatchTheirDeclaredSchema(t *testing.T) {
 			if len(loaded.Parameters.Modes) == 0 {
 				t.Fatalf("%s: no modes", path)
 			}
+
+			// v4 is the first version whose claim is checkable from a single
+			// field, so check it rather than only allowing it: a document
+			// stamped v4 without a keytrack locks out every v3 reader for a
+			// key it does not carry, which is a bug a build has shipped once
+			// already.
+			if loaded.Parameters.DecayKeytrack != nil {
+				t.Fatalf("%s: version %q carries a decay keytrack, which is v4",
+					path, loaded.Version)
+			}
+		case preset.VersionV4:
+			if len(loaded.Parameters.Modes) == 0 {
+				t.Fatalf("%s: no modes", path)
+			}
+
+			if loaded.Parameters.DecayKeytrack == nil {
+				t.Fatalf("%s: declares v4 but carries no decay keytrack", path)
+			}
 		default:
-			t.Fatalf("%s: version = %q, want %q, %q or %q",
-				path, loaded.Version, preset.VersionV1, preset.VersionV2, preset.VersionV3)
+			t.Fatalf("%s: version = %q, want %q, %q, %q or %q",
+				path, loaded.Version,
+				preset.VersionV1, preset.VersionV2, preset.VersionV3, preset.VersionV4)
 		}
 	}
 }
