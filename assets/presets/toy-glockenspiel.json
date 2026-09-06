@@ -1,0 +1,38 @@
+{
+  "version": "3.0",
+  "name": "Toy Glockenspiel",
+  "note": 94,
+  "parameters": {
+    "input_mix": 1.4536263270378942,
+    "filter_frequency": 348.9864564301666,
+    "base_frequency": 1864.6550460723597,
+    "modes": [
+      {
+        "amplitude": -0.08386775870664964,
+        "frequency": 1866.9080114210544,
+        "decay_ms": 361.4127483401169
+      },
+      {
+        "amplitude": -0.532747426857505,
+        "frequency": 1868.7163432862799,
+        "decay_ms": 5.644746772727362
+      },
+      {
+        "amplitude": 0.5510206322325919,
+        "frequency": 9893.668115264929,
+        "decay_ms": 20.84127239486456
+      }
+    ],
+    "chebyshev": {
+      "enabled": true,
+      "stage": "excitation",
+      "harmonic_gains": [
+        0.2374693013079617,
+        1.4576905986791333,
+        1.3610985544472483,
+        0.5115512255288892
+      ]
+    },
+    "output_gain_db": 16.635646099527563
+  }
+}
