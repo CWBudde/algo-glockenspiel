@@ -359,11 +359,15 @@ func newPackStatusCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Report how far a pack run or a joint fit has got",
+		Short: "Report how far a pack run, a joint fit, or an ablation has got",
 		Long: "The directory decides what is read: a pack run directory holding a manifest reports " +
-			"every note, and a single fit's output directory reports that one fit. Everything comes " +
-			"from files the run has already written and flushed, so this never disturbs a run in " +
-			"flight and never writes to its directory.",
+			"every note, a single fit's output directory reports that one fit, and a directory whose " +
+			"children are fit directories -- an ablation -- reports every fit, with the arm each one " +
+			"ran and the decay exponent the beta arm found. Everything comes from files the run has " +
+			"already written and flushed, so this never disturbs a run in flight and never writes " +
+			"to its directory. A running fit whose files have gone quiet is reported as stale.\n\n" +
+			"--serve puts the same reading at a URL: a page that follows the web app's theme and " +
+			"polls /status.json in place, which is also the thing to script against.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
@@ -388,7 +392,8 @@ func newPackStatusCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&dir, "dir", "", "pack run directory, or a single fit's output directory")
+	cmd.Flags().StringVar(&dir, "dir", "",
+		"pack run directory, a single fit's output directory, or a directory of fit directories")
 	cmd.Flags().DurationVar(&watch, "watch", 0,
 		"reprint at this interval instead of once (0 prints once)")
 	cmd.Flags().StringVar(&serve, "serve", "",
