@@ -1215,6 +1215,17 @@ h1 {
       0 2px 3px rgba(35, 29, 24, 0.14);
   }
 
+  /*
+   * The compact accidental draws itself in a pseudo-element, so the silent
+   * grey set on the button's own background never shows through. Repeat it
+   * here or the disabled sharps below G5 look playable while the white keys
+   * beside them are visibly greyed.
+   */
+  .playfield-viewport .piano-key.black.is-silent::before {
+    background: linear-gradient(180deg, #9c978f 0%, #837e77 100%);
+    box-shadow: none;
+  }
+
   .playfield-viewport .piano-key.black.is-active {
     background: transparent;
   }

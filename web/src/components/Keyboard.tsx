@@ -67,7 +67,10 @@ interface PianoKeyProps {
  * A key below the engine's sounding range is drawn dimmed and disabled: the
  * keyboard spans further than the instrument does, and a key that looks live
  * but whose note-on the engine discards without a sound is worse than one that
- * says up front it has no bar behind it.
+ * says up front it has no bar behind it. It is disabled natively rather than
+ * only in ARIA, so it is genuinely inert and the 43 silent keys do not sit in
+ * the tab order between the panel and the sounding ones; aria-disabled stays
+ * for the explicit screen-reader message.
  *
  * Strikes share the rack's pointer handling, so a touch that turns into a pan
  * of the playfield never sounds a note.
@@ -93,6 +96,7 @@ function PianoKey({ entry, kind, active, onStrike }: PianoKeyProps) {
         className={`piano-key ${kind} is-silent`}
         data-note={entry.note}
         aria-label={`${entry.name}, outside the instrument's range`}
+        disabled
         aria-disabled="true"
         style={style}
       >
