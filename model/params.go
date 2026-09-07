@@ -50,13 +50,17 @@ const (
 	// moved to MIDI 108. Transposition multiplies every mode frequency by the
 	// ratio, so this constant divided by the ratio from a preset's own note to
 	// the top key is the real limit on what that preset may be authored with --
-	// and a preset authored at note 69 is now stretched 39 semitones, a factor
-	// of 9.51, which took the authored ceiling from 10.5 kHz to 5.3 kHz and put
-	// the shipped recorded-bar.json (a 9792 Hz mode, 93 kHz at the top key)
-	// outside it. The alternative was deleting two of that preset's modes for
-	// the second time in its history. Following this constant's own reasoning
-	// instead: a 93 kHz mode is not something to refuse at authoring time. It
-	// is something the renderer must not sound, which is where it is handled.
+	// and a preset authored at note 69 is stretched 39 semitones, a factor of
+	// 9.51, which took the authored ceiling from 10.5 kHz to 5.3 kHz and put
+	// recorded-bar.json (a 9792 Hz mode) outside it while that preset was
+	// labelled note 69, at 93 kHz at the top key. The alternative was deleting
+	// two of its modes for the second time in its history. Following this
+	// constant's own reasoning instead: a 93 kHz mode is not something to refuse
+	// at authoring time. It is something the renderer must not sound, which is
+	// where it is handled. That preset is now declared at the note it sounds,
+	// MIDI 93, and the same mode reaches 23.3 kHz at the top key, so nothing
+	// shipped needs the headroom any more -- but an authored note is free and
+	// the next preset can put it back.
 	FrequencyMinHz = 0.01
 	FrequencyMaxHz = 200000.0
 
@@ -69,9 +73,11 @@ const (
 	// bottom key, where decays inflate; this floor is enforced after transposing
 	// it *up* to the top key, where they shrink. Moving the top key to MIDI 108
 	// therefore tightened this floor by the same factor it loosened the ceiling:
-	// default.json's shortest mode is 0.5605 ms at note 69 and 0.0589 ms at note
-	// 108, which the old 0.1 ms floor refused -- so NewBar failed and the engine
-	// dropped every note-on above 98 without a sound.
+	// default.json's shortest mode is 0.5605 ms, and while that preset was
+	// labelled note 69 it reached 0.0589 ms at note 108, which the old 0.1 ms
+	// floor refused -- so NewBar failed and the engine dropped every note-on
+	// above 98 without a sound. Declared at the note it sounds, MIDI 93, the
+	// same mode reaches 0.2357 ms, well clear of either floor.
 	//
 	// No amount of re-authoring fixes that, because decay_min / 2^((top-note)/12)
 	// is invariant under TransposeToNote, exactly as the frequency ceiling is.

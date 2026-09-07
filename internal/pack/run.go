@@ -192,8 +192,9 @@ func runJob(ctx context.Context, manifest *Manifest, job Job, dir string, index 
 		// fitted mode frequency is that bar's partial as measured rather than
 		// as converted, which is what the note-versus-partial regression needs.
 		// Without the second line the preset would be authored at the embedded
-		// template's note 69 and a C6 bar's 1046 Hz fundamental would be
-		// written as 439.7 Hz -- correct to render, useless to regress.
+		// template's own note and a C6 bar's 1046 Hz fundamental would be
+		// written at the ratio away from it -- correct to render, useless to
+		// regress.
 		Note:         job.Note,
 		AuthoredNote: job.Note,
 

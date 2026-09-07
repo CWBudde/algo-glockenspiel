@@ -1,11 +1,11 @@
 {
   "version": "2.0",
   "name": "Recorded Bar",
-  "note": 69,
+  "note": 93,
   "parameters": {
     "input_mix": 0.0,
     "filter_frequency": 10250.983124117642,
-    "base_frequency": 440.0,
+    "base_frequency": 1760.0,
     "modes": [
       {
         "amplitude": -0.45143318074151023,

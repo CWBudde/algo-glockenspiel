@@ -151,7 +151,7 @@ func TestPooledSeedAveragesGeometrically(t *testing.T) {
 }
 
 // TestPooledSeedKeepsTheAuthoredNoteOfTheTemplate is the transposition the
-// seed has to do first: the template ships authored at note 69, and a pooled
+// seed has to do first: the template ships authored at note 93, and a pooled
 // seed for a pack fitted at 84..103 is authored in the middle of that range, so
 // the template's own modes and base frequency have to move before the pooled
 // ratios are applied to them.

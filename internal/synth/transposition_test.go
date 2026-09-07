@@ -24,10 +24,12 @@ import (
 // bottom 17 of the 61 playable keys, which any spot check near the middle of
 // the range would have walked straight past.
 
-// defaultPresetNote is the note the shipped preset was fitted at, and the base
+// defaultPresetNote is the note the shipped preset is authored at, and the base
 // note both transposition paths -- the synthesizer's and the plugin's -- scale
-// from.
-const defaultPresetNote = 69
+// from. It moved 69 -> 93 when default.json was re-declared at the note it
+// sounds; the constant is here so a test that reasons about the worst-case
+// transposition reasons about the preset that actually ships.
+const defaultPresetNote = 93
 
 // silenceThreshold is deliberately crude, about -60 dBFS. These are not level
 // assertions -- the peak spread across the keyboard is large and levelling it

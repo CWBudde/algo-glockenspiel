@@ -31,7 +31,7 @@ func TestOptimizationImprovesFitAgainstLegacyReference(t *testing.T) {
 
 	bounds := legacyValidationBounds(&legacyPreset.Parameters)
 
-	objective, err := NewObjectiveFunctionWithBounds(reference, &initial, sampleRate, 69, 100, MetricRMS, bounds)
+	objective, err := NewObjectiveFunctionWithBounds(reference, &initial, sampleRate, legacyPreset.Note, 100, MetricRMS, bounds)
 	if err != nil {
 		t.Fatalf("NewObjectiveFunctionWithBounds failed: %v", err)
 	}
@@ -88,9 +88,19 @@ func TestOptimizationImprovesFitAgainstLegacyReference(t *testing.T) {
 	//
 	// What is left is the well-posed form of the same claim: the optimizer has
 	// to close a real share of the gap between where it started and the preset
-	// it was perturbed away from. Measured at 33.5%; the bound is set at 20% so
+	// it was perturbed away from. Measured at 29.3%; the bound is set at 20% so
 	// that a regression has to be substantial rather than incidental, and it is
 	// not vacuous -- a run that merely improved the cost a little would fail it.
+	//
+	// It read 33.5% until the shipped preset was re-declared at the note it
+	// sounds, MIDI 93. Neither cost moves with that -- the encoding is absolute
+	// hertz and the render at the preset's own note is unchanged -- but
+	// legacyValidationBounds derives the frequency box from base_frequency, so a
+	// base that moved 440 -> 1760 widened the box from 22..5280 Hz to
+	// 88..21120 Hz, SimpleOptimizer normalises its simplex into that box, and the
+	// trajectory is a different one. The box is the more honest of the two: the
+	// modes it has to contain run to 4516 Hz, which used to sit against a 5280 Hz
+	// ceiling that had no relationship to them.
 	targetEncoded, err := objective.Codec().EncodeParams(&legacyPreset.Parameters)
 	if err != nil {
 		t.Fatalf("EncodeParams for the target failed: %v", err)
@@ -115,8 +125,8 @@ func TestOptimizationImprovesFitAgainstLegacyReference(t *testing.T) {
 		Name:       legacyPreset.Name,
 		Note:       legacyPreset.Note,
 		Parameters: *recovered,
-	}, sampleRate, 69, 100, float64(len(reference))/float64(sampleRate))
-	initialRendered := renderNote(t, &initial, sampleRate, 69, 100, float64(len(reference))/float64(sampleRate))
+	}, sampleRate, legacyPreset.Note, 100, float64(len(reference))/float64(sampleRate))
+	initialRendered := renderNote(t, &initial, sampleRate, legacyPreset.Note, 100, float64(len(reference))/float64(sampleRate))
 	initialRMS := ComputeRMSError(initialRendered, reference)
 
 	finalRMS := ComputeRMSError(rendered, reference)
@@ -205,7 +215,7 @@ func BenchmarkLegacyObjectiveEvaluate(b *testing.B) {
 		b.Fatalf("load legacy reference: %v", err)
 	}
 
-	objective, err := NewObjectiveFunctionWithBounds(reference, legacyPreset, sampleRate, 69, 100, MetricRMS, legacyValidationBounds(&legacyPreset.Parameters))
+	objective, err := NewObjectiveFunctionWithBounds(reference, legacyPreset, sampleRate, legacyPreset.Note, 100, MetricRMS, legacyValidationBounds(&legacyPreset.Parameters))
 	if err != nil {
 		b.Fatalf("NewObjectiveFunctionWithBounds failed: %v", err)
 	}

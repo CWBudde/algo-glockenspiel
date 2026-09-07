@@ -20,8 +20,17 @@ const (
 // The defaults a zero Spec field asks for. They are the fit command's own, so
 // a campaign job and a hand-run fit of the same reference search the same
 // problem.
+//
+// defaultNote is the embedded default template's own note, and it is that
+// rather than a round number on purpose: a fit that names no note then renders
+// the template untransposed, so the numbers a fit writes back are the numbers it
+// searched. It moved 69 -> 93 with the template, when default.json was
+// re-declared at the note it sounds rather than the note a glockenspiel part
+// would have written. Leaving it at 69 would have had every default fit seed
+// itself from partials divided by four -- see AuthoredNote below, which is the
+// same hazard from the other side.
 const (
-	defaultNote        = 69
+	defaultNote        = 93
 	defaultVelocity    = 100
 	defaultSampleRate  = 44100
 	defaultReportEvery = 1
@@ -102,8 +111,8 @@ type Spec struct {
 	// Zero keeps the template's own note, which is what every fit did before
 	// this field existed and is why it is the default. That is a real choice
 	// rather than an oversight, but it is a surprising one: a fit of a C6
-	// recording under the embedded note-69 template writes a preset whose
-	// fundamental reads 439.7 Hz, because PresetFromAnalysis divides every
+	// recording under the embedded note-93 template writes a preset whose
+	// fundamental reads 1760 Hz, because PresetFromAnalysis divides every
 	// measured partial by the ratio to express it at the template's note. The
 	// preset renders correctly -- transposition puts it back -- but its numbers
 	// are not the bar's partials, and anything reading them as measurements of

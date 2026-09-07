@@ -1114,7 +1114,9 @@ test("performance deck keeps native controls and live engine status", async ({
   // so this list is maintained by hand on purpose: it is what catches a preset
   // that stops reaching the picker, which a length check would not.
   await expect(sound.locator("option")).toHaveText([
+    "Bright Toy Glockenspiel",
     "Default Glockenspiel",
+    "Metallophone",
     "Morphagene Glockenspiel",
     "Recorded Bar",
     "Toy Glockenspiel",

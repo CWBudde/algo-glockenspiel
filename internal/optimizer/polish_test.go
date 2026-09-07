@@ -20,9 +20,9 @@ func newPolishFixture(t *testing.T) polishFixture {
 	t.Helper()
 
 	template := loadObjectivePreset(t)
-	reference := renderReference(t, template, 44100, 69, 100, 0.3)
+	reference := renderReference(t, template, 44100, template.Note, 100, 0.3)
 
-	objective, err := NewObjectiveFunction(reference, template, 44100, 69, 100, MetricBalanced)
+	objective, err := NewObjectiveFunction(reference, template, 44100, template.Note, 100, MetricBalanced)
 	if err != nil {
 		t.Fatalf("NewObjectiveFunction failed: %v", err)
 	}

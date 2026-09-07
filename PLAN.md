@@ -1467,7 +1467,10 @@ raising a validation ceiling to admit data is the move you want to not have made
 What the move did break was the frequency ceiling, which `FrequencyMaxHz` had to follow to
 200000 -- consistent with its own stated rationale, that a mode above Nyquist is a wasted
 oscillator rather than an invalid one. `DecayMsMin` fell to 0.01 as the exact mirror: the top key
-is now 39 semitones above note 69, and `default.json`'s 0.5605 ms mode reaches 0.0589 ms there.
+is 39 semitones above note 69, and `default.json`'s 0.5605 ms mode reached 0.0589 ms there.
+(That preset was labelled note 69 at the time. It is now declared at the note it sounds, MIDI 93,
+where the same mode reaches 0.2357 ms -- so the constant no longer has a shipped example, and it
+stays where it is because an authored note is free.)
 Neither could be fixed by re-authoring -- `max_mode x 2^((top-note)/12)` and
 `min_decay / 2^((top-note)/12)` are invariant under `TransposeToNote`, so the constants are the
 only lever.
@@ -1843,7 +1846,9 @@ median +11.00%, beta **-0.9260 +- 0.0726** with **0 of 12 pinned** -- all three 
 largest effect measured here, 2.6x radiohummingbird's. mooncube fails the third clause in the
 strong form: +0.0060 +- 0.4213, signs disagreeing, nothing pinned. The joint fits are
 `out/pack/jamieblam-joint` (v4, `decay_keytrack` -0.9440, score 0.373710) and
-`out/pack/mooncube-joint` (v3, score 0.465716). Neither is promoted; that stays a decision.
+`out/pack/mooncube-joint` (v3, score 0.465716). Both are promoted now, as
+`assets/presets/metallophone.json` and `assets/presets/bright-toy-glockenspiel.json`; the
+mooncube one carries a retune, recorded in `assets/presets/README.md`.
 
 **Two model-level findings, both of which would have shipped:**
 

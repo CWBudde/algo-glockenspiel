@@ -1,0 +1,41 @@
+{
+  "version": "3.0",
+  "name": "Bright Toy Glockenspiel",
+  "note": 91,
+  "parameters": {
+    "input_mix": 1.8923025767197146,
+    "filter_frequency": 321.9269110495278,
+    "base_frequency": 1567.981743926997,
+    "modes": [
+      {
+        "amplitude": 1.3628033158973487,
+        "frequency": 1561.1309751216752,
+        "decay_ms": 8.547140478789931
+      },
+      {
+        "amplitude": 0.4814510600965556,
+        "frequency": 1567.981743926997,
+        "decay_ms": 287.1406813769253
+      },
+      {
+        "amplitude": -0.08991007914754001,
+        "frequency": 3494.2655669518754,
+        "decay_ms": 68.43991679313928
+      },
+      {
+        "amplitude": 1.3445133751083458,
+        "frequency": 14528.723348652587,
+        "decay_ms": 811.6197561691067
+      }
+    ],
+    "chebyshev": {
+      "enabled": true,
+      "stage": "excitation",
+      "harmonic_gains": [
+        0.6286754436156744, 1.429610899977038, 1.463074876433585,
+        0.6947640633912672
+      ]
+    },
+    "output_gain_db": 5.831753109719401
+  }
+}

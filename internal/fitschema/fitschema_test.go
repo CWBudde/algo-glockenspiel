@@ -16,8 +16,8 @@ func TestIntLimitAndFloatLimitReadTheSameTableAsDefault(t *testing.T) {
 		t.Fatalf("IntLimit(note) = (%d,%d), want (0,127)", min, max)
 	}
 
-	if got := fitschema.DefaultInt("note"); got != 69 {
-		t.Fatalf("DefaultInt(note) = %d, want 69", got)
+	if got := fitschema.DefaultInt("note"); got != 93 {
+		t.Fatalf("DefaultInt(note) = %d, want 93", got)
 	}
 
 	targetMin, targetMax := fitschema.FloatLimit("mayflyTargetCost")

@@ -99,6 +99,23 @@ const smokeRunEvaluations = smokeBudget / 3
 const (
 	referenceSynthA4 = "testdata/reference/legacy_synth_a4.wav"
 	referenceC5      = "testdata/reference/glockenspiel_c5.wav"
+
+	// The notes the designs fit at. They are not the references' own pitches
+	// and are not free to be either: a campaign is comparable with the tables
+	// in docs/training.md only if it searches the same problem, and the note
+	// decides that. It sets the frame the embedded template is transposed
+	// from, so it fixes the authored seed, the decay box narrowed by
+	// AuthoredDecayMsMax, and -- because PresetFromAnalysis compensates an
+	// excitation filter that is absolute in hertz -- the seeded amplitudes.
+	//
+	// Both were written as the template's own note and three semitones above
+	// it, 69 and 72, and both moved with the template when default.json was
+	// re-declared at the note it sounds. What is preserved is the offset, 0
+	// and +3, and not the number: a note left at 69 would now transpose the
+	// template down two octaves and register a different experiment under an
+	// existing name.
+	synthA4Note = 93
+	c5Note      = 96
 )
 
 // defaultSeedHuntWinner is the arm seed-hunt refines when nobody names one. It
@@ -141,9 +158,9 @@ func mayflyIterations(budget int) int {
 func smokeDesign() Design {
 	return Design{
 		Name:        "smoke",
-		Description: "Four short jobs on the synthetic A4 reference, to exercise plan, run and collect.",
+		Description: "Four short jobs on the synthetic A6 reference, to exercise plan, run and collect.",
 		Reference:   referenceSynthA4,
-		Note:        69,
+		Note:        synthA4Note,
 		Profile:     optimizer.MetricBalanced,
 		Budget:      smokeBudget,
 		Blocks:      2,
@@ -187,7 +204,7 @@ func engineShapeDesign() Design {
 		Name:        "engine-shape",
 		Description: "Backend and restart shape on the C5 recording, twelve blocks of five arms at 24,000 evaluations.",
 		Reference:   referenceC5,
-		Note:        72,
+		Note:        c5Note,
 		Profile:     optimizer.MetricBalanced,
 		Budget:      fullBudget,
 		Blocks:      12,
@@ -361,7 +378,7 @@ func roundsDesign(name string, budget int, seedBase int64) Design {
 			"Round schedule on the C5 recording: one long run against sixteen rounds, twelve blocks of two arms at %d evaluations.",
 			budget),
 		Reference: referenceC5,
-		Note:      72,
+		Note:      c5Note,
 		Profile:   optimizer.MetricBalanced,
 		Budget:    budget,
 		Blocks:    12,

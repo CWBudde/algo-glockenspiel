@@ -107,7 +107,7 @@ type fitOptions struct {
 
 func newFitCmd() *cobra.Command {
 	options := fitOptions{
-		note:       69,
+		note:       93,
 		velocity:   100,
 		sampleRate: 44100,
 		// Mayfly in the engine-shape arm's round schedule is the default
@@ -148,24 +148,28 @@ func newFitCmd() *cobra.Command {
 		Use:   "fit",
 		Short: "Fit model parameters to a reference recording",
 		Long:  "Optimize model parameters against a target audio file and save the best-fitting preset.",
-		Example: `  # Fit A4 from the built-in preset with the default optimizer: Mayfly in
-  # one warm round plus fifteen cold restarts, the shape Phase 8.6 measured
-  glockenspiel fit --reference a4.wav --output out/a4.json
+		Example: `  # Fit A6 from the built-in preset with the default optimizer: Mayfly in
+  # one warm round plus fifteen cold restarts, the shape Phase 8.6 measured.
+  # --note defaults to 93, the embedded template's own note, so a reference
+  # that sounds somewhere else needs to say so -- fitting a 440 Hz A4 without
+  # --note 69 authors it as though 440 Hz sounded at MIDI 93, and it then
+  # plays at 110 Hz on the key it was recorded from
+  glockenspiel fit --reference a6.wav --output out/a6.json
 
   # Reproduce a campaign arm: no clock, so the evaluation cap is what stops it
-  glockenspiel fit --reference c5.wav --output out/c5.json --note 72 \
+  glockenspiel fit --reference c5.wav --output out/c5.json --note 96 \
     --time-budget 0 --max-evals 24000
 
   # Follow the search with a local polish stage under the polish profile
-  glockenspiel fit --reference a4.wav --output out/a4.json \
+  glockenspiel fit --reference a6.wav --output out/a6.json \
     --time-budget 10m --polish cmaes
 
   # Fit with separable CMA-ES instead, restarting until the budget is spent
-  glockenspiel fit --reference a4.wav --output out/a4.json \
+  glockenspiel fit --reference a6.wav --output out/a6.json \
     --optimizer cmaes --cmaes-run-evals 4800 --time-budget 10m
 
   # Continue an interrupted run from its work directory
-  glockenspiel fit --reference a4.wav --output out/a4.json --work-dir out/fit-a4 --resume`,
+  glockenspiel fit --reference a6.wav --output out/a6.json --work-dir out/fit-a6 --resume`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runFit(cmd, options)

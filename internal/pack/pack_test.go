@@ -463,9 +463,23 @@ func TestTheMatrixScoresThePresetItWasGiven(t *testing.T) {
 	// Both matter and the decay is the one that bites in practice: the ceiling
 	// is narrowed per authored note, so a preset authored near the top of the
 	// keyboard has a box under a second and a long-tailed bar leaves it easily.
+	//
+	// The decay is derived rather than written down, because the two ceilings
+	// it has to sit between both move with the shipped preset's authored note:
+	// at note 69 the model allowed the full 5000 ms and 3000 was comfortably
+	// between them, while at note 93 the model allows 2227 ms and 3000 is no
+	// longer a value a preset can legally carry at all. Halfway between the two
+	// is outside the box and inside the model wherever that note goes next.
+	authoredCeiling := model.AuthoredDecayMsMax(fitted.Note, fitted.Parameters.ResolvedDecayKeytrack())
+	if authoredCeiling <= model.DecayMsSearchMax {
+		t.Fatalf("a preset at note %d may carry only %.1f ms, at or under the %.1f ms search box, "+
+			"so there is no decay this test can use to leave the box legally",
+			fitted.Note, authoredCeiling, model.DecayMsSearchMax)
+	}
+
 	last := &fitted.Parameters.Modes[len(fitted.Parameters.Modes)-1]
 	last.Frequency = 25000
-	last.DecayMs = 3000
+	last.DecayMs = (model.DecayMsSearchMax + authoredCeiling) / 2
 
 	config := optimizer.DefaultObjectiveConfig(optimizer.MetricBalanced)
 	config.Bounds = optimizer.DefaultParamBounds

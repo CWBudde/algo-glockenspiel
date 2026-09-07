@@ -95,7 +95,7 @@ export const FIT_LIMITS = {
  * from the browser and one fitted from the terminal are the same fit.
  */
 export const DEFAULT_FIT_REQUEST = {
-  note: 69,
+  note: 93,
   velocity: 100,
   optimizer: "simple",
   metric: "balanced",

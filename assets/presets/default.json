@@ -1,11 +1,11 @@
 {
   "version": "1.0",
   "name": "Default Glockenspiel",
-  "note": 69,
+  "note": 93,
   "parameters": {
     "input_mix": 2,
     "filter_frequency": 1303.6960400974592,
-    "base_frequency": 440.0,
+    "base_frequency": 1760.0,
     "modes": [
       {
         "amplitude": 2,

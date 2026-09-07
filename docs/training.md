@@ -5,6 +5,19 @@ today, measured through the fit objective's own code, so that every later change
 objective, the search space or the engine has a number it must not regress. Nothing here was
 tuned; it is a reading taken before anything moved.
 
+> **Every note number below was taken while `default.json` and `recorded-bar.json`
+> were labelled `note: 69`.** Both are now declared at MIDI **93**, the A6 their
+> ringing mode has always sat at — the old label was the note a glockenspiel part
+> would have been _written_, and copying it into the field that decides pitch made
+> those two presets play two octaves above every other sound in the app. Nothing
+> about the recordings, the objective or the fitted numbers moved with it, but a
+> note in these tables is a frame, so **add 24 semitones to reproduce the same
+> sound today**: note 69 is now note 93 and note 72 is now note 96. The one place
+> where that is not a relabelling is `just refit-recorded`, which now runs at note
+> 84, `glockenspiel_c5.wav`'s measured 1053.6 Hz — see the note beside that recipe.
+> Re-running these tables under the new frame is Phase 9 work; they are kept as
+> taken rather than silently renumbered.
+
 ## How the numbers are taken
 
 `glockenspiel distance` encodes a written preset through the fit's parameter codec, renders it
@@ -699,9 +712,14 @@ raising the primary score, which is the accept-only-if-better rule doing its job
 | refit `recorded-bar.json`   | 0.4892                | **0.2043** | 8     | **−27.5 dBFS** |
 
 The refit is better by 62% at its own note, and it needs no hand retune at all: it was fitted at
-note 72, the recording's own pitch, so the ×1.667 multiplication that produced the shipped file
-has nothing left to do. **It is still not shipped**, because it renders 24.5 dB quieter and no
-post-step in this repository can fix that.
+note 72, so the ×1.667 multiplication that produced the shipped file has nothing left to do.
+**It is still not shipped**, because it renders 24.5 dB quieter and no post-step in this
+repository can fix that.
+
+Note 72 was called "the recording's own pitch" here and it never was: the reference notes
+measure `glockenspiel_c5.wav` at 1053.6 Hz, which is C6, MIDI 84. The retune-avoidance does not
+depend on the label — the fit lands on the recording's pitch whatever frame its numbers are
+written in — but `just refit-recorded` now names the note the file actually sounds.
 
 That is the finding, and it is about the model rather than the fit. The reference loader
 peak-normalises the recording by +27.6 dB, so a candidate has to reach full scale to match it.

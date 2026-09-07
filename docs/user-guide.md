@@ -15,11 +15,11 @@ Basic example:
 ```bash
 glockenspiel synth \
   --preset assets/presets/default.json \
-  --note 69 \
+  --note 93 \
   --velocity 100 \
   --duration 2.0 \
   --sample-rate 44100 \
-  --output out/a4.wav
+  --output out/a6.wav
 ```
 
 Useful variations:
@@ -29,10 +29,10 @@ Render a higher note from the same preset:
 ```bash
 glockenspiel synth \
   --preset assets/presets/default.json \
-  --note 72 \
+  --note 96 \
   --velocity 110 \
   --duration 2.0 \
-  --output out/c5.wav
+  --output out/c7.wav
 ```
 
 Stop automatically once the tail is quiet:
@@ -40,12 +40,12 @@ Stop automatically once the tail is quiet:
 ```bash
 glockenspiel synth \
   --preset assets/presets/default.json \
-  --note 69 \
+  --note 93 \
   --velocity 100 \
   --duration 5.0 \
   --auto-stop \
   --decay-dbfs -80 \
-  --output out/a4-short.wav
+  --output out/a6-short.wav
 ```
 
 ### What The Flags Do
@@ -392,7 +392,7 @@ candidate during a fit, so its numbers are the fit's numbers.
 glockenspiel distance \
   --reference testdata/reference/legacy_synth_a4.wav \
   --preset assets/presets/default.json \
-  --note 69
+  --note 93
 ```
 
 The reference is read the way `fit` reads it — one channel, cut to its first strike,
