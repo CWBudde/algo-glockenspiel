@@ -1828,6 +1828,60 @@ pack, and this time it is earned", both 2026-09-06, with the per-block tables an
   with the two worst notes in the top half. The ceiling is still real and still caps what the
   preset can represent, but it is not what one preset costs. See Phase 9.5.
 
+### Phase 9.6: The remaining two packs, and a bound that was deciding the answer
+
+**Done, 2026-09-07.** `jamieblam-metallophone` (13 notes, MIDI 60-81) and
+`mooncubedesign-toy-glockenspiel` (8 notes, MIDI 84-96) went through the whole pipeline, so all
+four reference packs are now fitted. Neither is chromatic and it never mattered: coverage is
+discovered by `planJobs`, per-note fits are independent, and the only coverage rule is
+`keytrackMinSpanSemitones = 12`, which is about span. Written up in `docs/training.md`, "Two more
+packs, and a bound that was deciding the answer".
+
+**Beta is earned on jamieblam and refused on mooncube**, so the answer is "it depends on the
+instrument" over four instruments rather than two. jamieblam: gain +0.048137, p = 1.67e-13,
+median +11.00%, beta **-0.9260 +- 0.0726** with **0 of 12 pinned** -- all three clauses, and the
+largest effect measured here, 2.6x radiohummingbird's. mooncube fails the third clause in the
+strong form: +0.0060 +- 0.4213, signs disagreeing, nothing pinned. The joint fits are
+`out/pack/jamieblam-joint` (v4, `decay_keytrack` -0.9440, score 0.373710) and
+`out/pack/mooncube-joint` (v3, score 0.465716). Neither is promoted; that stays a decision.
+
+**Two model-level findings, both of which would have shipped:**
+
+- **`ParamCodec.DimensionNames` never named the searched exponent** while `Dimension()` counted
+  it, so `Pinned` indexed one past its name list. It skips unpinned dimensions before reading a
+  name, so the panic fired _only when the keytrack came to rest on a box edge_ -- exactly the
+  quantity the third clause counts. The two published "0 of 12 pinned" rows are consistent with
+  the bug rather than evidence against it: neither pack ever reached a bound.
+  `TestDimensionNamesCoverEveryDimension` had asserted the invariant since the exponent was added
+  and passed throughout, because it only built a keytrack-free codec. It has a keytrack half now,
+  plus `TestPinnedReportsAKeytrackOnItsBound`.
+- **`DecayKeytrackMin` was deciding the answer, not the recordings.** At -1.0 two of jamieblam's
+  twelve blocks pinned and clause 3 failed at -0.6751 +- 0.3592. The floor was conservative: its
+  own comment derives `|beta| <= 1.95` going down, and -1.0 was set when the only metallophone
+  evidence was a -0.24 screen. It is **-1.75** now, mirroring the ceiling and inside the derived
+  limit, with `TestAuthoredCeilingStaysAboveTheDecayFloor` -- which exists to fail on a widening --
+  passing at the new value.
+
+  The re-ablation's lesson is not the one widening was meant to teach. The two clamped blocks did
+  **not** run further down; b01 came back up to -0.8918. What moved were the two wild outliers,
+  +0.1464 and -0.1205, the very values that had failed clause 3, which had been stranded in a
+  shallow basin the constrained search could not leave. **A box tight enough to clamp two blocks
+  was distorting the other ten** -- a pinned dimension is evidence about the whole search, not
+  only about the blocks that pinned.
+
+**A second registered prediction about where the price falls was refused.** This plan predicted
+mooncube would pay more _because_ its tuning scatters -5 to +49 cents. The price held (+0.1225
+against hollandm's +0.0993); the mechanism did not. Loss against detuning correlates **-0.248**,
+the wrong sign; against modes in the note's own fit, **+0.730**. mooncube's tuning is nearly free,
+because each per-note fit absorbs its bar's detuning into mode frequencies and the joint fit
+inherits that. Three measurements now agree that what one preset cannot carry is the individual
+bar's modal content.
+
+Two facts to carry: **jamieblam's modal series is 1.00/3.99/7.04, not the free-free 2.72/5.33** --
+"the free-free series is near-universal" was a statement about two packs of one instrument. And
+**eleven of its thirteen notes sit below `KeyboardFirstNote`**, so it is evidence about an
+instrument the app cannot presently play at pitch, which bears on promotion.
+
 ---
 
 ## Deferred

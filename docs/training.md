@@ -1509,3 +1509,229 @@ preset fitted with it would ship a v4 document.
   every note resolved from its measured fundamental with a worst tuning error of +4.8 cents.
 - Every fit stopped on `max_evaluations`; the analysis refuses to compare a fit that did not.
 - Reproducible at a fixed seed **and** worker width, which is the sense phase 8 pinned.
+
+## Two more packs, and a bound that was deciding the answer, 2026-09-07
+
+The four reference packs are now all fitted. `jamieblam-metallophone` and
+`mooncubedesign-toy-glockenspiel` went through the same pipeline the first two did -- plan, run,
+collect, regress, a twelve-block paired beta ablation, a joint fit -- and between them they
+produced the first result that changed a model constant and the first prediction in this document
+that its own matrix refuted.
+
+Neither pack is chromatic, and it never mattered. Coverage is discovered rather than declared:
+`planJobs` measures whatever WAVs it finds, per-note fits are independent, and the joint fit
+transposes one authored bar to each reference's own note. radiohummingbird was already diatonic.
+The one coverage rule is `keytrackMinSpanSemitones = 12`, which is about span and not about
+accidentals.
+
+### The two packs, and the note each file actually sounds
+
+Every file was resolved from its measured fundamental, and both plans agree with their pack
+README to the cent.
+
+| pack           |   n | measured range          | span  | worst off ET | diagonal mean |
+| -------------- | --: | ----------------------- | ----- | -----------: | ------------- |
+| jamieblam      |  13 | 261.5-881.2 Hz, 60-81   | 21 st |      -27.7 c | **0.222787**  |
+| mooncubedesign |   8 | 1061.6-2129.9 Hz, 84-96 | 12 st |      +48.7 c | **0.343256**  |
+
+`jamieblam` fits better than any pack here and `mooncubedesign` worse than any, which is what
+each README predicted of itself. mooncube's `a6.wav` clears the fifty-cent refusal by 1.3 cents;
+the ceiling was left where it was rather than raised to admit it.
+
+Two facts about jamieblam are worth keeping. Its file names are honest -- `c4.wav` measures
+261.5 Hz, middle C, one cent flat -- so it really is a metallophone an octave and a half below the
+glockenspiel packs, and **eleven of its thirteen notes sit below `KeyboardFirstNote`**. It is
+evidence about an instrument the app cannot presently play at pitch. And its ten sharps are pitch
+shifts of its own recordings, kept in `pitch-shifted/`; `planJobs` skips subdirectories, so they
+were excluded without a flag, which is why they were put there.
+
+### The modal structure, and a series that is not the bar's
+
+`pack regress` clusters fitted modes by ratio rather than by mode index. jamieblam's twenty-seven
+modes fall into three clean clusters:
+
+| ratio | notes |  of |    sd |   min |   max | drift /octave |
+| ----- | ----: | --: | ----: | ----: | ----: | ------------- |
+| 0.998 |    13 |  13 | 0.005 | 0.984 | 1.002 | +0.005        |
+| 3.989 |     8 |  13 | 0.037 | 3.894 | 4.015 | -0.032        |
+| 7.039 |     6 |  13 | 0.091 | 6.936 | 7.168 | -0.017        |
+
+**These are not the free-free bar ratios.** hollandm and radiohummingbird both show the 2.72x
+partial in nearly every bar, and the plan called it near-universal. jamieblam shows 3.99x and
+7.04x and no 2.72x at all. The ratios are as tight as the glockenspiels' and drift no more, so one
+preset can carry this instrument's structure -- it is simply a different structure, and "the
+free-free series is near-universal" was a statement about two packs of the same instrument.
+
+mooncube goes the other way: forty-one modes in **twenty clusters over eight notes**, thirteen of
+them appearing at a single note. Only the fundamental (6 of 8) and 2.61x (5 of 8) are populated at
+all. A pack that thin in the pitch direction cannot say much about what generalises, and the
+seed-coverage threshold was set from these two tables rather than from habit: at 0.35 the pooled
+seed keeps exactly the clusters that had enough notes to fit a slope and drops every singleton,
+where the 0.5 default would have discarded jamieblam's 7.04x cluster at 6 of 13 notes.
+
+### The bug that hid the one outcome the third clause asks about
+
+Two of jamieblam's beta arms did not finish. They panicked:
+
+```
+panic: runtime error: index out of range [15] with length 15
+    optimizer.(*ParamCodec).Pinned  params.go:699
+```
+
+`Dimension()` counts the searched exponent as a coordinate and `DimensionNames()` did not name it,
+so `Pinned` walked the encoded vector and indexed a name list one short of it. `Pinned` skips
+unpinned dimensions before it touches a name, so **the crash fired only when the keytrack itself
+came to rest on a box edge** -- which is precisely the quantity the third decision clause counts.
+The hollandm and radiohummingbird ablations both published "0 of 12 pinned" and neither crashed;
+that is consistent with the bug and is not evidence against it, because neither pack ever reached
+a bound. jamieblam is the first that did.
+
+`TestDimensionNamesCoverEveryDimension` had asserted `len(names) == Dimension()` since the
+exponent was added, and passed throughout, because it only ever built a keytrack-free codec.
+It now has a keytrack half, and `TestPinnedReportsAKeytrackOnItsBound` covers the crash directly.
+The fix is inert by construction -- a name is read after the search is over -- and that was checked
+rather than argued: a finished arm rerun at the same seed and worker width returned
+`0.38516217151990184` against `0.38516217151990184`, so the twenty-two arms already in hand stood.
+
+### The bound was deciding the answer
+
+At `DecayKeytrackMin = -1.0`, jamieblam's ablation read:
+
+| criterion                        | result                                    | verdict |
+| -------------------------------- | ----------------------------------------- | ------- |
+| 1, `p < 0.05`                    | gain +0.040684, t = +23.34, p = 1.013e-10 | passes  |
+| 2, median clears materiality     | median +0.040740, +9.46% of the score     | passes  |
+| 3, beta consistent across blocks | **-0.6751 +- 0.3592**, **2 of 12 pinned** | fails   |
+
+This is the case the plan reserved the phrase "beta cannot be evaluated here" for, and hollandm
+explicitly did not need it. Two blocks sat exactly on the floor.
+
+The floor was conservative rather than principled. Its own comment derives the admissible range
+from the authoring ceiling staying above `DecayMsMin` at every note, giving `beta <= 2.06` going up
+and `|beta| <= 1.95` going down, and -1.0 was chosen when the only metallophone evidence was a
+-0.24 exponent screened from half-lives. The fit disagreed with the screen. The floor is **-1.75**
+now, mirroring the ceiling and still inside the derived limit;
+`TestAuthoredCeilingStaysAboveTheDecayFloor` exists to fail when someone widens these bounds and
+passes at the new value, which is what makes -1.75 admissible rather than convenient.
+
+Only the twelve beta arms were re-run. A fixed arm never puts the exponent in its search box, so
+the floor cannot reach it -- checked, not asserted: a fixed arm rerun on the rebuilt binary came
+back bit for bit, and the rerun was written to abort otherwise.
+
+**What the widening did was not what widening was supposed to do.**
+
+| block | beta at -1.0    | beta at -1.75 | moved  |
+| ----- | --------------- | ------------- | ------ |
+| b01   | **-1.0000** pin | -0.8918       | +0.108 |
+| b04   | **+0.1464**     | -0.9391       | -1.086 |
+| b06   | **-0.1205**     | -0.8273       | -0.707 |
+| b08   | -0.5376         | **-1.0278**   | -0.490 |
+
+The two clamped blocks did not run further down; b01 came back up. The blocks that moved were the
+two wild outliers, +0.1464 and -0.1205 -- the very values that had failed the third clause -- which
+had been stranded in a shallow basin the constrained search could not leave. One arm did cross the
+old floor, so -1.0 was genuinely binding. **A box tight enough to clamp two blocks was distorting
+the other ten**, and that is the transferable lesson: a pinned dimension is evidence about the
+whole search, not only about the blocks that pinned.
+
+### The verdict: beta is earned on jamieblam and refused on mooncube
+
+Twelve paired blocks per pack, both arms of a block sharing a seed, `mayfly/desma` at twelve
+workers, 6,000 evaluations.
+
+**jamieblam**, `docs/data/pack-jamieblam-beta-ablation.csv`:
+
+| criterion                        | result                                       | verdict |
+| -------------------------------- | -------------------------------------------- | ------- |
+| 1, `p < 0.05`                    | gain +0.048137, t = +42.06, **p = 1.67e-13** | passes  |
+| 2, median clears materiality     | median +0.047368, **+11.00%** of the score   | passes  |
+| 3, beta consistent across blocks | **-0.9260 +- 0.0726**, **0 of 12 pinned**    | passes  |
+
+Beta won 12 of 12, every exponent inside a 0.22-wide band from -1.0278 to -0.8102, nothing on
+either bound. The gain is 2.6x radiohummingbird's and the largest measured here.
+
+**mooncubedesign**, `docs/data/pack-mooncube-beta-ablation.csv`:
+
+| criterion                        | result                                   | verdict |
+| -------------------------------- | ---------------------------------------- | ------- |
+| 1, `p < 0.05`                    | gain +0.006598, t = +6.04, p = 8.485e-05 | passes  |
+| 2, median clears materiality     | median +0.006430, +1.34% of the score    | passes  |
+| 3, beta consistent across blocks | **0.0060 +- 0.4213**, 0 of 12 pinned     | fails   |
+
+Exponents run -0.63 to +0.57 with the signs disagreeing and **nothing pinned**, so this is the
+strong form of the refusal, as hollandm's was: a statement about the exponent rather than about
+the bounds. Both contrasts survive Holm over the family of two at a family-wise 0.05.
+
+So the answer remains "it depends on the instrument", now on four instruments rather than two, and
+the cheap screen predicted every one of them:
+
+| pack             | screened from half-lives | fitted by ablation    | earned |
+| ---------------- | ------------------------ | --------------------- | ------ |
+| hollandm         | +1.220 +- 0.163          | +1.0010 +- 0.0711     | no     |
+| radiohummingbird | +0.547 +- 0.104          | +0.6241 +- 0.0435     | yes    |
+| jamieblam        | -0.313 +- 0.306          | **-0.9260 +- 0.0726** | yes    |
+| mooncubedesign   | -0.070 +- 0.439          | +0.0060 +- 0.4213     | no     |
+
+Every fitted exponent lands inside its screened interval. The screen costs nothing and is worth
+running before a five-hour ablation, though jamieblam shows it is a poor guide to _magnitude_: it
+read -0.31 where the fit reads -0.93, and that gap is what put the old floor in the way.
+
+### The joint fits, and the price of one preset
+
+| pack           | diagonal | best single-note | joint        | price of one preset   | version |
+| -------------- | -------- | ---------------- | ------------ | --------------------- | ------- |
+| hollandm       | 0.329422 | 0.439204         | 0.428765     | +0.099343 over 20     | v3      |
+| jamieblam      | 0.222787 | 0.431078         | **0.373710** | **+0.150923** over 13 | **v4**  |
+| mooncubedesign | 0.343256 | 0.484830         | **0.465716** | **+0.122461** over 8  | v3      |
+
+The joint preset beats **every** single-note preset on both new packs, as it did on hollandm --
+now three packs for three. jamieblam's joint fit carries `decay_keytrack = -0.9440`, which sits
+inside the ablation's -0.9260 +- 0.0726 at four times the budget, and is the repository's second
+v4 document. Nothing pinned in either fit (0 of 16, 0 of 18).
+
+jamieblam's joint fit is also the first that **kept** its pooled seed's structure: modes at
+1.001x, 3.980x and 7.051x against the seed's 1.00/3.99/7.04. hollandm's and mooncube's both
+relocated theirs. Its upper two modes decay in 2.6 ms and 12.1 ms, so they colour the attack
+rather than ring, which is worth saying plainly: the fitted preset is close to single-mode with
+two transient shadings.
+
+### The prediction this document registered, and the matrix that refuted it
+
+Before the runs, this plan predicted mooncube would pay a larger price than hollandm **because**
+its tuning scatters unsystematically from -5 to +49 cents, which equal-tempered transposition
+cannot reproduce. The price prediction held, +0.1225 against +0.0993. The mechanism did not.
+
+| tested against the per-note loss       | correlation |
+| -------------------------------------- | ----------: |
+| detuning relative to the authored note |  **-0.248** |
+| modes in that note's own fit           |  **+0.730** |
+| MIDI note                              |  **-0.885** |
+
+The detuning correlation is the wrong sign: note 93 sits 30.1 cents from the authored bar and
+loses +0.107, while note 84 sits 6.2 cents away and loses +0.212, the worst in the pack. The loss
+is bottom-heavy -- +0.15419 over notes 84-89 against +0.09073 over 91-96, an asymmetry five times
+hollandm's -- and it tracks how many partials each bar's own fit used, 6 or 7 at the bottom against
+4 or 5 at the top, where the joint preset has four.
+
+**So mooncube's dreadful tuning is very nearly free**, because each per-note fit absorbs its own
+bar's detuning into mode frequencies instead of fighting it and the joint fit inherits that. What
+one preset cannot carry is the individual bar's modal content. The 9.2 regression, the hollandm
+matrix and this matrix now say the same thing from three directions, and this is the second
+registered prediction about _where_ the price falls that the data has refused.
+
+### Provenance
+
+- Data: `docs/data/pack-jamieblam-beta-ablation.csv`, `docs/data/pack-mooncube-beta-ablation.csv`,
+  `docs/data/pack-jamieblam-matrix.csv`, `docs/data/pack-mooncube-matrix.csv`.
+- Statistics: `campaign.PairedGain`, `campaign.TwoSidedP`, `campaign.Holm`, `campaign.MeanSD`,
+  `campaign.Median` -- the same arithmetic as every published campaign number.
+- Pack runs `out/pack/jamieblam` (13 notes, seeds 180000 + k) and `out/pack/mooncube` (8 notes,
+  seeds 210000 + k), 24,000 evaluations per note, planned at revision `dbcd30bf8cfc`.
+- Ablations at seeds 190000 + k and 220000 + k; joint fits at seeds 200000 and 230000, 24,000
+  evaluations, seed coverage 0.35. Twelve workers throughout.
+- Revisions are mixed by design and recorded per row: jamieblam's twelve fixed arms ran at
+  `dbcd30bf8cfc` and its twelve beta arms at `60fadf17ce7a` after the bound was widened, which the
+  bit-for-bit fixed-arm rerun above is the evidence for; mooncube ran wholly at `60fadf17ce7a`.
+  mayfly v0.7.1, go-cma-es v0.1.0, go1.26.0.
+- Every fit stopped on `max_evaluations`; the analysis refuses to compare a fit that did not.
+- Reproducible at a fixed seed **and** worker width, which is the sense phase 8 pinned.
