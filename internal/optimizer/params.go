@@ -641,6 +641,13 @@ func (c *ParamCodec) DimensionNames() []string {
 		names = append(names, fmt.Sprintf("chebyshev.harmonic_gains[%d]", i))
 	}
 
+	// The searched exponent is the last coordinate, and Dimension counts it, so
+	// a name list that stopped at the Chebyshev gains was one short of the
+	// vector every caller walks alongside it.
+	if c.searchKeytrack {
+		names = append(names, "decay_keytrack")
+	}
+
 	return names
 }
 

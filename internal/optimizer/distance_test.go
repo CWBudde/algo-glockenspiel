@@ -260,3 +260,74 @@ func TestDimensionNamesCoverEveryDimension(t *testing.T) {
 		}
 	}
 }
+
+// TestDimensionNamesCoverTheSearchedKeytrack is the keytrack half of
+// TestDimensionNamesCoverEveryDimension. The exponent is appended to the
+// vector, so Dimension counts it and DimensionNames has to name it.
+func TestDimensionNamesCoverTheSearchedKeytrack(t *testing.T) {
+	template, _ := distanceFixture(t)
+
+	plain, err := NewParamCodec(&template.Parameters)
+	if err != nil {
+		t.Fatalf("codec: %v", err)
+	}
+
+	codec := plain.WithSearchedDecayKeytrack(Range{Min: -1, Max: 1.75})
+
+	names := codec.DimensionNames()
+	if len(names) != codec.Dimension() {
+		t.Fatalf("%d names for %d dimensions", len(names), codec.Dimension())
+	}
+
+	if last := names[len(names)-1]; last != "decay_keytrack" {
+		t.Fatalf("last name = %q, want decay_keytrack", last)
+	}
+
+	// The exponent is a small signed number, not a decade-spanning one.
+	if codec.isLogDimension(codec.Dimension() - 1) {
+		t.Fatalf("the keytrack dimension is log-encoded, want linear")
+	}
+}
+
+// TestPinnedReportsAKeytrackOnItsBound covers the case the beta ablation exists
+// to count: the exponent coming to rest on an edge of its own box. Pinned
+// walked the encoded vector but indexed a name list that stopped one short of
+// it, so the one outcome the third decision clause asks about was the one that
+// crashed the fit.
+func TestPinnedReportsAKeytrackOnItsBound(t *testing.T) {
+	template, _ := distanceFixture(t)
+
+	plain, err := NewParamCodec(&template.Parameters)
+	if err != nil {
+		t.Fatalf("codec: %v", err)
+	}
+
+	bounds := Range{Min: -1, Max: 1.75}
+	codec := plain.WithSearchedDecayKeytrack(bounds)
+
+	encoded, err := codec.EncodeParams(&template.Parameters)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	encoded[len(encoded)-1] = bounds.Min
+
+	pinned, err := codec.Pinned(encoded)
+	if err != nil {
+		t.Fatalf("pinned: %v", err)
+	}
+
+	for _, dimension := range pinned {
+		if dimension.Name != "decay_keytrack" {
+			continue
+		}
+
+		if dimension.Bound != "min" || dimension.Limit != bounds.Min {
+			t.Fatalf("keytrack pinned = %+v, want the min bound %v", dimension, bounds.Min)
+		}
+
+		return
+	}
+
+	t.Fatalf("the keytrack sits on its min bound and was not reported: %+v", pinned)
+}
