@@ -171,11 +171,19 @@ const (
 	// DecayMsMin no preset at that base note can validate at all -- every fit
 	// there would fail with an empty search box. Requiring the ceiling to stay
 	// above the floor for every authorable note gives beta <= 2.06 going up and
-	// |beta| <= 1.95 going down; this range sits inside both, with the measured
-	// exponents (-0.24 for a metallophone to +1.22 for a toy glockenspiel)
-	// comfortably interior. TestAuthoredCeilingStaysAboveTheDecayFloor is what
-	// keeps that a decision rather than an accident.
-	DecayKeytrackMin = -1.0
+	// |beta| <= 1.95 going down; this range sits inside both.
+	// TestAuthoredCeilingStaysAboveTheDecayFloor is what keeps that a decision
+	// rather than an accident.
+	//
+	// The floor was -1.0 until the jamieblam metallophone was fitted, on the
+	// strength of a -0.24 exponent screened from that pack's half-lives. The
+	// joint fit disagreed with the screen: beta came out -0.68 over twelve
+	// paired blocks and two of them came to rest exactly on -1.0, so the bound
+	// rather than the recordings was deciding the answer. It is -1.75 now, which
+	// mirrors the ceiling and still sits inside the derived -1.95. Widening it
+	// is what makes the third decision clause -- is beta consistent across
+	// blocks -- a question about the instrument again.
+	DecayKeytrackMin = -1.75
 	DecayKeytrackMax = 1.75
 
 	// OutputGainDBMin and OutputGainDBMax bound BarParams.OutputGainDB, the
