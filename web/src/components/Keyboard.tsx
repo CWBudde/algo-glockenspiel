@@ -15,7 +15,7 @@ export interface KeyboardProps {
   activeNotes: ReadonlySet<number>;
 }
 
-/** The piano the rack is aligned against, C2 to C7. */
+/** The piano the rack is aligned against, C2 to C8. */
 export function Keyboard({ onStrike, activeNotes }: KeyboardProps) {
   return (
     <section className="keyboard-panel" aria-label="Piano alignment">
@@ -61,8 +61,16 @@ interface PianoKeyProps {
  * One key.
  *
  * Only the C keys print their name, so every other key would otherwise be a
- * button with no accessible name at all -- 46 of the 61. The aria-label carries
- * the note name whether or not it is drawn.
+ * button with no accessible name at all. The aria-label carries the note name
+ * whether or not it is drawn.
+ *
+ * A key below the engine's sounding range is drawn dimmed and disabled: the
+ * keyboard spans further than the instrument does, and a key that looks live
+ * but whose note-on the engine discards without a sound is worse than one that
+ * says up front it has no bar behind it. It is disabled natively rather than
+ * only in ARIA, so it is genuinely inert and the 43 silent keys do not sit in
+ * the tab order between the panel and the sounding ones; aria-disabled stays
+ * for the explicit screen-reader message.
  *
  * Strikes share the rack's pointer handling, so a touch that turns into a pan
  * of the playfield never sounds a note.
@@ -80,6 +88,22 @@ function PianoKey({ entry, kind, active, onStrike }: PianoKeyProps) {
   // The visible label is the octave marker: C4, C5, and nothing in between.
   const label =
     kind === "white" && entry.name.startsWith("C") ? entry.name : "";
+
+  if (!entry.playable) {
+    return (
+      <button
+        type="button"
+        className={`piano-key ${kind} is-silent`}
+        data-note={entry.note}
+        aria-label={`${entry.name}, outside the instrument's range`}
+        disabled
+        aria-disabled="true"
+        style={style}
+      >
+        <span className="piano-note">{label}</span>
+      </button>
+    );
+  }
 
   return (
     <button

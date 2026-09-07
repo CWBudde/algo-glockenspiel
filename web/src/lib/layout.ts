@@ -14,11 +14,20 @@ import {
 export const FIRST_NOTE = 84; // C6
 export const LAST_NOTE = 108; // C8
 
-// The full keyboard span comes from the Go model rather than being typed again
+// The *playable* span comes from the Go model rather than being typed again
 // here. These two numbers used to be a second copy reading 36 and 96, and when
 // the engine moved to the glockenspiel's real range the copy would have gone on
-// drawing keys whose note-ons the engine refuses to build and drops silently.
+// drawing keys whose note-ons the engine accepts nowhere near them.
 export { KEYBOARD_FIRST_NOTE, KEYBOARD_LAST_NOTE };
+
+// The span the piano under the rack is *drawn* over, which is deliberately
+// wider than the span the engine will sound. The keyboard is there to show
+// where the instrument sits, and an instrument that fills its own keyboard end
+// to end shows nothing; the original C2 bottom is back for that reason. Keys
+// outside KEYBOARD_FIRST_NOTE..KEYBOARD_LAST_NOTE are drawn inert -- `playable`
+// below is false for them -- rather than firing note-ons the engine discards.
+export const KEYBOARD_DISPLAY_FIRST_NOTE = 36; // C2
+export const KEYBOARD_DISPLAY_LAST_NOTE = KEYBOARD_LAST_NOTE; // C8
 export const MOBILE_WHITE_UNIT_PX = 44;
 export const MOBILE_VIEWPORT_WHITE_UNITS = 7;
 /** Fundamental-mode nodes of an ideal free-free bar, measured from each end. */
@@ -257,6 +266,8 @@ export interface KeyEntry {
   note: number;
   name: string;
   center: number;
+  /** Whether the engine will build a bar for this note and sound it. */
+  playable: boolean;
 }
 
 export interface KeyboardLayout {
@@ -268,11 +279,11 @@ export interface KeyboardLayout {
 export interface PlayfieldLayout {
   /** Width of one white-key pitch on the horizontally scrolling surface. */
   whiteUnitPx: number;
-  /** Full C2-C7 keyboard span. */
+  /** Full C2-C8 keyboard span, sounding range and silent keys alike. */
   totalWhiteUnits: number;
-  /** C4-C6 rack span. */
+  /** C6-C8 rack span. */
   rackWhiteUnits: number;
-  /** White keys between the keyboard's C2 and the rack's C4. */
+  /** White keys between the keyboard's C2 and the rack's C6. */
   rackOffsetWhiteUnits: number;
   /** Initial mobile scroll position, aligned to the rack's leading edge. */
   initialScrollLeft: number;
@@ -287,13 +298,19 @@ export function computeKeyboardLayout(): KeyboardLayout {
   const blacks: KeyEntry[] = [];
   let whiteIndex = 0;
 
-  for (let note = KEYBOARD_FIRST_NOTE; note <= KEYBOARD_LAST_NOTE; note += 1) {
+  for (
+    let note = KEYBOARD_DISPLAY_FIRST_NOTE;
+    note <= KEYBOARD_DISPLAY_LAST_NOTE;
+    note += 1
+  ) {
     const pitchClass = note % 12;
+    const playable = isPlayableNote(note);
     if (WHITE_OFFSETS.has(pitchClass)) {
       whites.push({
         note,
         name: midiToName(note),
         center: whiteIndex + 0.5,
+        playable,
       });
       whiteIndex += 1;
     } else {
@@ -301,6 +318,7 @@ export function computeKeyboardLayout(): KeyboardLayout {
         note,
         name: midiToName(note),
         center: whiteIndex,
+        playable,
       });
     }
   }
@@ -319,7 +337,10 @@ export function computePlayfieldLayout(
 ): PlayfieldLayout {
   const keyboard = computeKeyboardLayout();
   const rack = computeNoteLayout();
-  const rackOffsetWhiteUnits = countWhiteNotes(KEYBOARD_FIRST_NOTE, FIRST_NOTE);
+  const rackOffsetWhiteUnits = countWhiteNotes(
+    KEYBOARD_DISPLAY_FIRST_NOTE,
+    FIRST_NOTE,
+  );
 
   return {
     whiteUnitPx,
@@ -330,6 +351,15 @@ export function computePlayfieldLayout(
     viewportWhiteUnits,
     viewportWidth: viewportWhiteUnits * whiteUnitPx,
   };
+}
+
+/**
+ * Whether the engine will sound a note at all. Outside this span NewBar refuses
+ * to build the transposed preset and the note-on is dropped without a sound, so
+ * the browser marks the key inert instead of pretending it struck something.
+ */
+export function isPlayableNote(note: number): boolean {
+  return note >= KEYBOARD_FIRST_NOTE && note <= KEYBOARD_LAST_NOTE;
 }
 
 function countWhiteNotes(firstNote: number, lastNoteExclusive: number): number {

@@ -914,6 +914,39 @@ h1 {
     0 2px 3px rgba(35, 29, 24, 0.14);
 }
 
+/*
+ * A key outside the engine's sounding range. The keyboard is drawn over the
+ * full C2-C8 span so the instrument's own G5-C8 reads as a section of a piano
+ * rather than filling the whole width, and these keys carry the difference:
+ * greyed and inert to the pointer. They keep their edge shading, since without
+ * it the pale white keys run together into one blank strip.
+ */
+.piano-key.is-silent {
+  cursor: default;
+}
+
+/*
+ * Both rows get their own grey rather than a filter over the live one. Fading
+ * the naturals out is what a first attempt did, and it failed: their faces are
+ * so near white that anything washing them towards the panel takes the key
+ * edges with it and leaves a blank strip where the keys should be.
+ */
+.piano-key.white.is-silent {
+  background: linear-gradient(180deg, #d8d4cd 0%, #c4bfb6 100%);
+  box-shadow:
+    inset -1px 0 0 rgba(72, 61, 50, 0.24),
+    inset 0 -3px 5px rgba(72, 61, 50, 0.08);
+}
+
+.piano-key.black.is-silent {
+  background: linear-gradient(180deg, #9c978f 0%, #837e77 100%);
+  box-shadow: none;
+}
+
+.piano-key.is-silent .piano-note {
+  color: rgba(69, 59, 48, 0.38);
+}
+
 .piano-key.is-active {
   filter: brightness(1.04) saturate(1.04);
 }
@@ -1180,6 +1213,17 @@ h1 {
     box-shadow:
       inset 0 1px 0 rgba(255, 248, 238, 0.08),
       0 2px 3px rgba(35, 29, 24, 0.14);
+  }
+
+  /*
+   * The compact accidental draws itself in a pseudo-element, so the silent
+   * grey set on the button's own background never shows through. Repeat it
+   * here or the disabled sharps below G5 look playable while the white keys
+   * beside them are visibly greyed.
+   */
+  .playfield-viewport .piano-key.black.is-silent::before {
+    background: linear-gradient(180deg, #9c978f 0%, #837e77 100%);
+    box-shadow: none;
   }
 
   .playfield-viewport .piano-key.black.is-active {
