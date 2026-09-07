@@ -683,7 +683,7 @@ test("mobile playfield shares one aligned, reachable pitch viewport", async ({
       return (
         keyBox.left >= viewportBox.left && keyBox.right <= viewportBox.right
       );
-    }, '.piano-key[data-note="79"]'),
+    }, '.piano-key[data-note="36"]'),
   ).toBe(true);
   await viewport.evaluate((element) => {
     element.scrollLeft = element.scrollWidth;
@@ -997,13 +997,25 @@ test("keyboard keeps its full named range and active-state hook", async ({
   const keys = keyboard.getByRole("button");
   const whites = keyboard.locator(".piano-key.white");
   const blacks = keyboard.locator(".piano-key.black");
-  const first = keyboard.locator('.piano-key[data-note="79"]');
+  const first = keyboard.locator('.piano-key[data-note="36"]');
   const last = keyboard.locator('.piano-key[data-note="108"]');
+  const lowestSounding = keyboard.locator('.piano-key[data-note="79"]');
+  const silent = keyboard.locator(".piano-key.is-silent");
 
-  await expect(keys).toHaveCount(30);
-  await expect(whites).toHaveCount(18);
-  await expect(blacks).toHaveCount(12);
-  await expect(first).toHaveAccessibleName("G5");
+  // The keyboard is drawn over the full C2-C8 piano, wider than the G5-C8 the
+  // engine will sound, so the instrument reads as a section of a keyboard. The
+  // 43 keys below G5 are drawn inert rather than firing note-ons the engine
+  // discards without a sound.
+  await expect(keys).toHaveCount(73);
+  await expect(whites).toHaveCount(43);
+  await expect(blacks).toHaveCount(30);
+  await expect(silent).toHaveCount(43);
+  await expect(first).toHaveAccessibleName(
+    "C2, outside the instrument's range",
+  );
+  await expect(first).toHaveAttribute("aria-disabled", "true");
+  await expect(lowestSounding).toHaveAccessibleName("G5");
+  await expect(lowestSounding).not.toHaveAttribute("aria-disabled", "true");
   await expect(last).toHaveAccessibleName("C8");
 
   const names = await keys.evaluateAll((elements) =>
@@ -1013,9 +1025,9 @@ test("keyboard keeps its full named range and active-state hook", async ({
     elements.map((element) => Number((element as HTMLElement).dataset.note)),
   );
   expect(names.every((name) => name !== null && name.length > 0)).toBe(true);
-  expect(new Set(names).size).toBe(30);
-  expect(new Set(notes).size).toBe(30);
-  expect(Math.min(...notes)).toBe(79);
+  expect(new Set(names).size).toBe(73);
+  expect(new Set(notes).size).toBe(73);
+  expect(Math.min(...notes)).toBe(36);
   expect(Math.max(...notes)).toBe(108);
 
   const pianoC6 = keyboard.locator('.piano-key[data-note="84"]');

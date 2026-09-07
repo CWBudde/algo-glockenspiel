@@ -10,7 +10,7 @@ The same engine also ships as a CLI for rendering notes to WAV and for fitting p
 
 ## The Web App
 
-The browser build compiles the Go engine to WebAssembly and drives it from a small JavaScript mixer. It gives you a piano-aligned instrument view spanning MIDI 79 to 108, the orchestral glockenspiel's sounding range, playable by pointer or by computer keyboard, with a sound picker, a volume dial, a velocity dial and a reverb dial. The sounds are the presets in `assets/presets`, embedded in the module: adding a file there adds an option -- see [that directory's notes](assets/presets/README.md) for what a preset has to satisfy.
+The browser build compiles the Go engine to WebAssembly and drives it from a small JavaScript mixer. It gives you a piano-aligned instrument view spanning MIDI 79 to 108, the orchestral glockenspiel's sounding range, playable by pointer or by computer keyboard. The piano it is aligned against is drawn over the full MIDI 36 to 108, C2 to C8, with the keys below the instrument greyed and inert, so the sounding range reads as a section of a keyboard rather than filling it. There is also a sound picker, a volume dial, a velocity dial and a reverb dial. The sounds are the presets in `assets/presets`, embedded in the module: adding a file there adds an option -- see [that directory's notes](assets/presets/README.md) for what a preset has to satisfy.
 
 Run it locally:
 

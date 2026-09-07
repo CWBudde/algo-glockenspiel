@@ -4,9 +4,13 @@ import {
   BAR_NODE_RATIO,
   computeBarGeometry,
   computeBarSupportGeometry,
+  computeKeyboardLayout,
   computeKeyMap,
   computeNoteLayout,
   computePlayfieldLayout,
+  isPlayableNote,
+  KEYBOARD_FIRST_NOTE,
+  KEYBOARD_LAST_NOTE,
   type BarEntry,
   type BarKind,
 } from "./layout";
@@ -28,13 +32,13 @@ describe("computer-keyboard hints", () => {
 });
 
 describe("mobile playfield geometry", () => {
-  it("aligns the 15-unit C6-C8 rack inside the 18-unit G5-C8 keyboard", () => {
+  it("aligns the 15-unit C6-C8 rack inside the 43-unit C2-C8 keyboard", () => {
     expect(computePlayfieldLayout()).toEqual({
       whiteUnitPx: 44,
-      totalWhiteUnits: 18,
+      totalWhiteUnits: 43,
       rackWhiteUnits: 15,
-      rackOffsetWhiteUnits: 3,
-      initialScrollLeft: 132,
+      rackOffsetWhiteUnits: 28,
+      initialScrollLeft: 1232,
       viewportWhiteUnits: 7,
       viewportWidth: 308,
     });
@@ -43,8 +47,28 @@ describe("mobile playfield geometry", () => {
   it("derives the initial scroll from the requested pitch width", () => {
     const layout = computePlayfieldLayout(52, 8);
 
-    expect(layout.initialScrollLeft).toBe(156);
+    expect(layout.initialScrollLeft).toBe(1456);
     expect(layout.viewportWidth).toBe(416);
+  });
+});
+
+describe("silent keys", () => {
+  it("marks every key outside the engine's G5-C8 span unplayable", () => {
+    const keyboard = computeKeyboardLayout();
+    const keys = [...keyboard.whites, ...keyboard.blacks];
+
+    expect(keys).toHaveLength(73);
+    for (const key of keys) {
+      expect(key.playable, key.name).toBe(
+        key.note >= KEYBOARD_FIRST_NOTE && key.note <= KEYBOARD_LAST_NOTE,
+      );
+    }
+
+    // The rack only ever draws bars the engine will sound.
+    const rack = computeNoteLayout();
+    for (const bar of [...rack.naturals, ...rack.accidentals]) {
+      expect(isPlayableNote(bar.note), bar.name).toBe(true);
+    }
   });
 });
 
