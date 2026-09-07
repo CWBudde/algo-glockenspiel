@@ -104,6 +104,63 @@ func (c ObjectiveConfig) resolvedDecayKeytrackBounds() Range {
 	return c.DecayKeytrackBounds
 }
 
+// searchableDecayKeytrackBounds narrows an exponent range to the part of it a
+// preset authored at note could still be fitted under.
+//
+// The model's range is an authoring bound: it keeps AuthoredDecayMsMax above
+// DecayMsMin, the floor a preset file has to clear, and every exponent in it
+// really does leave a validatable preset. The optimizer asks for more than
+// that. Its decay box starts at DecayMsSearchMin, fifty times higher, and
+// narrowDecayBounds refuses a box whose floor lies above the authoring ceiling
+// -- so an exponent that is legal to write can still leave the search nothing
+// to search. At the -1.75 floor that begins at note 17 and reaches 0.09 ms by
+// note 0, where the box is empty and an otherwise valid multi-note fit is
+// rejected outright.
+//
+// Clamping here rather than narrowing DecayKeytrackMin is deliberate. The model
+// bound is a statement about presets and is correct as it stands; this is a
+// statement about one fit, at one authored note, against one decay floor, and
+// no note a pack actually sounds is touched by it. The clamped range always
+// contains zero -- both limits are computed from a negative log ratio and land
+// on opposite sides of it -- so it can never invert.
+func searchableDecayKeytrackBounds(bounds Range, note int, decayFloor float64) Range {
+	if decayFloor <= 0 || decayFloor >= model.DecayMsValidationMax {
+		return bounds
+	}
+
+	// How far the ceiling may fall, in octaves of decay, before the box empties.
+	// The limits below are pulled a hair back towards zero afterwards, because
+	// the exact solution puts the ceiling *on* the floor and narrowDecayBounds
+	// compares the two: a rounding error of one ulp in the wrong direction would
+	// be the empty box this exists to prevent.
+	const backOff = 1 - 1e-12
+
+	drop := math.Log2(decayFloor / model.DecayMsValidationMax)
+
+	// A negative exponent lengthens the ring going up, so the worst note is the
+	// top key and the reach is measured from there.
+	if reach := model.KeyboardLastNote - note; reach > 0 {
+		if limit := backOff * 12 * drop / float64(reach); limit > bounds.Min {
+			bounds.Min = limit
+		}
+	}
+
+	if reach := note - model.KeyboardFirstNote; reach > 0 {
+		if limit := backOff * -12 * drop / float64(reach); limit < bounds.Max {
+			bounds.Max = limit
+		}
+	}
+
+	return bounds
+}
+
+// searchedDecayKeytrackBounds is the range the exponent is searched in for a
+// preset authored at note, which is resolvedDecayKeytrackBounds clamped to what
+// leaves the decay box a search to run.
+func (c ObjectiveConfig) searchedDecayKeytrackBounds(note int) Range {
+	return searchableDecayKeytrackBounds(c.resolvedDecayKeytrackBounds(), note, c.Bounds.DecayMs.Min)
+}
+
 // DefaultObjectiveConfig returns the configuration used by the plain
 // constructors.
 //
@@ -289,7 +346,7 @@ func decayCeilingKeytrack(template *preset.Preset, config ObjectiveConfig) float
 	tightest := math.Inf(1)
 	worst := model.DecayKeytrackDefault
 
-	bounds := config.resolvedDecayKeytrackBounds()
+	bounds := config.searchedDecayKeytrackBounds(template.Note)
 
 	for _, keytrack := range []float64{bounds.Min, bounds.Max} {
 		if ceiling := model.AuthoredDecayMsMax(template.Note, keytrack); ceiling < tightest {
@@ -445,7 +502,7 @@ func newObjectiveFunction(
 			return nil, err
 		}
 
-		codec = codec.WithSearchedDecayKeytrack(config.resolvedDecayKeytrackBounds())
+		codec = codec.WithSearchedDecayKeytrack(config.searchedDecayKeytrackBounds(template.Note))
 	}
 
 	profile, _ := ProfileFor(config.Metric)

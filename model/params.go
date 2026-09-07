@@ -183,6 +183,15 @@ const (
 	// mirrors the ceiling and still sits inside the derived -1.95. Widening it
 	// is what makes the third decision clause -- is beta consistent across
 	// blocks -- a question about the instrument again.
+	//
+	// The derivation is against DecayMsMin, the floor a preset file has to
+	// clear, and that is the right floor for an authoring bound. A fit wants
+	// more room than a file does -- its decay box starts at DecayMsSearchMin,
+	// fifty times higher -- so below note 17 an exponent legal to write leaves
+	// the optimizer an empty box. That is clamped per fit, at the authored note,
+	// by searchableDecayKeytrackBounds in internal/optimizer, rather than by
+	// pulling this bound in: the range here describes presets, and every preset
+	// in it validates.
 	DecayKeytrackMin = -1.75
 	DecayKeytrackMax = 1.75
 

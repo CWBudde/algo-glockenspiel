@@ -323,3 +323,50 @@ func TestSeedPopulationSurroundsTheIncumbent(t *testing.T) {
 		t.Fatalf("a tiny fraction should still seed the incumbent, got %d rows", got)
 	}
 }
+
+// TestSearchedKeytrackLeavesTheDecayBoxSomethingToSearch is the regression the
+// -1.75 floor introduced, and the reason the exponent is clamped per fit rather
+// than in the model.
+//
+// The authoring range only promises AuthoredDecayMsMax stays above DecayMsMin,
+// 0.01 ms. The optimizer's decay box starts at DecayMsSearchMin, 0.5 ms, and
+// narrowDecayBounds turns a box whose floor is above the ceiling into an error,
+// so at the bottom of the keyboard a legal exponent used to empty the box: at
+// note 0 the ceiling under -1.75 is 0.09 ms, where the -1.0 floor had left 9.77.
+func TestSearchedKeytrackLeavesTheDecayBoxSomethingToSearch(t *testing.T) {
+	full := Range{Min: model.DecayKeytrackMin, Max: model.DecayKeytrackMax}
+
+	for note := 0; note <= 127; note++ {
+		got := searchableDecayKeytrackBounds(full, note, model.DecayMsSearchMin)
+
+		if got.Min > 0 || got.Max < 0 || got.Min > got.Max {
+			t.Fatalf("note %d: clamped exponent range [%g, %g] does not contain zero", note, got.Min, got.Max)
+		}
+
+		if got.Min < full.Min || got.Max > full.Max {
+			t.Fatalf("note %d: clamped range [%g, %g] escapes the model's [%g, %g]",
+				note, got.Min, got.Max, full.Min, full.Max)
+		}
+
+		for _, keytrack := range []float64{got.Min, got.Max} {
+			if ceiling := model.AuthoredDecayMsMax(note, keytrack); ceiling < model.DecayMsSearchMin {
+				t.Fatalf("note %d: at exponent %g the authoring ceiling is %g ms, "+
+					"below the %g ms search floor -- the decay box is empty",
+					note, keytrack, ceiling, model.DecayMsSearchMin)
+			}
+		}
+	}
+
+	// The clamp is not free: it has to actually bite where the model range is
+	// wider than a fit at that note can use, and leave every other note alone.
+	if got := searchableDecayKeytrackBounds(full, 0, model.DecayMsSearchMin); got.Min <= model.DecayKeytrackMin {
+		t.Fatalf("note 0: exponent floor %g was not narrowed from %g", got.Min, model.DecayKeytrackMin)
+	}
+
+	for _, note := range []int{17, 69, 79, 89, 100, 108} {
+		if got := searchableDecayKeytrackBounds(full, note, model.DecayMsSearchMin); got != full {
+			t.Errorf("note %d: exponent range narrowed to [%g, %g], want the model's full range",
+				note, got.Min, got.Max)
+		}
+	}
+}
