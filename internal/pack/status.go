@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cwbudde/algo-glockenspiel/internal/campaign"
 	"github.com/cwbudde/algo-glockenspiel/internal/fitrun"
 )
 
@@ -34,14 +35,16 @@ const traceTailBytes = 16 << 10
 // written and flushed, so it is safe to call from another shell, or from a
 // handler, while the run is in flight. Nothing is opened for writing.
 //
-// It describes both shapes of run, because from the outside they differ only
-// in how many progress streams there are. A pack run is a manifest and twenty
-// run directories; a joint fit is one run directory that happens to score
-// twenty recordings. Joint is what tells them apart.
+// It describes three shapes of run, because from the outside they differ only
+// in how many progress streams there are and what each one is called. A pack
+// run is a manifest and twenty run directories; a joint fit is one run
+// directory that happens to score twenty recordings; an ablation is a
+// directory of joint fits, paired by name, that exist to be compared. Kind is
+// what tells them apart.
 type Status struct {
-	Pack  string `json:"pack"`
-	Dir   string `json:"dir"`
-	Joint bool   `json:"joint"`
+	Pack string `json:"pack"`
+	Dir  string `json:"dir"`
+	Kind string `json:"kind"`
 
 	Budget  int `json:"budget"`
 	Workers int `json:"workers"`
@@ -52,8 +55,14 @@ type Status struct {
 	Pending  int          `json:"pending"`
 	Canceled int          `json:"canceled"`
 
+	// Stale counts the running fits whose files have gone quiet; see
+	// StaleAfter. They are still counted as running, because that is what the
+	// directory says, and this is the number that says the directory may be
+	// wrong.
+	Stale int `json:"stale"`
+
 	Elapsed   Duration `json:"elapsed_ms"`
-	MeanJob   Duration `json:"mean_job_ms"`
+	Pace      Duration `json:"pace_ms"`
 	Remaining Duration `json:"remaining_ms"`
 
 	// Read is when the directory was inspected, so a page showing this can say
@@ -148,12 +157,29 @@ type NoteStatus struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
 
+	// Dir is the run directory relative to Status.Dir, for the shapes whose
+	// fits are directories the reader discovered rather than notes a manifest
+	// named.
+	Dir string `json:"dir,omitempty"`
+
+	// Arm and Keytrack belong to an ablation: which arm of the comparison the
+	// fit is, read from its config rather than from its name, and the decay
+	// exponent the beta arm found, once it has.
+	Arm      string   `json:"arm,omitempty"`
+	Keytrack *float64 `json:"keytrack,omitempty"`
+
 	Score       Score    `json:"score"`
 	Best        Score    `json:"best"`
 	Current     Score    `json:"current"`
 	Evaluations int      `json:"evaluations"`
 	Budget      int      `json:"budget"`
 	Elapsed     Duration `json:"elapsed_ms"`
+
+	// LastWrite is when a running fit last touched its trace, and Stale is
+	// whether that was long enough ago to doubt it. Both are absent for a fit
+	// that is not running: a finished fit is not expected to write.
+	LastWrite *time.Time `json:"last_write,omitempty"`
+	Stale     bool       `json:"stale,omitempty"`
 }
 
 // The states a fit directory can be in. They are the states campaign and pack
@@ -168,14 +194,41 @@ const (
 	StateCanceled = "canceled"
 )
 
-// ReadStatus reports the progress of a pack run or of a single joint fit,
-// whichever the directory holds.
+// The shapes of directory ReadStatus tells apart.
+const (
+	KindPack     = "pack"
+	KindJoint    = "joint"
+	KindAblation = "ablation"
+)
+
+// The two arms of an ablation. A fit whose config asked the search for the
+// decay exponent is the beta arm; one that left it at the model's law is the
+// control it has to beat.
+const (
+	ArmFixed = "fixed"
+	ArmBeta  = "beta"
+)
+
+// StaleAfter is how long a running fit's files may go untouched before the
+// status calls it stale.
+//
+// A joint fit writes a trace line every few seconds and result.json within a
+// second of the last one, so two minutes is a couple of dozen missed lines: a
+// fit that has been suspended, or whose process died without writing a result,
+// rather than one between iterations. The files cannot tell those two apart
+// and the status does not pretend to; it reports how long the silence has
+// lasted and leaves the process table to whoever is at the machine.
+const StaleAfter = 2 * time.Minute
+
+// ReadStatus reports the progress of a pack run, of a single joint fit, or of
+// a directory of joint fits, whichever the directory holds.
 //
 // The directory decides: a manifest means a pack run and its jobs are the
-// notes, and no manifest means the directory is itself one fit's run
-// directory. Guessing from the argument's name was the alternative and is
-// worse -- a joint fit is written wherever --out pointed, which is a path the
-// caller chose and this package has no claim on.
+// notes; a config or a result at the top means the directory is itself one
+// fit's run directory; and a directory holding neither, whose children are
+// run directories, is an ablation. Guessing from the argument's name was the
+// alternative and is worse -- a joint fit is written wherever --out pointed,
+// which is a path the caller chose and this package has no claim on.
 func ReadStatus(dir string) (*Status, error) {
 	manifest, err := ReadManifest(dir)
 	if err == nil {
@@ -186,7 +239,24 @@ func ReadStatus(dir string) (*Status, error) {
 		return nil, err
 	}
 
-	return readJointStatus(dir)
+	if isRunDir(dir) {
+		return readJointStatus(dir)
+	}
+
+	return readAblationStatus(dir)
+}
+
+// isRunDir reports whether the directory is one fit's output: fitrun writes
+// config.json before the search and result.json after it, so a directory with
+// either is a run and one with neither is not, whatever else it holds.
+func isRunDir(dir string) bool {
+	for _, name := range []string{fitrun.FileConfig, fitrun.FileResult} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+
+	return false
 }
 
 // errorsIsMissingManifest reports whether the error is "this directory holds no
@@ -205,6 +275,7 @@ func readPackStatus(dir string, manifest *Manifest) (*Status, error) {
 	status := &Status{
 		Pack:    manifest.Pack,
 		Dir:     dir,
+		Kind:    KindPack,
 		Budget:  manifest.Budget,
 		Workers: manifest.Workers,
 		Notes:   make([]NoteStatus, 0, len(manifest.Jobs)),
@@ -212,12 +283,13 @@ func readPackStatus(dir string, manifest *Manifest) (*Status, error) {
 	}
 
 	for _, job := range manifest.Jobs {
-		note := readNoteStatus(filepath.Join(dir, job.Dir), manifest.Budget)
+		note := readNoteStatus(filepath.Join(dir, job.Dir), manifest.Budget, status.Read)
 		note.Note = job.Note
 		note.Name = job.Name
+		note.Dir = job.Dir
 
 		status.Notes = append(status.Notes, note)
-		status.count(note.State)
+		status.count(note)
 	}
 
 	sort.Slice(status.Notes, func(i, j int) bool { return status.Notes[i].Note < status.Notes[j].Note })
@@ -230,7 +302,9 @@ func readPackStatus(dir string, manifest *Manifest) (*Status, error) {
 // them. The note list holds a single entry, so a caller -- a handler above all
 // -- renders one shape whichever kind of run it was handed.
 func readJointStatus(dir string) (*Status, error) {
-	note := readNoteStatus(dir, 0)
+	now := time.Now()
+
+	note := readNoteStatus(dir, 0, now)
 	if note.State == StatePending {
 		return nil, fmt.Errorf("%s holds neither a pack manifest nor a fit run directory", dir)
 	}
@@ -238,9 +312,9 @@ func readJointStatus(dir string) (*Status, error) {
 	status := &Status{
 		Pack:  filepath.Base(dir),
 		Dir:   dir,
-		Joint: true,
+		Kind:  KindJoint,
 		Notes: []NoteStatus{note},
-		Read:  time.Now(),
+		Read:  now,
 	}
 
 	if config, err := readRunConfig(dir); err == nil {
@@ -251,14 +325,14 @@ func readJointStatus(dir string) (*Status, error) {
 		status.Notes[0] = note
 	}
 
-	status.count(note.State)
+	status.count(note)
 	status.estimate()
 
 	return status, nil
 }
 
-func (s *Status) count(state string) {
-	switch state {
+func (s *Status) count(note NoteStatus) {
+	switch note.State {
 	case StateDone:
 		s.Finished++
 	case StateRunning:
@@ -267,6 +341,10 @@ func (s *Status) count(state string) {
 		s.Canceled++
 	default:
 		s.Pending++
+	}
+
+	if note.Stale {
+		s.Stale++
 	}
 }
 
@@ -285,34 +363,62 @@ func (s *Status) count(state string) {
 // the first note's runtime, understating every number it prints. Summing what
 // each run recorded about itself is also the only version that stays right if
 // the pack is ever run with several notes in flight.
+//
+// The pace is a median rather than a mean, with the outliers dropped first,
+// because ElapsedSeconds is wall clock. A fit that was suspended for an hour
+// records the hour as work, and one such fit in a dozen moves a mean by a
+// third of an hour per fit while leaving the median where it was. The spent
+// figure keeps every second, though: that time passed whether or not the
+// search was using it.
 func (s *Status) estimate() {
-	var done, running time.Duration
+	var (
+		done, running time.Duration
+		finished      []float64
+	)
 
 	for _, note := range s.Notes {
 		switch note.State {
 		case StateDone:
 			done += note.Elapsed.Duration()
+			finished = append(finished, note.Elapsed.Duration().Seconds())
 		case StateRunning:
 			running += note.Elapsed.Duration()
 		}
 	}
 
-	if s.Finished == 0 {
+	if len(finished) == 0 {
 		return
 	}
 
-	s.MeanJob = Duration(done / time.Duration(s.Finished))
+	s.Pace = Duration(pace(finished) * float64(time.Second))
 	s.Elapsed = Duration(done + running)
 
 	// What a note in flight has already spent is subtracted from what it is
-	// expected to cost, floored at zero: a note that has run past the mean is
+	// expected to cost, floored at zero: a note that has run past the pace is
 	// nearly finished, not owed negative time.
-	remaining := s.MeanJob.Duration()*time.Duration(s.Pending+s.Running) - running
+	remaining := s.Pace.Duration()*time.Duration(s.Pending+s.Running) - running
 	if remaining < 0 {
 		remaining = 0
 	}
 
 	s.Remaining = Duration(remaining)
+}
+
+// pace is the median of the durations that are believable: a fit whose clock
+// ran more than twice the median of all of them did not spend that time
+// computing, and is left out before the median is taken again.
+func pace(seconds []float64) float64 {
+	median := campaign.Median(seconds)
+
+	kept := make([]float64, 0, len(seconds))
+
+	for _, value := range seconds {
+		if value <= 2*median {
+			kept = append(kept, value)
+		}
+	}
+
+	return campaign.Median(kept)
 }
 
 // readNoteStatus reads one fit's run directory.
@@ -321,7 +427,10 @@ func (s *Status) estimate() {
 // makes a partly written directory readable rather than ambiguous: result.json
 // exists only after the search, config.json only before it, and neither exists
 // before the directory is a run directory at all.
-func readNoteStatus(dir string, budget int) NoteStatus {
+//
+// now is when the caller started reading, passed in rather than taken here so
+// that every fit of one status is judged stale against the same clock.
+func readNoteStatus(dir string, budget int, now time.Time) NoteStatus {
 	note := NoteStatus{
 		State:   StatePending,
 		Score:   Score(math.NaN()),
@@ -358,7 +467,34 @@ func readNoteStatus(dir string, budget int) NoteStatus {
 		note.Elapsed = Duration(time.Duration(progress.ElapsedMs) * time.Millisecond)
 	}
 
+	markLastWrite(&note, dir, now)
+
 	return note
+}
+
+// markLastWrite records when a running fit last wrote anything, and whether
+// that is long enough ago to doubt it.
+//
+// The trace is the file a search touches most often, and the config is the
+// one it wrote when it started, so the newer of the two is the last sign of
+// life: a fit that has written its config and no trace line yet is judged
+// from the config's age, not called stale for having no trace at all.
+func markLastWrite(note *NoteStatus, dir string, now time.Time) {
+	var last time.Time
+
+	for _, name := range []string{fitrun.FileTrace, fitrun.FileConfig} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err == nil && info.ModTime().After(last) {
+			last = info.ModTime()
+		}
+	}
+
+	if last.IsZero() {
+		return
+	}
+
+	note.LastWrite = &last
+	note.Stale = now.Sub(last) > StaleAfter
 }
 
 func readSummary(dir string) (*fitrun.Summary, error) {
@@ -383,6 +519,11 @@ type statusRunConfig struct {
 	Note           int `json:"note"`
 	MaxEvaluations int `json:"max_evaluations"`
 	Workers        int `json:"workers"`
+
+	// SearchDecayKeytrack is what makes a fit the beta arm of an ablation.
+	// It is read from the config, not from the directory's name, because the
+	// name is the driver's choice and the config is what the search did.
+	SearchDecayKeytrack bool `json:"search_decay_keytrack"`
 }
 
 func readRunConfig(dir string) (*statusRunConfig, error) {
@@ -461,25 +602,48 @@ func readTraceTail(dir string) (traceProgress, bool) {
 func RenderStatus(status *Status) string {
 	var out strings.Builder
 
-	total := len(status.Notes)
+	_, _ = fmt.Fprintf(&out, "%s: %s\n", status.Pack, headline(status))
 
-	if status.Joint {
-		_, _ = fmt.Fprintf(&out, "%s: one joint fit\n", status.Pack)
-	} else {
-		_, _ = fmt.Fprintf(&out, "%s: %d of %d notes fitted\n", status.Pack, status.Finished, total)
+	if status.Stale > 0 {
+		_, _ = fmt.Fprintf(&out, "%d running fit(s) have written nothing for over %s\n",
+			status.Stale, StaleAfter)
 	}
 
 	if status.Canceled > 0 {
 		_, _ = fmt.Fprintf(&out, "%d cancelled fit(s) will be repeated by the next run\n", status.Canceled)
 	}
 
-	if status.MeanJob > 0 {
-		_, _ = fmt.Fprintf(&out, "%s per note, %s spent, about %s left\n",
-			roundSecond(status.MeanJob), roundSecond(status.Elapsed), roundSecond(status.Remaining))
+	if status.Pace > 0 {
+		_, _ = fmt.Fprintf(&out, "%s per fit (median), %s spent, about %s left\n",
+			roundSecond(status.Pace), roundSecond(status.Elapsed), roundSecond(status.Remaining))
 	}
 
-	_, _ = fmt.Fprintf(&out, "\n| note | state | evaluations | best | current | elapsed |\n")
-	_, _ = fmt.Fprintf(&out, "| --- | --- | --- | --- | --- | --- |\n")
+	if status.Kind == KindAblation {
+		renderAblationTable(&out, status)
+	} else {
+		renderNoteTable(&out, status)
+	}
+
+	return out.String()
+}
+
+// headline is the one line that says how far the run has got, worded for the
+// shape it is: a pack fits notes, an ablation runs fits, and a joint fit is
+// one thing that is either done or not.
+func headline(status *Status) string {
+	switch status.Kind {
+	case KindJoint:
+		return "one joint fit"
+	case KindAblation:
+		return fmt.Sprintf("%d of %d fits done", status.Finished, len(status.Notes))
+	default:
+		return fmt.Sprintf("%d of %d notes fitted", status.Finished, len(status.Notes))
+	}
+}
+
+func renderNoteTable(out *strings.Builder, status *Status) {
+	_, _ = fmt.Fprintf(out, "\n| note | state | evaluations | best | current | elapsed |\n")
+	_, _ = fmt.Fprintf(out, "| --- | --- | --- | --- | --- | --- |\n")
 
 	for _, note := range status.Notes {
 		name := note.Name
@@ -487,12 +651,39 @@ func RenderStatus(status *Status) string {
 			name = fmt.Sprintf("%d", note.Note)
 		}
 
-		_, _ = fmt.Fprintf(&out, "| %s | %s | %s | %s | %s | %s |\n",
-			name, note.State, evaluationsOf(note),
+		_, _ = fmt.Fprintf(out, "| %s | %s | %s | %s | %s | %s |\n",
+			name, stateOf(note, status.Read), evaluationsOf(note),
 			formatScore(note.Best), formatScore(note.Current), roundSecond(note.Elapsed))
 	}
+}
 
-	return out.String()
+func renderAblationTable(out *strings.Builder, status *Status) {
+	_, _ = fmt.Fprintf(out, "\n| fit | arm | state | score | keytrack | evaluations | elapsed |\n")
+	_, _ = fmt.Fprintf(out, "| --- | --- | --- | --- | --- | --- | --- |\n")
+
+	for _, note := range status.Notes {
+		_, _ = fmt.Fprintf(out, "| %s | %s | %s | %s | %s | %s | %s |\n",
+			note.Name, note.Arm, stateOf(note, status.Read), formatScore(note.Best),
+			formatKeytrack(note.Keytrack), evaluationsOf(note), roundSecond(note.Elapsed))
+	}
+}
+
+// stateOf is the state with the silence appended when there is one to
+// report: "running (stale 12m0s)" says more than either word alone.
+func stateOf(note NoteStatus, read time.Time) string {
+	if !note.Stale || note.LastWrite == nil {
+		return note.State
+	}
+
+	return fmt.Sprintf("%s (stale %s)", note.State, read.Sub(*note.LastWrite).Round(time.Second))
+}
+
+func formatKeytrack(value *float64) string {
+	if value == nil {
+		return "n/a"
+	}
+
+	return fmt.Sprintf("%.4f", *value)
 }
 
 func evaluationsOf(note NoteStatus) string {

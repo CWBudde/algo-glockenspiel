@@ -31,11 +31,25 @@ export const SOUND_PRESETS: readonly SoundPreset[] = [
       '{"version":"1.0","name":"Default Glockenspiel","note":69,"parameters":{"input_mix":2,"filter_frequency":1303.6960400974592,"base_frequency":440.0,"modes":[{"amplitude":2,"frequency":1756.5243235169935,"decay_ms":170.44361397312102},{"amplitude":2,"frequency":4516.145411643994,"decay_ms":3.4763848726009345},{"amplitude":2,"frequency":1328.9984749886657,"decay_ms":0.5604835696794853},{"amplitude":-2,"frequency":1855.0239239312777,"decay_ms":1.7888034585370858}],"chebyshev":{"enabled":true,"harmonic_gains":[1.3710558525404255,0.0,0.20036314305373643,0.0]}}}',
   },
   {
+    id: "morphagene-glockenspiel",
+    label: "Morphagene Glockenspiel",
+    note: 84,
+    document:
+      '{"version":"4.0","name":"Morphagene Glockenspiel","note":84,"parameters":{"input_mix":1.42630900701629,"filter_frequency":131.0282709873997,"base_frequency":1046.5022612023945,"modes":[{"amplitude":-1.9839259467947812,"frequency":1047.224183739988,"decay_ms":495.73913954874706}],"chebyshev":{"enabled":true,"stage":"excitation","harmonic_gains":[1.7014108574095639,0.8513080339357507,1.8233379775839165,0.34930810112027166]},"output_gain_db":14.63664550927405,"decay_keytrack":0.6491630350154589}}',
+  },
+  {
     id: "recorded-bar",
     label: "Recorded Bar",
     note: 69,
     document:
       '{"version":"2.0","name":"Recorded Bar","note":69,"parameters":{"input_mix":0.0,"filter_frequency":10250.983124117642,"base_frequency":440.0,"modes":[{"amplitude":-0.45143318074151023,"frequency":1751.6611608232392,"decay_ms":5.288956557482462},{"amplitude":0.42165076746836183,"frequency":1756.5571992931982,"decay_ms":351.6335942502604},{"amplitude":1.0575666654279108,"frequency":5149.554094209282,"decay_ms":7.022765559956914},{"amplitude":-1.0292571308755947,"frequency":5153.397573534699,"decay_ms":9.133478557893506},{"amplitude":-0.9459677025991704,"frequency":5162.5558591003755,"decay_ms":53.96594265298984},{"amplitude":0.625182803131068,"frequency":5163.6079462501875,"decay_ms":40.18977179990188},{"amplitude":0.24937277512247316,"frequency":5237.585299745967,"decay_ms":5.361926168854768},{"amplitude":0.09319031155658303,"frequency":6177.287717870395,"decay_ms":53.50749428847787},{"amplitude":0.4543066934017686,"frequency":9665.509816197515,"decay_ms":5.121295700014254},{"amplitude":0.18881801561704334,"frequency":9710.997696475812,"decay_ms":33.84056145740455},{"amplitude":0.6258027047862402,"frequency":9730.089687952324,"decay_ms":36.310884318585366},{"amplitude":-1.3041220070398718,"frequency":9791.527376167602,"decay_ms":2.763275115293443}],"chebyshev":{"enabled":true,"harmonic_gains":[0.2831467259534759,1.9999999999999385,0.28856963368347427,0.13025701423822358]}}}',
+  },
+  {
+    id: "toy-glockenspiel",
+    label: "Toy Glockenspiel",
+    note: 94,
+    document:
+      '{"version":"3.0","name":"Toy Glockenspiel","note":94,"parameters":{"input_mix":1.4536263270378942,"filter_frequency":348.9864564301666,"base_frequency":1864.6550460723597,"modes":[{"amplitude":-0.08386775870664964,"frequency":1866.9080114210544,"decay_ms":361.4127483401169},{"amplitude":-0.532747426857505,"frequency":1868.7163432862799,"decay_ms":5.644746772727362},{"amplitude":0.5510206322325919,"frequency":9893.668115264929,"decay_ms":20.84127239486456}],"chebyshev":{"enabled":true,"stage":"excitation","harmonic_gains":[0.2374693013079617,1.4576905986791333,1.3610985544472483,0.5115512255288892]},"output_gain_db":16.635646099527563}}',
   },
 ] as const;
 

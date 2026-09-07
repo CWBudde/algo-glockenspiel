@@ -1,6 +1,7 @@
 package pack_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -209,12 +210,64 @@ func TestTheServedPageAndItsJSONAgree(t *testing.T) {
 		t.Fatalf("/ returned %d", pageResponse.Code)
 	}
 
+	// The page draws itself from the JSON it embeds, so the numbers the
+	// browser shows are the numbers status.json serves by construction; what
+	// is checked here is that the embedded copy is the served copy, byte for
+	// byte, and that the page no longer reloads itself to find out.
 	body := pageResponse.Body.String()
-	for _, want := range []string{"147/24000", "0.430000", "<table>", "http-equiv=\"refresh\""} {
+	embedded := embeddedStatus(t, body)
+
+	// Two requests are two reads, and each read stamps its own clock; with
+	// that put aside, the two documents have to be the same document.
+	var fromPage pack.Status
+	if err := json.Unmarshal(embedded, &fromPage); err != nil {
+		t.Fatalf("the embedded JSON does not decode: %v", err)
+	}
+
+	fromPage.Read, status.Read = time.Time{}, time.Time{}
+
+	if fromPage.Notes[0].LastWrite != nil {
+		fromPage.Notes[0].LastWrite, status.Notes[0].LastWrite = nil, nil
+	}
+
+	pageBytes, _ := json.Marshal(fromPage)
+	servedBytes, _ := json.Marshal(status)
+
+	if !bytes.Equal(pageBytes, servedBytes) {
+		t.Errorf("the page embeds\n%s\nbut status.json serves\n%s", pageBytes, servedBytes)
+	}
+
+	for _, want := range []string{"<table", "status.json", `id="status-data"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page lacks %q:\n%s", want, body)
 		}
 	}
+
+	if strings.Contains(body, "http-equiv") {
+		t.Error("the page still reloads itself with a meta refresh")
+	}
+}
+
+// embeddedStatus cuts the JSON the page carries for its first paint out of
+// the page.
+func embeddedStatus(tb testing.TB, page string) []byte {
+	tb.Helper()
+
+	const open = `<script type="application/json" id="status-data">`
+
+	start := strings.Index(page, open)
+	if start < 0 {
+		tb.Fatalf("the page carries no embedded status:\n%s", page)
+	}
+
+	rest := page[start+len(open):]
+
+	end := strings.Index(rest, "</script>")
+	if end < 0 {
+		tb.Fatalf("the embedded status is not closed:\n%s", page)
+	}
+
+	return []byte(rest[:end])
 }
 
 // TestTheServerSaysWhenItCannotRead. A run directory that has been deleted or
@@ -326,8 +379,8 @@ func TestPackTimingSumsWhatEachFitRecorded(t *testing.T) {
 			status.Finished, status.Running, status.Pending)
 	}
 
-	if got, want := status.MeanJob.Duration(), 150*time.Second; got != want {
-		t.Errorf("mean job is %s, want %s -- the mean of 200s and 100s, not a window between result files",
+	if got, want := status.Pace.Duration(), 150*time.Second; got != want {
+		t.Errorf("pace is %s, want %s -- the median of 200s and 100s, not a window between result files",
 			got, want)
 	}
 

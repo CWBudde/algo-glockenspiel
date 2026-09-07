@@ -110,6 +110,20 @@ describe("remembering the choice", () => {
     expect(html).toContain(`localStorage.getItem("${THEME_STORAGE_KEY}")`);
   });
 
+  /*
+   * The pack status page served by `glockenspiel-campaign pack status --serve`
+   * reads the key the same way, from Go, so that a visitor who chose dark here
+   * is dark there when the two share an origin. Same reasoning, third copy.
+   */
+  it("shares its key with the pack status page", () => {
+    const page = readFileSync(
+      new URL("../../../internal/pack/statuspage.go", import.meta.url),
+      "utf8",
+    );
+
+    expect(page).toContain(`themeStorageKey = "${THEME_STORAGE_KEY}"`);
+  });
+
   it("survives a store that refuses to write", () => {
     const storage = {
       setItem: vi.fn(() => {

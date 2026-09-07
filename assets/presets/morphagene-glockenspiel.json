@@ -1,0 +1,27 @@
+{
+  "version": "4.0",
+  "name": "Morphagene Glockenspiel",
+  "note": 84,
+  "parameters": {
+    "input_mix": 1.42630900701629,
+    "filter_frequency": 131.0282709873997,
+    "base_frequency": 1046.5022612023945,
+    "modes": [
+      {
+        "amplitude": -1.9839259467947812,
+        "frequency": 1047.224183739988,
+        "decay_ms": 495.73913954874706
+      }
+    ],
+    "chebyshev": {
+      "enabled": true,
+      "stage": "excitation",
+      "harmonic_gains": [
+        1.7014108574095639, 0.8513080339357507, 1.8233379775839165,
+        0.34930810112027166
+      ]
+    },
+    "output_gain_db": 14.63664550927405,
+    "decay_keytrack": 0.6491630350154589
+  }
+}
