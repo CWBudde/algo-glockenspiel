@@ -35,8 +35,8 @@ func newSynthCmd() *cobra.Command {
 		Use:   "synth",
 		Short: "Synthesize audio from a preset",
 		Long:  "Generate a synthesized glockenspiel note and write it as a mono WAV file.",
-		Example: `  # Render A4 from the built-in preset
-  glockenspiel synth --output a4.wav
+		Example: `  # Render A6 from the built-in preset, at its own note
+  glockenspiel synth --output a6.wav
 
   # Render a longer note from a custom preset, trimming the silent tail
   glockenspiel synth --preset my-preset.json --note 84 --duration 4 --auto-stop --output c6.wav`,

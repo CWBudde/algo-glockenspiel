@@ -112,7 +112,7 @@ type Spec struct {
 	// this field existed and is why it is the default. That is a real choice
 	// rather than an oversight, but it is a surprising one: a fit of a C6
 	// recording under the embedded note-93 template writes a preset whose
-	// fundamental reads 2953 Hz, because PresetFromAnalysis divides every
+	// fundamental reads 1760 Hz, because PresetFromAnalysis divides every
 	// measured partial by the ratio to express it at the template's note. The
 	// preset renders correctly -- transposition puts it back -- but its numbers
 	// are not the bar's partials, and anything reading them as measurements of
