@@ -1846,7 +1846,9 @@ median +11.00%, beta **-0.9260 +- 0.0726** with **0 of 12 pinned** -- all three 
 largest effect measured here, 2.6x radiohummingbird's. mooncube fails the third clause in the
 strong form: +0.0060 +- 0.4213, signs disagreeing, nothing pinned. The joint fits are
 `out/pack/jamieblam-joint` (v4, `decay_keytrack` -0.9440, score 0.373710) and
-`out/pack/mooncube-joint` (v3, score 0.465716). Neither is promoted; that stays a decision.
+`out/pack/mooncube-joint` (v3, score 0.465716). Both are promoted now, as
+`assets/presets/metallophone.json` and `assets/presets/bright-toy-glockenspiel.json`; the
+mooncube one carries a retune, recorded in `assets/presets/README.md`.
 
 **Two model-level findings, both of which would have shipped:**
 

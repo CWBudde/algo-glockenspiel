@@ -24,11 +24,25 @@ export interface SoundPreset {
 
 export const SOUND_PRESETS: readonly SoundPreset[] = [
   {
+    id: "bright-toy-glockenspiel",
+    label: "Bright Toy Glockenspiel",
+    note: 91,
+    document:
+      '{"version":"3.0","name":"Bright Toy Glockenspiel","note":91,"parameters":{"input_mix":1.8923025767197146,"filter_frequency":321.9269110495278,"base_frequency":1567.981743926997,"modes":[{"amplitude":1.3628033158973487,"frequency":1561.1309751216752,"decay_ms":8.547140478789931},{"amplitude":0.4814510600965556,"frequency":1567.981743926997,"decay_ms":287.1406813769253},{"amplitude":-0.08991007914754001,"frequency":3494.2655669518754,"decay_ms":68.43991679313928},{"amplitude":1.3445133751083458,"frequency":14528.723348652587,"decay_ms":811.6197561691067}],"chebyshev":{"enabled":true,"stage":"excitation","harmonic_gains":[0.6286754436156744,1.429610899977038,1.463074876433585,0.6947640633912672]},"output_gain_db":5.831753109719401}}',
+  },
+  {
     id: "default",
     label: "Default Glockenspiel",
     note: 93,
     document:
       '{"version":"1.0","name":"Default Glockenspiel","note":93,"parameters":{"input_mix":2,"filter_frequency":1303.6960400974592,"base_frequency":1760.0,"modes":[{"amplitude":2,"frequency":1756.5243235169935,"decay_ms":170.44361397312102},{"amplitude":2,"frequency":4516.145411643994,"decay_ms":3.4763848726009345},{"amplitude":2,"frequency":1328.9984749886657,"decay_ms":0.5604835696794853},{"amplitude":-2,"frequency":1855.0239239312777,"decay_ms":1.7888034585370858}],"chebyshev":{"enabled":true,"harmonic_gains":[1.3710558525404255,0.0,0.20036314305373643,0.0]}}}',
+  },
+  {
+    id: "metallophone",
+    label: "Metallophone",
+    note: 71,
+    document:
+      '{"version":"4.0","name":"Metallophone","note":71,"parameters":{"input_mix":1.0478052085808056,"filter_frequency":8222.419783739067,"base_frequency":493.8833012561241,"modes":[{"amplitude":-1.0820331868681046,"frequency":494.13680467427514,"decay_ms":311.9562580511925},{"amplitude":0.2454627673834091,"frequency":1965.6820094543739,"decay_ms":2.6223282086935447},{"amplitude":-0.05645727516773413,"frequency":3482.169957736802,"decay_ms":12.130137648093722}],"chebyshev":{"enabled":true,"stage":"excitation","harmonic_gains":[1.4976400231941125,1.1022464719221374,1.8619807920534466,1.0280085781584667]},"output_gain_db":-17.157289153882807,"decay_keytrack":-0.9439612092508846}}',
   },
   {
     id: "morphagene-glockenspiel",

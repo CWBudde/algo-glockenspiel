@@ -11,9 +11,10 @@
 Alongside them, [`packs/`](packs/) holds four Freesound packs of struck-bar
 recordings cut and named one note per file — 56 recorded notes across a
 glockenspiel, two toy glockenspiels and a metallophone, with provenance,
-licences and a measured table per pack in [`packs/README.md`](packs/README.md). Nothing in the repository
-fits against them yet; they are there so that a fit can be checked against more
-than one instrument.
+licences and a measured table per pack in [`packs/README.md`](packs/README.md). All four are
+fitted, and each one's joint fit is a shipped sound: `toy-glockenspiel`,
+`morphagene-glockenspiel`, `metallophone` and `bright-toy-glockenspiel` in
+[`assets/presets`](../../assets/presets/README.md).
 
 Note that the packs name each file by the note it **sounds**, while the three
 files above are named for the note a glockenspiel part would have **written** —
