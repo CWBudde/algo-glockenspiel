@@ -107,7 +107,7 @@ type fitOptions struct {
 
 func newFitCmd() *cobra.Command {
 	options := fitOptions{
-		note:       69,
+		note:       93,
 		velocity:   100,
 		sampleRate: 44100,
 		// Mayfly in the engine-shape arm's round schedule is the default

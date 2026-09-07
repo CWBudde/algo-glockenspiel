@@ -99,13 +99,21 @@ refit-default *ARGS: build
         --mayfly-pop 10 --mayfly-epochs 1 --mayfly-restarts 15 \
         --time-budget 0 --max-evals 120000 --max-iter 3067 \
         --polish cmaes --seed 1 \
-        --sample-rate 44100 --note 69 --velocity 100 \
+        --sample-rate 44100 --note 93 --velocity 100 \
         --work-dir out/refit {{ ARGS }}
 
-# The recorded-bar refit runs at note 72, the recording's own pitch, so nothing
+# The recorded-bar refit runs at note 84, the recording's own pitch, so nothing
 # needs a hand retune afterwards. The shipped recorded-bar.json was fitted at
 # note 69 and then multiplied by 1.667 by hand, which is the step Phase 8.6
 # exists to stop repeating.
+#
+# It ran at note 72 until the presets were re-declared at the note they sound.
+# 72 was never the recording's pitch: testdata/reference/README.md measures
+# glockenspiel_c5.wav at 1053.6 Hz, which is C6 and MIDI 84, and the file name
+# is the note a glockenspiel part would have written. Fitting at the note it
+# actually sounds also buys headroom -- its 677 ms half-life is 403 ms in the
+# authored frame at note 84 against 805 ms at note 69, which is what put it past
+# DecayMsSearchMax.
 
 # Re-fit the recorded-bar preset against the C5 room recording
 refit-recorded *ARGS: build
@@ -115,7 +123,7 @@ refit-recorded *ARGS: build
         --mayfly-pop 10 --mayfly-epochs 1 --mayfly-restarts 15 \
         --time-budget 0 --max-evals 120000 --max-iter 3067 \
         --polish cmaes --seed 1 \
-        --sample-rate 44100 --note 72 --velocity 100 \
+        --sample-rate 44100 --note 84 --velocity 100 \
         --work-dir out/refit-recorded {{ ARGS }}
 
 # The pre-8.4 Mayfly recipe: one round of a thirty-strong swarm on a wall-clock
@@ -131,7 +139,7 @@ refit-default-mayfly *ARGS:
         --output out/refit/default-mayfly.json \
         --optimizer mayfly --mayfly-pop 30 --mayfly-restarts 0 --seed 1 \
         --max-iter 100000 --time-budget 8m \
-        --sample-rate 44100 --note 69 --velocity 100 \
+        --sample-rate 44100 --note 93 --velocity 100 \
         --work-dir out/refit-mayfly {{ ARGS }}
 
 # Run the web app's checks: typecheck, lint, unit tests
@@ -266,9 +274,9 @@ baseline:
             --sample-rate 44100 --note $note --velocity 100
         echo
     done <<'ROWS'
-    default legacy_synth_a4 69
-    recorded-bar legacy_synth_a4 69
-    default glockenspiel_c5 69
-    recorded-bar glockenspiel_c5 69
-    recorded-bar glockenspiel_c5 60
+    default legacy_synth_a4 93
+    recorded-bar legacy_synth_a4 93
+    default glockenspiel_c5 93
+    recorded-bar glockenspiel_c5 93
+    recorded-bar glockenspiel_c5 84
     ROWS

@@ -349,7 +349,7 @@ func TestMayflyOptimizerImprovesLegacyReference(t *testing.T) {
 	initial.Parameters.Modes[0].Frequency = clampToRange(initial.Parameters.Modes[0].Frequency*0.93, model.FrequencyMinHz, model.FrequencyMaxHz)
 	initial.Parameters.Modes[0].DecayMs = clampToRange(initial.Parameters.Modes[0].DecayMs*0.8, model.DecayMsMin, model.DecayMsSearchMax)
 
-	objective, err := NewObjectiveFunctionWithBounds(reference, &initial, sampleRate, 69, 100, MetricRMS, legacyValidationBounds(&legacyPreset.Parameters))
+	objective, err := NewObjectiveFunctionWithBounds(reference, &initial, sampleRate, legacyPreset.Note, 100, MetricRMS, legacyValidationBounds(&legacyPreset.Parameters))
 	if err != nil {
 		t.Fatalf("NewObjectiveFunctionWithBounds failed: %v", err)
 	}
@@ -386,8 +386,8 @@ func TestMayflyOptimizerImprovesLegacyReference(t *testing.T) {
 		Name:       legacyPreset.Name,
 		Note:       legacyPreset.Note,
 		Parameters: *recovered,
-	}, sampleRate, 69, 100, float64(len(reference))/float64(sampleRate))
-	initialRendered := renderNote(t, &initial, sampleRate, 69, 100, float64(len(reference))/float64(sampleRate))
+	}, sampleRate, legacyPreset.Note, 100, float64(len(reference))/float64(sampleRate))
+	initialRendered := renderNote(t, &initial, sampleRate, legacyPreset.Note, 100, float64(len(reference))/float64(sampleRate))
 
 	// Measure the rendered result under the same alignment the objective used.
 	// A bare ComputeRMSError compares sample by sample, so it scores a fit that

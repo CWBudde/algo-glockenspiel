@@ -486,7 +486,8 @@ func newObjectiveFunction(
 
 	// The decay ceiling depends on the note the preset is authored at, which
 	// the bounds cannot know and the codec does not: a search that could
-	// write 2000 ms at note 69 would produce a preset the file refuses.
+	// write 2000 ms at note 108 would produce a preset the file refuses, where
+	// transposing down to the bottom key leaves only 936 ms.
 	bounds, err := narrowDecayBounds(config.Bounds, template.Note, decayCeilingKeytrack(template, config))
 	if err != nil {
 		return nil, err

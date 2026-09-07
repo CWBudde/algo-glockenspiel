@@ -23,7 +23,7 @@ type distanceOptions struct {
 
 func newDistanceCmd() *cobra.Command {
 	options := distanceOptions{
-		note:       69,
+		note:       93,
 		velocity:   100,
 		sampleRate: 44100,
 	}

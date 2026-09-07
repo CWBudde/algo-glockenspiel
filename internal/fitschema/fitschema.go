@@ -96,7 +96,7 @@ func Fields() []Field {
 		},
 		{
 			Key: "note", Kind: KindInt, InRequest: true,
-			HasDefault: true, Default: 69,
+			HasDefault: true, Default: 93,
 			HasLimit: true, Min: 0, Max: 127,
 		},
 		{

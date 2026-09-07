@@ -395,9 +395,12 @@ func rotorCoefficients(osc Oscillator, harmonic int, decayFactor float64, decayi
 	// than an invalid one" -- but a resonator does not go quiet above Nyquist.
 	// It produces the alias, at full amplitude, wherever that happens to land:
 	// recorded-bar.json's 9791.5 Hz mode transposed to the keyboard's top key
-	// is 93.15 kHz, which is a loud 4.95 kHz partial at 44.1 kHz and a loud
-	// 2.85 kHz one at 48 kHz. That is the same preset sounding different on
-	// two soundcards, which is worse than either result on its own.
+	// is 23.29 kHz, which is above Nyquist at 44.1 kHz and folds down to a loud
+	// 20.8 kHz partial, and below it at 48 kHz, where it sounds where it is.
+	// That is the same preset sounding different on two soundcards, which is
+	// worse than either result on its own. The figure was 93.15 kHz -- 4.95 kHz
+	// at 44.1 kHz, 2.85 kHz at 48 kHz -- while that preset was labelled note 69
+	// rather than the note it sounds, and the reasoning did not depend on it.
 	//
 	// Culling here rather than in validation keeps the two questions apart, as
 	// FrequencyMaxHz's own reasoning asks: whether a preset is *valid* stays

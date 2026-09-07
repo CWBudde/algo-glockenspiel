@@ -23,7 +23,7 @@ type synthOptions struct {
 func newSynthCmd() *cobra.Command {
 	options := synthOptions{
 		outputPath: "output.wav",
-		note:       69,
+		note:       93,
 		velocity:   100,
 		duration:   2.0,
 		sampleRate: 44100,

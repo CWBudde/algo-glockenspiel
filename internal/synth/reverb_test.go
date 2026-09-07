@@ -51,7 +51,7 @@ func TestAClosedReverbIsAnExactBypass(t *testing.T) {
 	const (
 		frames   = 128
 		blocks   = 64
-		note     = 72
+		note     = 84
 		velocity = 100
 	)
 
@@ -82,7 +82,7 @@ func TestAClosedReverbIsAnExactBypass(t *testing.T) {
 func TestTheReverbOutlivesEveryVoice(t *testing.T) {
 	const (
 		frames   = 128
-		note     = 72
+		note     = 84
 		velocity = 100
 
 		// Comfortably past defaultVoiceDuration at 48 kHz, so every voice has
@@ -178,7 +178,7 @@ func TestTheReverbIsUnaffectedByCallbackWidth(t *testing.T) {
 	const (
 		wide     = 512
 		narrow   = 128
-		note     = 72
+		note     = 84
 		velocity = 100
 		blocks   = 200
 		mix      = 0.6
@@ -207,7 +207,7 @@ func TestTheReverbIsUnaffectedByCallbackWidth(t *testing.T) {
 func TestSilenceEndsTheTail(t *testing.T) {
 	const (
 		frames   = 128
-		note     = 72
+		note     = 84
 		velocity = 100
 	)
 
@@ -238,7 +238,7 @@ func TestSilenceEndsTheTail(t *testing.T) {
 func TestClosingTheReverbGlidesRatherThanSteps(t *testing.T) {
 	const (
 		frames   = 128
-		note     = 72
+		note     = 84
 		velocity = 100
 	)
 
@@ -330,7 +330,7 @@ func TestReverbDecorrelatesTheChannels(t *testing.T) {
 func TestReverbDoesNotAllocatePerBlock(t *testing.T) {
 	const (
 		frames   = defaultRealtimeBlockFrames
-		note     = 72
+		note     = 84
 		velocity = 100
 	)
 

@@ -15,10 +15,24 @@ just check-presets    # what CI runs
 
 | File                           | Sound                   | Note | Modes | Schema |
 | ------------------------------ | ----------------------- | ---- | ----- | ------ |
-| `default.json`                 | Default Glockenspiel    | 69   | 4     | 2.0    |
+| `default.json`                 | Default Glockenspiel    | 93   | 4     | 2.0    |
 | `morphagene-glockenspiel.json` | Morphagene Glockenspiel | 84   | 1     | 4.0    |
-| `recorded-bar.json`            | Recorded Bar            | 69   | 12    | 2.0    |
+| `recorded-bar.json`            | Recorded Bar            | 93   | 12    | 2.0    |
 | `toy-glockenspiel.json`        | Toy Glockenspiel        | 94   | 3     | 3.0    |
+
+**`note` is the note the preset sounds, never the note it would be written.**
+`model.TransposeToNote` scales every mode by `2^((played − note)/12)`, so the
+field is what decides the pitch of every key, and a preset whose modes ring at
+1756 Hz while claiming note 69 plays two octaves sharp everywhere. That is
+exactly what `default.json` and `recorded-bar.json` did until they were
+re-declared at MIDI 93: they were fitted against `glockenspiel_a4.wav` and
+`glockenspiel_c5.wav`, whose file names follow the orchestral convention of
+naming a glockenspiel part two octaves below it sounds, and the written label
+was copied into the field that means the sounding one. The pack recordings the
+other two presets come from are named by what they sound, which is why those two
+were always right. `base_frequency` is the equal-tempered frequency of `note` in
+every file here; it never reaches the audio, but `pack collect` divides mode
+frequencies by it to report partial ratios, so it has to agree.
 
 ## What a preset here has to satisfy
 
@@ -47,17 +61,21 @@ says so.
 **Its decays clear the _floor_ at the top key.** The exact mirror, and the one
 that bites a preset authored low: transposing up divides decays, so a preset
 authored at note 69 may carry no mode whose decay falls under
-`model.DecayMsMin × 9.51` — 9.51 being the ratio from note 69 to note 108.
-`default.json`'s shortest mode is 0.5605 ms and lands at 0.0589 ms there, which
-is why the floor is 0.01 ms rather than the 0.1 ms it was.
+`model.DecayMsMin × 9.51` — 9.51 being the ratio from note 69 to note 108. That
+is the case the floor was lowered from 0.1 ms to 0.01 ms for: `default.json` was
+labelled note 69 at the time and its shortest mode, 0.5605 ms, landed at
+0.0589 ms. It is now declared at the note it sounds, MIDI 93, where the ratio is
+2.38 and the same mode lands at 0.2357 ms — so nothing shipped is near the floor
+any more, and the floor stays where it is because an authored note is free.
 
 **Its modes clear the frequency ceiling at the top key.** Nothing validates
 this one: transposing up multiplies mode frequencies, so a preset authored at
 note 69 may carry no mode above roughly **21 kHz** — 200 kHz,
-`model.FrequencyMaxHz`, divided by the ratio from note 69 to note 108. A preset
-that breaks it fails `NewBar` at the top of the keyboard and its note-ons are
-discarded without a sound. `TestEveryKeyboardNoteRendersAudio` sweeps every
-embedded preset across the whole range for exactly this reason.
+`model.FrequencyMaxHz`, divided by the ratio from note 69 to note 108, and one
+authored at note 93 none above roughly **84 kHz**. A preset that breaks it fails
+`NewBar` at the top of the keyboard and its note-ons are discarded without a
+sound. `TestEveryKeyboardNoteRendersAudio` sweeps every embedded preset across
+the whole range for exactly this reason.
 
 Both ceilings scale with the same ratio, so **re-authoring a preset at a
 different note changes neither**: `max_mode × 2^((top−note)/12)` and

@@ -19,6 +19,14 @@ Note that the packs name each file by the note it **sounds**, while the three
 files above are named for the note a glockenspiel part would have **written** —
 two octaves lower. See `packs/README.md`.
 
+That difference was not only a naming one. The written label was copied into the
+`note` field of both presets fitted from these files, and that field is what
+`model.TransposeToNote` reads to decide the pitch of every key, so `default.json`
+and `recorded-bar.json` played two octaves above every other sound in the app —
+a C6 key sounded 4177.7 Hz, a C8. Both are now declared at **MIDI 93**, the A6
+their ringing mode has always sat at, and every built-in preset sounds 1046.5 Hz
+at MIDI 84. The file names here keep the written label; nothing else follows it.
+
 ## The A4 pair
 
 `legacy_synth_a4.wav` and `glockenspiel_a4.wav` are **byte-identical**
@@ -40,9 +48,12 @@ Format and content:
 | RMS          | 0.1932                                                    |
 | crest factor | 5.18                                                      |
 
-It is a struck bar: energy clustered near 1800 Hz — A4 = 440 Hz times four, the
-first inharmonic mode of the shipped preset — decaying monotonically from an RMS
-of 0.343 in the first 100 ms to 0.045 by 500 ms.
+It is a struck bar: energy clustered near 1800 Hz — A6, and the ringing mode of
+the shipped preset, which is why that preset is now declared at MIDI 93 —
+decaying monotonically from an RMS of 0.343 in the first 100 ms to 0.045 by
+500 ms. It was described here as "A4 = 440 Hz times four" while the preset
+carried the written label; four times A4 is A6, and the second name is the one
+that decides what the file plays as.
 
 ## Provenance
 
@@ -135,4 +146,6 @@ There is no procedure, and there should not be one until the provenance is known
 re-rendering the fixture from the current model would make it a copy of the thing
 it is supposed to be evidence about. If it is ever replaced, expect
 `TestOptimizationImprovesFitAgainstLegacyReference` to need its tolerances
-re-measured — they describe the cost surface this exact file produces.
+re-measured — they describe the cost surface this exact file produces. Declaring
+the preset at MIDI 93 already moved them once, from 33.5% of the gap closed to
+29.3%, because that test derives its frequency search box from `base_frequency`.

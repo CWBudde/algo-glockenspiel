@@ -493,9 +493,12 @@ func TestTheRecordedBarScoresWorseOnThePartialTermThanASeedFromTheAnalysis(t *te
 		t.Fatalf("load recorded-bar: %v", err)
 	}
 
-	// Note 60 is the key that comes closest to undoing the hand retune, and
-	// the seed is measured there too so both are judged at the same note.
-	const note = 60
+	// Note 84 is the key that comes closest to undoing the hand retune, and
+	// the seed is measured there too so both are judged at the same note. It
+	// was note 60 while recorded-bar.json was labelled at note 69; the preset
+	// is now declared at the note it sounds, MIDI 93, and 84 is the same ratio
+	// away from that as 60 was from 69.
+	const note = 84
 
 	seeded, err := PresetFromAnalysis(recorded, measurement, note, 6)
 	if err != nil {

@@ -53,11 +53,11 @@ Renders a single note to a mono WAV file.
 ```bash
 glockenspiel synth \
   --preset assets/presets/default.json \
-  --note 69 \
+  --note 93 \
   --velocity 100 \
   --duration 2.0 \
   --sample-rate 44100 \
-  --output out/a4.wav
+  --output out/a6.wav
 ```
 
 Flags: `--preset` (omit it to use the preset embedded in the binary), `--output`, `--note`, `--velocity`, `--duration`, `--sample-rate`, `--auto-stop`, `--decay-dbfs`.
@@ -141,11 +141,11 @@ A v2 preset:
 {
   "version": "2.0",
   "name": "Default Glockenspiel",
-  "note": 69,
+  "note": 93,
   "parameters": {
     "input_mix": 0.472,
     "filter_frequency": 522.9,
-    "base_frequency": 440.0,
+    "base_frequency": 1760.0,
     "modes": [
       {
         "amplitude": 0.886,

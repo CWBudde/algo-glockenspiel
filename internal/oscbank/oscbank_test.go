@@ -437,9 +437,12 @@ func TestBankPacksRotorsIntoLanes(t *testing.T) {
 // than an invalid one", which was a statement about the validator and never
 // about this bank: a resonator handed a frequency above Nyquist does not go
 // quiet, it produces the alias at full amplitude. The concrete case is the
-// shipped recorded-bar preset, whose 9791.5 Hz mode reaches 93.15 kHz at the
-// keyboard's top key -- 4.95 kHz at 44.1 kHz and 2.85 kHz at 48 kHz, so the
-// same preset would sound different on two soundcards.
+// shipped recorded-bar preset, whose 9791.5 Hz mode reaches 23.29 kHz at the
+// keyboard's top key -- above Nyquist at 44.1 kHz, where it folds to 20.8 kHz,
+// and below it at 48 kHz, so the same preset would sound different on two
+// soundcards. The constant below is 93.15 kHz because that is what the same
+// mode reached while the preset was labelled note 69; it is kept as a frequency
+// well above both Nyquists rather than as a claim about any shipped file.
 //
 // Silence is the assertion, and it is checked at both rates: a cull that only
 // attenuated would still be rate-dependent.
