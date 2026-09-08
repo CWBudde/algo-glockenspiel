@@ -124,12 +124,18 @@ export type EngineEvent =
 /**
  * Worker -> consumer, over the dedicated channel.
  *
- * A batch rather than a block. One message per 128 frames is ~344 tasks a
- * second in each direction, and every one of them is an opportunity for the
- * browser to run something else first; the consumer drains its whole burst in
- * one go and the producer refills the whole pool in one go, so the natural unit
- * on the wire is the batch either way. The buffers are transferred, so the cost
- * of carrying several is the array.
+ * A batch rather than a block, though not on every path, and it is worth being
+ * exact about which: an AudioWorklet asks for exactly one render quantum per
+ * process() call and a block is exactly one quantum, so in the worklet's steady
+ * state each message carries a single buffer and this saves nothing. What it
+ * does save is the three cases where more than one buffer moves at once -- the
+ * ScriptProcessorNode fallback, whose 512-frame callback drains four blocks per
+ * message instead of four messages; priming, where the whole pool travels in
+ * one message rather than up to MAX_POOL of them; and a raised credit target,
+ * where the difference is allocated and sent together. Those are also the
+ * moments the transport is least able to afford a scheduling delay per buffer.
+ * The buffers are transferred either way, so the cost of the shape where it
+ * buys nothing is one array push and a truncation per quantum.
  */
 export interface RenderedBlock {
   type: "block";

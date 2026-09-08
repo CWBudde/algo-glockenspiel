@@ -88,11 +88,17 @@ depth is also what note-on latency is paid out of: a target chosen once for the
 worst host would make every other one less responsive for nothing. `MAX_POOL`
 bounds it at 32 blocks, ~93 ms.
 
-The blocks travel in batches in both directions for the same reason. One message
-per 128 frames is ~344 tasks a second each way, and every one is an opportunity
-for the browser to run something else first; the consumer drains a whole burst
-at once and the producer refills the whole pool at once, so the batch is the
-natural unit on the wire.
+The blocks travel as batches in both directions, though it is worth saying
+plainly where that helps and where it does not. A worklet asks for exactly one
+render quantum per `process()` call and a block is exactly one quantum, so in
+the steady state a batch holds one buffer and costs a message no message was
+saved on. The shape pays for itself at the three moments more than one buffer
+moves: the `ScriptProcessorNode` fallback, whose 512-frame callback returns four
+blocks in one message rather than four; priming, where the whole pool travels
+together instead of up to `MAX_POOL` messages; and a raised credit target, where
+the newly allocated difference is sent in one go. Those are also the moments a
+per-buffer scheduling delay would hurt most, which is why the batch is the
+protocol even though most messages are not batches.
 
 ## The `?debug=audio` panel
 
