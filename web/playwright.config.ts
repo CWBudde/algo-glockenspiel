@@ -55,7 +55,12 @@ export default defineConfig({
       command: "bash scripts/playwright-go-server.sh",
       url: "http://127.0.0.1:8080/api/version",
       reuseExistingServer: !inCI,
-      timeout: 60_000,
+      // The script builds ./cmd/glockenspiel before it can answer the health
+      // check, so this budget covers a compile, not just a process start. CI
+      // warms the module and build caches first (see test-web.yaml); the
+      // headroom is for a cold cache locally, where 60s was not enough after a
+      // dependency bump.
+      timeout: 120_000,
     },
   ],
 });
