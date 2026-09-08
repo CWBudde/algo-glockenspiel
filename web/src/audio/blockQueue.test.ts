@@ -133,6 +133,52 @@ describe("BlockQueue", () => {
     expect(queue.underruns).toBe(0);
   });
 
+  it("reports the low-water mark, not the depth at the moment it is asked", () => {
+    // The distinction the transport turned on: a queue that is emptied and
+    // refilled between two reports reads as healthy from `depth` alone, which
+    // is how a consumer starving on every host callback went unnoticed.
+    const queue = new BlockQueue();
+    queue.push(interleaved(4, 1));
+
+    const [left, right] = output(4);
+    queue.fill(left, right, 4, () => undefined);
+    queue.push(interleaved(4, 5));
+
+    expect(queue.depth).toBe(4);
+    expect(queue.takeMinDepth()).toBe(0);
+
+    // Taking it starts a fresh window rather than reporting the same trough
+    // twice.
+    queue.fill(left, right, 2, () => undefined);
+    expect(queue.takeMinDepth()).toBe(2);
+  });
+
+  it("reports a zero low-water mark for a window in which it never ran", () => {
+    // Infinity is not an answer the page can render, and a consumer that was
+    // never called is starved rather than unmeasurably deep.
+    const queue = new BlockQueue();
+
+    expect(queue.takeMinDepth()).toBe(0);
+  });
+
+  it("tracks depth across a partly drained head block", () => {
+    const queue = new BlockQueue();
+    queue.push(interleaved(4, 1));
+    queue.push(interleaved(4, 5));
+
+    expect(queue.depth).toBe(8);
+
+    const [left, right] = output(6);
+    queue.fill(left, right, 6, () => undefined);
+
+    // Two frames left in the second block, and the read offset must not be
+    // double-counted against it.
+    expect(queue.depth).toBe(2);
+
+    queue.fill(left, right, 2, () => undefined);
+    expect(queue.depth).toBe(0);
+  });
+
   it("stops counting dropouts after unprime, and starts again on the next block", () => {
     const queue = new BlockQueue();
     queue.push(interleaved(4, 1));

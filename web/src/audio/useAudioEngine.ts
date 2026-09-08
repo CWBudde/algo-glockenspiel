@@ -3,16 +3,40 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BlockQueue } from "./blockQueue";
 import processorURL from "./renderProcessor.ts?worker&url";
 import {
+  BLOCK_FRAMES,
   PROCESSOR_NAME,
   type ConsumePort,
   type RecycledBuffer,
   type RenderStats,
+  type TransportCredit,
   type TransportMessage,
 } from "./protocol";
 import { messageOf, type EngineClient } from "./useEngineWorker";
 
 /** How often the ScriptProcessorNode fallback samples its own queue, in ms. */
 const FALLBACK_STATS_INTERVAL_MS = 500;
+
+/**
+ * Frames per ScriptProcessorNode callback.
+ *
+ * The smallest size the node accepts that is not pathologically small, and the
+ * one this fallback has always used; named here because the credit it asks for
+ * is derived from it.
+ */
+const FALLBACK_BUFFER_FRAMES = 512;
+
+/**
+ * Buffers the fallback asks the producer to keep in flight.
+ *
+ * The worklet discovers its target by feedback, because its host's burst length
+ * is not knowable in advance. The fallback has no such uncertainty: it declares
+ * its own callback size, so one callback is exactly FALLBACK_BUFFER_FRAMES /
+ * BLOCK_FRAMES blocks and the only open question is how much jitter to leave on
+ * top. Three callbacks' worth is generous, and generosity is the right default
+ * here -- this path already runs the copy on the main thread, alongside React,
+ * so it is the one place where latency is not the scarce resource.
+ */
+const FALLBACK_TARGET = (FALLBACK_BUFFER_FRAMES / BLOCK_FRAMES) * 3;
 
 /**
  * The query parameter that forces the fallback: `?audio=scriptprocessor`.
@@ -26,6 +50,23 @@ function forcedTransport(): string | null {
   return new URLSearchParams(window.location.search).get("audio");
 }
 
+/**
+ * What the consumer side of the transport is doing, for the diagnostics panel.
+ *
+ * `latency` is the host's own, straight off the AudioContext: baseLatency is
+ * the graph's internal buffering and outputLatency includes the device, so the
+ * pair says how big the output buffer the render thread is servicing actually
+ * is. That number is what decides how deep the queue has to be, and it is
+ * otherwise unknowable from inside the worklet.
+ */
+export interface AudioDiagnostics {
+  stats: RenderStats | null;
+  /** The rate the graph actually runs at, or 0 before it exists. */
+  sampleRate: number;
+  latency: { base: number; output: number } | null;
+  transport: "worklet" | "scriptprocessor";
+}
+
 export interface AudioEngine {
   /** True once the graph is running and notes will be heard. */
   ready: boolean;
@@ -34,6 +75,8 @@ export interface AudioEngine {
   error: boolean;
   /** Render quanta that found the queue empty since the graph started. */
   underruns: number;
+  /** Consumer-side telemetry, for `?debug=audio`. Never null; its fields are. */
+  diagnostics: AudioDiagnostics;
   /** Starts the graph if it is not running. Idempotent and safe to race. */
   start: () => Promise<void>;
   /** The synchronous answer to "can I strike right now", for the strike path. */
@@ -62,6 +105,12 @@ export function useAudioEngine(
   const [status, setStatus] = useState("");
   const [error, setError] = useState(false);
   const [underruns, setUnderruns] = useState(0);
+  const [diagnostics, setDiagnostics] = useState<AudioDiagnostics>({
+    stats: null,
+    sampleRate: 0,
+    latency: null,
+    transport: "worklet",
+  });
 
   const contextRef = useRef<AudioContext | null>(null);
   const nodeRef = useRef<AudioNode | null>(null);
@@ -134,12 +183,28 @@ export function useAudioEngine(
       if (worklet) {
         worklet.port.onmessage = (event: MessageEvent<RenderStats>) => {
           setUnderruns(event.data.underruns);
+          setDiagnostics((previous) => ({ ...previous, stats: event.data }));
         };
         nodeRef.current = worklet;
       } else {
         nodeRef.current = buildFallback(context, channel.port2, (queue) => {
           statsTimerRef.current = window.setInterval(() => {
             setUnderruns(queue.underruns);
+            // Shaped like the worklet's report so the panel has one case to
+            // render. maxBurst is 1 because a ScriptProcessorNode is called
+            // once per output buffer rather than once per render quantum:
+            // there is no burst to observe, only a larger callback.
+            setDiagnostics((previous) => ({
+              ...previous,
+              stats: {
+                type: "stats",
+                underruns: queue.underruns,
+                depth: queue.depth,
+                minDepth: queue.takeMinDepth(),
+                maxBurst: 1,
+                target: FALLBACK_TARGET,
+              },
+            }));
           }, FALLBACK_STATS_INTERVAL_MS);
         });
       }
@@ -156,6 +221,16 @@ export function useAudioEngine(
       await context.resume();
 
       engine.setMasterGain(masterGainRef.current);
+
+      setDiagnostics((previous) => ({
+        ...previous,
+        sampleRate: context.sampleRate,
+        latency: {
+          base: context.baseLatency,
+          output: context.outputLatency ?? 0,
+        },
+        transport: worklet ? "worklet" : "scriptprocessor",
+      }));
 
       readyRef.current = true;
       setReady(true);
@@ -201,7 +276,7 @@ export function useAudioEngine(
     [teardown],
   );
 
-  return { ready, status, error, underruns, start, isReady };
+  return { ready, status, error, underruns, diagnostics, start, isReady };
 }
 
 /**
@@ -272,20 +347,33 @@ function buildFallback(
       return;
     }
 
-    queue.push(event.data.buffer);
+    for (const buffer of event.data.buffers) {
+      queue.push(buffer);
+    }
   };
   port.start();
 
-  const node = context.createScriptProcessor(512, 0, 2);
+  // Asked for once, before the first callback, so the producer is already
+  // running the right number of blocks ahead when the node is connected.
+  const credit: TransportCredit = { type: "credit", target: FALLBACK_TARGET };
+  port.postMessage(credit);
+
+  const node = context.createScriptProcessor(FALLBACK_BUFFER_FRAMES, 0, 2);
   node.onaudioprocess = (event) => {
     const buffer = event.outputBuffer;
     const left = buffer.getChannelData(0);
     const right = buffer.getChannelData(1);
 
-    queue.fill(left, right, left.length, (spent) => {
-      const message: RecycledBuffer = { type: "recycle", buffer: spent };
-      port.postMessage(message, [spent.buffer]);
-    });
+    const spent: Float32Array[] = [];
+    queue.fill(left, right, left.length, (buffer) => spent.push(buffer));
+
+    if (spent.length > 0) {
+      const message: RecycledBuffer = { type: "recycle", buffers: spent };
+      port.postMessage(
+        message,
+        spent.map((buffer) => buffer.buffer),
+      );
+    }
   };
 
   onQueue(queue);

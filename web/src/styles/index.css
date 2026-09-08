@@ -2522,3 +2522,48 @@ h1 {
     transition-duration: 0.01ms !important;
   }
 }
+
+/*
+ * The `?debug=audio` transport panel. Deliberately plain: it is a table of
+ * numbers read off by whoever is chasing a dropout, not part of the instrument,
+ * and it borrows the deck's surface so it reads as attached to the card rather
+ * than as a second one.
+ */
+.audio-diagnostics {
+  padding: var(--space-lg) var(--space-4xl);
+  border-top: 1px solid var(--border-deck);
+  background: var(--surface-deck);
+  font-variant-numeric: tabular-nums;
+}
+
+.audio-diagnostics h2 {
+  margin: 0 0 var(--space-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.audio-diagnostics dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-xs) var(--space-xl);
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.audio-diagnostics dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+.audio-diagnostics dt {
+  opacity: 0.7;
+}
+
+.audio-diagnostics dd {
+  margin: 0;
+  font-weight: 600;
+}

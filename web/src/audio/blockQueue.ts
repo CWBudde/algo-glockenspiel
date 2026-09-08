@@ -17,8 +17,30 @@ export class BlockQueue {
   /** Frames already read out of blocks[0]. */
   private offset = 0;
 
+  /**
+   * Frames held by `blocks`, less the ones already read out of the head.
+   *
+   * Maintained incrementally rather than summed on demand: `depth` is now read
+   * once per render quantum to track the low-water mark, and the queue is no
+   * longer four blocks long -- an adaptive pool can hold dozens -- so a walk of
+   * the list per quantum is work on the render thread that buys nothing.
+   */
+  private frames = 0;
+
   /** Render calls that found the queue empty. Never reset; the page reads deltas. */
   underruns = 0;
+
+  /**
+   * The smallest depth seen since the last takeMinDepth, in frames.
+   *
+   * The instantaneous depth at report time says almost nothing: a consumer that
+   * empties the queue and is refilled before anyone looks reads as healthy. The
+   * low-water mark is what shows how close to starving the transport actually
+   * runs, and it is the number that distinguishes a queue that is merely
+   * shallow from one that is being drained faster than the producer is given a
+   * chance to refill it.
+   */
+  private minFrames = Number.POSITIVE_INFINITY;
 
   /**
    * False until the first block arrives.
@@ -34,16 +56,27 @@ export class BlockQueue {
 
   /** Frames available to fill with. */
   get depth(): number {
-    let frames = 0;
-    for (const block of this.blocks) {
-      frames += block.length / 2;
-    }
+    return this.frames;
+  }
 
-    return frames - this.offset;
+  /**
+   * takeMinDepth returns the low-water mark since the last call and starts a
+   * fresh window.
+   *
+   * Infinity before the first fill of a window becomes 0, so a consumer that
+   * has not run at all in the interval reads as starved rather than as
+   * unmeasurably deep.
+   */
+  takeMinDepth(): number {
+    const low = this.minFrames;
+    this.minFrames = Number.POSITIVE_INFINITY;
+
+    return Number.isFinite(low) ? low : 0;
   }
 
   push(block: Float32Array): void {
     this.blocks.push(block);
+    this.frames += block.length / 2;
     this.primed = true;
   }
 
@@ -97,12 +130,17 @@ export class BlockQueue {
 
       written += take;
       this.offset += take;
+      this.frames -= take;
 
       if (this.offset >= headFrames) {
         this.blocks.shift();
         this.offset = 0;
         recycle(head);
       }
+    }
+
+    if (this.frames < this.minFrames) {
+      this.minFrames = this.frames;
     }
 
     if (written < frames) {

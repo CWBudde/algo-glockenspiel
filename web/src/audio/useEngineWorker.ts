@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import type { EngineCommand, EngineEvent } from "./protocol";
+import type { EngineCommand, EngineEvent, ProducerStats } from "./protocol";
 
 /**
  * The page's handle on the engine. Every call is a message to the worker that
@@ -43,6 +43,14 @@ export interface EngineWorker {
   /** The last thing worth telling the user, loaded or not. */
   status: string;
   error: boolean;
+  /**
+   * The producer's own timings, or null before the first report.
+   *
+   * Diagnostic only -- nothing in the app's behaviour depends on it -- but it
+   * is the half of the transport the dropout counter cannot see, so it is
+   * carried to the page rather than left in the worker's console.
+   */
+  producer: ProducerStats | null;
 }
 
 /**
@@ -58,6 +66,7 @@ export function useEngineWorker(): EngineWorker {
   const [client, setClient] = useState<EngineClient | null>(null);
   const [status, setStatus] = useState("Loading WebAssembly...");
   const [error, setError] = useState(false);
+  const [producer, setProducer] = useState<ProducerStats | null>(null);
   const startedRef = useRef(false);
 
   useEffect(() => {
@@ -148,6 +157,10 @@ export function useEngineWorker(): EngineWorker {
           pendingStart = null;
           break;
 
+        case "producerStats":
+          setProducer(message);
+          break;
+
         case "error": {
           // An error while a start is in flight belongs to that start, which
           // reports it through the audio status; anything else is the module
@@ -185,7 +198,7 @@ export function useEngineWorker(): EngineWorker {
     send({ type: "load", baseURL: document.baseURI });
   }, []);
 
-  return { client, status, error };
+  return { client, status, error, producer };
 }
 
 export function messageOf(error: unknown): string {
