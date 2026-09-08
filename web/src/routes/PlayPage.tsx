@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AudioEngine } from "../audio/useAudioEngine";
 import type { EngineWorker } from "../audio/useEngineWorker";
+import { AudioDiagnostics } from "../components/AudioDiagnostics";
 import { ControlDeck } from "../components/ControlDeck";
 import { Playfield } from "../components/Playfield";
 import type { FittedPreset } from "../lib/fittedPreset";
@@ -10,6 +11,19 @@ import { useNoteActivation } from "../lib/useNoteActivation";
 import { applyWoodTexture } from "../lib/wood";
 
 const KEY_MAP = computeKeyMap();
+
+/**
+ * debugAudio reports whether `?debug=audio` asked for the transport panel.
+ *
+ * A query parameter rather than a build flag or a settings toggle, for the same
+ * reason `?audio=scriptprocessor` is one: the fault it diagnoses appears on a
+ * particular browser on a particular machine, and the only practical way to get
+ * the numbers is to ask the person in front of that machine to add six
+ * characters to the URL they already have open.
+ */
+function debugAudio(): boolean {
+  return new URLSearchParams(window.location.search).get("debug") === "audio";
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -169,6 +183,13 @@ export function PlayPage({
       />
 
       <Playfield onStrike={strike} activeNotes={activeNotes} />
+
+      {debugAudio() && (
+        <AudioDiagnostics
+          consumer={audio.diagnostics}
+          producer={engine.producer}
+        />
+      )}
     </section>
   );
 }

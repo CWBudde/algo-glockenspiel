@@ -10,11 +10,12 @@
 // a glitch with no queue in front of it to absorb it. See
 // docs/audio-transport.md for the decision in full.
 
-import { BLOCK_FRAMES, POOL_SIZE } from "./protocol";
+import { BLOCK_FRAMES, MAX_POOL, POOL_SIZE } from "./protocol";
 import type {
+  ConsumerMessage,
   EngineCommand,
   EngineEvent,
-  RecycledBuffer,
+  ProducerStats,
   RenderedBlock,
   TransportPause,
 } from "./protocol";
@@ -45,6 +46,9 @@ let consumer: MessagePort | null = null;
 /** True once init has been given a sample rate and rendering may begin. */
 let rendering = false;
 
+/** The rate the engine was built at, so a block's worth of audio has a duration. */
+let renderSampleRate = 0;
+
 /**
  * The built-in sound the engine should play. Empty means the module's own
  * default, so the worker never has to name it.
@@ -74,6 +78,121 @@ let pendingRegistrations: { presetId: string; document: string }[] = [];
  * next block, and the pool size alone bounds how far ahead the worker may run.
  */
 let free: Float32Array[] = [];
+
+/**
+ * How many buffers should exist in total, free and in flight together.
+ *
+ * The consumer sets it (see TransportCredit): it is the only party that can see
+ * how its host actually asks for samples. The worker's part is to make the
+ * count true -- allocate when it rises, drop returning buffers when it falls --
+ * and otherwise to keep treating a buffer in hand as the credit to render one
+ * block, which is unchanged.
+ */
+let target = POOL_SIZE;
+
+/** Buffers that exist right now, free plus in flight. */
+let poolSize = 0;
+
+/**
+ * setTarget adjusts the pool towards `next`.
+ *
+ * Growth is immediate, because the consumer only asks for it while it is
+ * starving and a buffer that arrives after the next burst is a buffer that did
+ * not help. Shrinking is lazy -- handled where buffers come back -- because the
+ * ones over the new target are in flight, and there is nowhere to take them
+ * from until the consumer is finished with them.
+ */
+function setTarget(next: number): void {
+  target = Math.max(POOL_SIZE, Math.min(MAX_POOL, Math.floor(next)));
+
+  while (poolSize < target) {
+    free.push(new Float32Array(BLOCK_FRAMES * 2));
+    poolSize += 1;
+  }
+}
+
+/**
+ * Sampler is a fixed-capacity reservoir of millisecond timings that can be
+ * asked for its own percentiles.
+ *
+ * Fixed capacity, and sorted into a buffer it owns, because this runs on the
+ * thread that has to stay ahead of the audio callback: a growing array would be
+ * an allocation every few milliseconds and a fresh sort per report would be a
+ * second one. Once full it keeps the first `capacity` samples of the window
+ * rather than evicting, which is the cheapest policy that still answers the
+ * question being asked -- whether the producer is ever late -- because `max` is
+ * tracked separately and outside the reservoir.
+ */
+class Sampler {
+  private readonly samples: Float64Array;
+  private readonly scratch: Float64Array;
+  private count = 0;
+  private worst = 0;
+
+  constructor(capacity: number) {
+    this.samples = new Float64Array(capacity);
+    this.scratch = new Float64Array(capacity);
+  }
+
+  add(ms: number): void {
+    if (ms > this.worst) {
+      this.worst = ms;
+    }
+
+    if (this.count < this.samples.length) {
+      this.samples[this.count] = ms;
+      this.count += 1;
+    }
+  }
+
+  /** take returns the window's percentiles and starts a fresh one. */
+  take(): { p50: number; p99: number; max: number } {
+    if (this.count === 0) {
+      this.worst = 0;
+
+      return { p50: 0, p99: 0, max: 0 };
+    }
+
+    const window = this.scratch.subarray(0, this.count);
+    window.set(this.samples.subarray(0, this.count));
+    window.sort();
+
+    const at = (fraction: number): number =>
+      window[Math.min(this.count - 1, Math.floor(fraction * this.count))];
+
+    const stats = { p50: at(0.5), p99: at(0.99), max: this.worst };
+
+    this.count = 0;
+    this.worst = 0;
+
+    return stats;
+  }
+}
+
+/** How often the producer reports its timings, in milliseconds. */
+const PRODUCER_STATS_INTERVAL_MS = 500;
+
+const wakeupSampler = new Sampler(1024);
+
+/** Milliseconds spent inside processBlock since the last report. */
+let renderMs = 0;
+
+/** Blocks rendered since the last report. */
+let renderedBlocks = 0;
+
+/** performance.now() at the previous pump() entry, or 0 before the first. */
+let lastPumpMs = 0;
+
+/** performance.now() at the last producer stats report. */
+let lastReportMs = 0;
+
+/**
+ * Blocks sent as silence because interleavedFrames could not build a view.
+ *
+ * See ProducerStats.silentBlocks: this is the tick the dropout counter cannot
+ * see, so it is counted here or it is not counted anywhere.
+ */
+let silentBlocks = 0;
 
 /**
  * The cached view over Go's heap, plus the two facts that decide whether it is
@@ -229,17 +348,49 @@ function pump(): void {
     return;
   }
 
-  while (free.length > 0) {
-    const block = free.pop();
-    if (block === undefined) {
-      return;
-    }
+  const entered = performance.now();
+  if (lastPumpMs !== 0) {
+    wakeupSampler.add(entered - lastPumpMs);
+  }
+  lastPumpMs = entered;
 
+  if (entered - lastReportMs >= PRODUCER_STATS_INTERVAL_MS) {
+    lastReportMs = entered;
+
+    const audioMs = (renderedBlocks * BLOCK_FRAMES * 1000) / renderSampleRate;
+    const report: ProducerStats = {
+      type: "producerStats",
+      wakeup: wakeupSampler.take(),
+      load: audioMs > 0 ? renderMs / audioMs : 0,
+      blocks: renderedBlocks,
+      silentBlocks,
+    };
+    post(report);
+
+    renderMs = 0;
+    renderedBlocks = 0;
+  }
+
+  if (free.length === 0) {
+    return;
+  }
+
+  // Rendered into `free` in place and then handed over as one batch: the
+  // consumer is going to take the whole lot in its next burst anyway, and one
+  // message per block is one scheduling opportunity per block for the browser
+  // to run something else first.
+  const batch = free;
+  free = [];
+
+  const startedRender = performance.now();
+
+  for (const block of batch) {
     const ptr = api.processBlock(BLOCK_FRAMES);
     const view =
       ptr === 0 ? null : interleavedFrames(memory, Number(ptr), BLOCK_FRAMES);
 
     if (view === null) {
+      silentBlocks += 1;
       block.fill(0);
     } else {
       // The samples have to be copied rather than transferred: they live in
@@ -247,10 +398,16 @@ function pump(): void {
       // away. 256 floats per block is the price of the whole arrangement.
       block.set(view);
     }
-
-    const message: RenderedBlock = { type: "block", buffer: block };
-    consumer.postMessage(message, [block.buffer]);
   }
+
+  renderMs += performance.now() - startedRender;
+  renderedBlocks += batch.length;
+
+  const message: RenderedBlock = { type: "block", buffers: batch };
+  consumer.postMessage(
+    message,
+    batch.map((block) => block.buffer),
+  );
 }
 
 function startRendering(sampleRate: number, port: MessagePort): void {
@@ -275,14 +432,41 @@ function startRendering(sampleRate: number, port: MessagePort): void {
   }
 
   consumer = port;
-  consumer.onmessage = (event: MessageEvent<RecycledBuffer>) => {
-    free.push(event.data.buffer);
+  consumer.onmessage = (event: MessageEvent<ConsumerMessage>) => {
+    if (event.data.type === "credit") {
+      setTarget(event.data.target);
+      pump();
+
+      return;
+    }
+
+    for (const buffer of event.data.buffers) {
+      // A buffer over the current target is dropped rather than kept: this is
+      // where a shrink actually happens, because until now it was in flight and
+      // out of reach.
+      if (poolSize > target) {
+        poolSize -= 1;
+        continue;
+      }
+
+      free.push(buffer);
+    }
+
     pump();
   };
   consumer.start();
 
+  renderSampleRate = sampleRate;
+
   free = newPool();
+  poolSize = free.length;
+  target = POOL_SIZE;
   rendering = true;
+
+  // A fresh window: the gap across a graph that was not running is not jitter
+  // the producer is answerable for, and it dwarfs everything real.
+  lastPumpMs = 0;
+  lastReportMs = performance.now();
 
   post({ type: "started", sampleRate });
   pump();
@@ -290,12 +474,16 @@ function startRendering(sampleRate: number, port: MessagePort): void {
 
 function stopRendering(): void {
   rendering = false;
+  lastPumpMs = 0;
   consumer?.close();
   consumer = null;
   // The buffers in flight are gone with the port, so the pool is rebuilt rather
   // than reused: a restart begins with POOL_SIZE buffers whatever happened to
-  // the last graph.
+  // the last graph, and with the target the consumer will raise again if its
+  // host still needs it raised.
   free = [];
+  poolSize = 0;
+  target = POOL_SIZE;
 }
 
 scope.onmessage = (event: MessageEvent<EngineCommand>) => {
