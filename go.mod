@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/CWBudde/go-cma-es v0.1.0
-	github.com/cwbudde/algo-dsp v0.7.0
+	github.com/cwbudde/algo-dsp v0.7.1
 	github.com/cwbudde/algo-fft v0.8.0
 	github.com/cwbudde/mayfly v0.7.1
 	github.com/go-audio/audio v1.0.0

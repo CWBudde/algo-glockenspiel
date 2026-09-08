@@ -61,6 +61,25 @@ jobs:
         run: npm ci
         working-directory: web
 
+      # The visual suite starts a real `glockenspiel serve` as its second
+      # Playwright webServer, and that script builds ./cmd/glockenspiel inside
+      # Playwright's 60s startup window. Without a Go toolchain and a warm
+      # module cache here, the window is spent downloading modules and the run
+      # fails with "Timed out waiting 60000ms from config.webServer" -- which
+      # is how a dependency bump, changing nothing a screenshot can see, breaks
+      # the visual job.
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Warms the module and build caches so the in-window build is a cache
+      # hit. -o /dev/null because the server binary this produces is not the
+      # one that gets run: the script builds its own copy into a scratch dir.
+      - name: Prebuild the fit server
+        run: go build -o /dev/null ./cmd/glockenspiel
+
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
         working-directory: web
