@@ -7,8 +7,8 @@ github.com/cucumber/godog v0.15.1 h1:rb/6oHDdvVZKS66hrhpjFQFHjthFSrQBCOI1LwshNTI
 github.com/cucumber/godog v0.15.1/go.mod h1:qju+SQDewOljHuq9NSM66s0xEhogx0q30flfxL4WUk8=
 github.com/cucumber/messages/go/v21 v21.0.1 h1:wzA0LxwjlWQYZd32VTlAVDTkW6inOFmSM+RuOwHZiMI=
 github.com/cucumber/messages/go/v21 v21.0.1/go.mod h1:zheH/2HS9JLVFukdrsPWoPdmUtmYQAQPLk7w5vWsk5s=
-github.com/cwbudde/algo-dsp v0.7.0 h1:czYejBddti951Aei5aGP78O295OSod1yoiv+hK1nCdU=
-github.com/cwbudde/algo-dsp v0.7.0/go.mod h1:ih89vxR6P969qVzJ7k13sPaGgspukRhadXrhE8elq88=
+github.com/cwbudde/algo-dsp v0.7.1 h1:KqU+w3ne0FUD9vMPW+0fz6X+Neg/gu+bQkL0CLCAxgQ=
+github.com/cwbudde/algo-dsp v0.7.1/go.mod h1:WHf7IHUr1XZza4oQbGAymnuVM+gqbtRbIB7bMjvQHSc=
 github.com/cwbudde/algo-fft v0.8.0 h1:kmjmSYdYYC0cELjORwUV5Qd02KQB91sTLFC4ifm07D4=
 github.com/cwbudde/algo-fft v0.8.0/go.mod h1:H5rJ7JNXvhe3kT4yc41TJB9DEnO7KlhHN7toLO+ZZXU=
 github.com/cwbudde/algo-vecmath v0.1.3 h1:lzXRUI1XP/RLgyCfSPGvAB7HFEU4bjQtZdfel6ZUjjw=
